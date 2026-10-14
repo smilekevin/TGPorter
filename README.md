@@ -11,13 +11,501 @@
 <a href="https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
+<!-- BEGIN CHINESE README -->
+<details>
+<summary>🇨🇳 展开中文说明 / Chinese documentation</summary>
+
 <p align="center">
-  <a href="./README_CN.md">中文</a> ·
+  <a href="#features">English</a> ·
+  <a href="#功能特性">功能特性</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#配置说明">配置说明</a> ·
+  <a href="#bot-命令">Bot 命令</a> ·
+  <a href="#web-api">Web API</a> ·
+  <a href="#docker-数据持久化">Docker 数据持久化</a> ·
+  <a href="#架构设计">架构设计</a> ·
+  <a href="#相比上游的改动">相比上游的改动</a>
+</p>
+
+## 功能特性
+
+### 下载
+
+- **多类型媒体下载** — audio / document / photo / video / voice / animation / video_note
+- **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
+- **单条下载** — 直接发送 `t.me` 链接给 Bot 即可下载
+- **转发媒体下载** — 转发一条媒体消息给 Bot，自动从源频道下载
+- **断点续传** — 文件大小 ≥ 已下载大小即判定为已完成，跳过重复下载
+- **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
+- **3 次重试** — 每个文件最多重试 3 次，含指数退避（连接错误 10s/20s/40s）
+- **文件引用过期处理** — BadRequest 时自动 fetch_message 刷新引用
+- **临时文件清理** — 下载失败自动清理 `.temp` 文件，启动时清理残留
+
+### 转发
+
+- **跨频道转发** — 支持普通频道和受保护频道（has_protected_content）
+- **受保护频道** — 自动切换为下载再上传模式
+- **评论区转发** — `/forward_to_comments` 转发媒体到指定帖子评论区
+- **实时监听转发** — `/listen_forward` 基于 NewMessage 事件驱动，频道有新消息立即触发下载/转发（非轮询）
+- **config.yaml 频道监控** — 配置文件中的 chat 列表也会自动监听新消息，启动后实时更新
+
+### 广告过滤
+
+- **关键词过滤** — `/add_ad` 添加广告关键词，转发时自动跳过包含这些关键词的消息
+- **关键词移除** — `/remove_ad` 移除广告关键词
+- **内容替换** — `/add_replace_ad` 添加替换规则，自动从 caption 中删除匹配的广告文字
+- **替换移除** — `/remove_replace_ad` 移除替换规则
+- **群组广告** — `/set_ad` 为特定群组设置追加广告文字，转发时自动添加到 caption 末尾
+
+### 任务管理
+
+- **任务持久化** — 所有下载/转发任务写入 `log/bot_tasks.json`，容器重启不丢任务
+- **崩溃恢复** — 重启后所有未完成任务统一进入 pending 队列，逐个消费
+- **任务 ID** — `MMDD-序号` 格式（如 `0628-1`），每日序号重置，持久化计数器
+- **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；内存占位区分已入队等待 worker 的任务
+- **下载进度持久化** — 每 50 条消息自动保存 `last_read_message_id`，中断不丢进度
+- **下载历史持久化** — 完成/失败记录写入 `log/download_history.json`
+- **手动终止** — 停止任务时未完成文件记入失败列表（原因：手动终止）
+
+### FLOOD_WAIT 处理
+
+- **非阻塞式等待** — 设置冷却时间戳，不 sleep，不卡死整个队列
+- **Pending 消费者限速** — get_messages 遇到 FloodWait 时全局冷却，任务保持 pending
+- **下载限速** — 累计 FloodWait > 600 秒则跳过该文件
+- **消息编辑限速** — edit_message 遇到 FloodWait 时设置 node 级冷却
+- **用户通知** — 限速暂停时发送 Telegram 通知告知用户
+- **静默限速检测** — 检测 TG 静默限速（速度 < 200 KB/s 持续 120 秒），无 FloodWait 错误码也能识别，WebUI 横幅显示已限速时长 + TG 通知（触发和解除各一次）
+
+### WebUI
+
+- **现代浅色主题** — 移除 layui，纯原生 HTML/CSS/JS，响应式设计
+- **四个标签页**：
+  - 📥 **进行中** — 活跃下载，实时进度/速度/ETA
+  - ✅ **已完成** — 无限滚动，服务端搜索
+  - ❌ **失败** — 失败原因 + 源消息链接，支持重试
+  - ⏳ **待执行** — pending/queued 队列，等待时间显示，区分等待中/排队中状态
+- **操作** — 暂停/恢复、删除（单个/批量）、重试（单个/批量）
+- **实时数据** — 总速度 = 所有活跃任务速度之和，3 秒无回调判为过期归零
+- **粘性导航栏** — 滚动时标签页固定在顶部
+
+### 通知
+
+- **进度通知** — 每 20% 进度里程碑发送一次 Bot 消息更新
+- **完成通知** — 任务完成时立即发送最终状态（从 _download_result 重新计数，避免竞态）
+- **失败通知** — 列出每个失败文件及具体错误原因
+- **限速通知** — FLOOD_WAIT 暂停时通知用户等待时长
+- **静默限速** — TG 静默限速检测（速度 < 200 KB/s 持续 120 秒），WebUI 横幅显示已限速时长 + TG 通知（触发和解除各一次）
+- **恢复通知** — 重启后恢复中断/待执行任务时通知用户
+- **重试通知** — WebUI 重试任务加入队列时通知用户
+
+### 其他
+
+- **多语言** — 中文 / 英文 / 俄语 / 乌克兰语
+- **rclone 云盘上传** — 下载完成后可选上传到云盘
+- **代理支持** — Pyrogram 原生代理 + Docker 环境变量代理
+- **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
+- **日志分离** — `tdl.log`（主日志）+ `download.log`（下载日志），10MB 轮转，保留 30 天
+
+---
+
+## 快速开始
+
+Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloader:latest`，由 GitHub Release 发布流程更新。
+
+### Docker 部署（推荐）
+
+```bash
+git clone https://github.com/smilekevin/telegram-media-downloader.git
+cd telegram-media-downloader
+
+# 复制配置
+cp config.yaml.example config.yaml
+# 编辑 config.yaml，填入 api_id / api_hash / bot_token
+
+# 拉取已发布的 Release 镜像
+docker-compose pull
+
+# 首次运行（前台，用于登录 Telegram）
+docker-compose run --rm hermes-telegram-downloader
+
+# 后续后台运行
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f
+```
+
+### 手动安装
+
+```bash
+git clone https://github.com/smilekevin/telegram-media-downloader.git
+cd telegram-media-downloader
+pip install -r requirements.txt
+
+cp config.yaml.example config.yaml
+# 编辑 config.yaml...
+
+python media_downloader.py
+```
+
+### 本地开发模式
+
+```bash
+# 无需 Telegram 账号，Mock 数据启动 WebUI
+python run_local.py
+# 访问 http://localhost:5000
+```
+
+---
+
+## 配置说明
+
+### config.yaml
+
+```yaml
+# Telegram API 凭证（必填）
+api_id: your_api_id
+api_hash: your_api_hash
+bot_token: your_bot_token  # Bot Token，用于 Bot 命令交互
+
+# 媒体类型
+media_types:
+  - audio
+  - document
+  - photo
+  - video
+  - voice
+  - animation
+
+# 文件格式过滤（all = 所有格式）
+file_formats:
+  audio:
+    - all
+  document:
+    - pdf
+    - epub
+  video:
+    - mp4
+
+# 下载设置
+save_path: /app/downloads
+file_path_prefix:
+  - chat_title
+  - media_datetime
+file_name_prefix:
+  - file_name
+hide_file_name: false
+
+# 并发控制
+max_download_task: 5  # worker 数量
+
+# WebUI
+web_host: 0.0.0.0
+web_port: 5000
+web_login_secret: 123  # 登录密钥（当前未强制验证）
+
+# 权限
+allowed_user_ids:
+  - 'me'  # 'me' = 当前登录账号
+
+# 其他
+language: ZH
+date_format: '%Y_%m'
+enable_download_txt: false
+log_level: DEBUG
+
+# 代理（Docker 内访问宿主机代理）
+proxy:
+  scheme: http
+  hostname: 172.17.0.1
+  port: 20172
+```
+
+### 配置参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `api_id` | Telegram API ID（[my.telegram.org](https://my.telegram.org/apps)） | — |
+| `api_hash` | Telegram API Hash | — |
+| `bot_token` | Bot Token（[@BotFather](https://t.me/BotFather)） | — |
+| `media_types` | 下载的媒体类型列表 | — |
+| `file_formats` | 各类型文件格式过滤 | — |
+| `save_path` | 文件保存路径 | `./downloads` |
+| `max_download_task` | 并发下载 worker 数 | `5` |
+| `web_port` | WebUI 端口 | `5000` |
+| `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
+| `language` | 界面语言（`ZH` / `EN` / `RU` / `UA`） | `EN` |
+| `proxy` | 代理配置（scheme / hostname / port） | `{}` |
+| `log_level` | 日志级别 | `INFO` |
+| `hide_file_name` | 隐藏文件名（UI 显示 `****.mp4`） | `false` |
+| `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
+| `date_format` | 日期目录格式 | `%Y_%m` |
+
+---
+
+## Bot 命令
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/download <link> <start> <end> [filter]` | 批量下载消息 | `/download https://t.me/c/123 1 100` |
+| `/forward <src> <dst> <start> <end> [filter]` | 转发消息到目标群组 | `/forward https://t.me/c/A https://t.me/c/B 1 500` |
+| `/forward_to_comments <src> <dst> <start> <end>` | 转发媒体到评论区 | `/forward_to_comments https://t.me/c/A https://t.me/c/B 1 10` |
+| `/listen_forward <src> <dst> [filter]` | 实时监听并自动转发 | `/listen_forward https://t.me/c/A https://t.me/c/B` |
+| `/get_info <link>` | 获取群组/频道/消息信息 | `/get_info https://t.me/c/123/456` |
+| `/add_filter <filter>` | 设置下载过滤器 | `/add_filter message_date >= 2024-01-01` |
+| `/add_ad <keyword>` | 添加广告关键词（转发时跳过） | `/add_ad 推广` |
+| `/remove_ad <keyword>` | 移除广告关键词 | `/remove_ad 推广` |
+| `/add_replace_ad <msg_link> <keyword>` | 添加替换规则（从 caption 删除） | `/add_replace_ad https://t.me/c/123/456 广告` |
+| `/remove_replace_ad <msg_link> <keyword>` | 移除替换规则 | `/remove_replace_ad https://t.me/c/123/456 广告` |
+| `/set_ad <msg_link> <ad_text>` | 设置群组追加广告（空文本删除） | `/set_ad https://t.me/c/123 关注我` |
+| `/set_language <lang>` | 设置语言（en/ru/zh/ua） | `/set_language zh` |
+| `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
+| `/help` `/start` | 显示帮助 | — |
+
+### 快捷操作（无需命令）
+
+- **发送 `t.me` 链接** → 下载单条消息
+- **转发媒体消息给 Bot** → 下载该媒体（优先从源频道下载）
+
+### 消息 ID 说明
+
+- `start_id = 1` → 从最早的消息开始
+- `end_id = 0` → 直到最新消息
+- `[filter]` 可选，支持日期/文件名等过滤
+
+---
+
+## Web API
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/` | GET | WebUI 主页 |
+| `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中） |
+| `/get_download_list?offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
+| `/get_pending_list` | GET | Pending 队列 |
+| `/get_failed_downloads` | GET | 失败列表 |
+| `/get_download_status` | GET | 总下载速度 |
+| `/get_download_state` | GET | 全局下载状态（downloading / paused） |
+| `/get_completed_count` | GET | 已完成数量（轻量轮询） |
+| `/get_flood_wait` | GET | FloodWait 冷却状态 + 剩余秒数 |
+| `/get_app_version` | GET | 应用版本 |
+| `/check_file_exists` | POST | 检查已完成任务的本地文件是否存在 |
+| `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
+| `/pause_task` | POST | 暂停单个任务 |
+| `/resume_task` | POST | 恢复单个任务 |
+| `/delete_task` | POST | 删除任务（活跃或失败） |
+| `/batch_delete` | POST | 批量删除（JSON: `{"task_ids": [...]}`） |
+| `/retry_task` | POST | 重试失败任务 |
+| `/batch_retry` | POST | 批量重试（JSON: `{"task_ids": [...]}`） |
+| `/remove_pending` | POST | 移除 pending 任务 |
+
+---
+
+## Docker 数据持久化
+
+| 路径 | 说明 |
+|------|------|
+| `./downloads/` | 下载的文件 |
+| `./config.yaml` | 配置文件 |
+| `./data.yaml` | 运行时数据（ids_to_retry 等） |
+| `./log/` | 日志 + 任务持久化（bot_tasks.json / task_counter.json / download_history.json） |
+| `./sessions/` | Telegram session 文件 |
+| `./temp/` | 下载临时文件 |
+
+---
+
+## 架构设计
+
+```mermaid
+flowchart TB
+    User["用户"]
+    Telegram["Telegram"]
+
+    subgraph Container["Docker 容器"]
+        direction TB
+        Bot["Bot 命令与媒体入口<br/>Pyrogram"]
+        Web["WebUI<br/>Flask :5000"]
+        Store["任务持久化<br/>task_store.py"]
+        Recovery["启动恢复<br/>recover_tasks()"]
+        Consumer["Pending Consumer<br/>每 2 秒消费"]
+        Scan["批量扫描 / 实时监听"]
+        Queue["asyncio.Queue<br/>(message, node)"]
+        Workers["Worker Pool<br/>并发上限 max_download_task"]
+        Clients["按消息身份选择<br/>Bot / User Client"]
+        Stats["下载进度与历史<br/>download_stat.py"]
+    end
+
+    Data[("宿主机持久化挂载<br/>log / downloads / temp / sessions")]
+
+    User --> Bot
+    User --> Web
+    Bot -->|保存任务| Store
+    Web -->|重试任务| Store
+    Recovery -->|恢复状态与编号| Store
+    Store -->|读取 Pending| Consumer
+    Consumer -->|单条下载| Queue
+    Consumer -->|恢复范围任务| Scan
+    Bot -.->|批量 / 监听| Scan
+    Scan --> Queue
+    Queue --> Workers
+    Workers --> Clients
+    Clients <-->|下载 / 转发| Telegram
+    Workers --> Stats
+    Store -.->|任务与编号| Data
+    Stats -.->|完成 / 失败历史| Data
+    Clients -.->|媒体 / session| Data
+
+    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
+    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
+    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
+    class Bot,Web entry
+    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class Store,Stats,Data storage
+```
+
+实线表示任务与媒体处理，虚线表示持久化或批量/监听入口。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。下载进度与历史同时供 WebUI 显示和 Bot 通知使用。
+
+### 核心流程
+
+1. **用户提交单条下载** → Bot handler 创建 TaskNode → `save_task()` 保存 Pending → Consumer 取得消息 → `add_download_task()` 入队
+2. **Worker 从队列取任务** → `download_task()` → `download_media()` → Pyrogram 下载
+3. **进度回调** → `update_download_status()` 更新 `_download_result` → 20% 里程碑触发 Bot 通知
+4. **下载完成** → `complete_task()` 从持久化移除 → `save_downloads()` 写入历史
+5. **下载失败** → `add_failed_download()` 记入失败列表 → WebUI 可重试
+6. **容器重启** → `recover_tasks()` 读取未完成任务 → 全部重置为 pending → 消费循环逐个喂入 worker
+
+### Pending 消费者机制
+
+重启时所有未完成任务统一进入 pending 队列，而非直接恢复。这解决了旧版本重启时 100+ 任务同时恢复导致 FLOOD_WAIT 风暴的问题。
+
+```mermaid
+flowchart TB
+    Tick["每 2 秒检查 Pending 任务"] --> Slot{"有空闲并发名额？"}
+    Slot -->|否| Wait["保持 Pending<br/>等待下一轮"]
+    Slot -->|是| Type{"单条还是范围任务？"}
+    Type -->|范围任务| Scan["恢复历史扫描<br/>投递到 Worker 队列"]
+    Type -->|单条任务| Fetch["使用缓存消息，或按所属身份取消息<br/>get_messages 超时上限 300 秒"]
+    Fetch -->|成功| Enqueue["发送通知并尝试入队"]
+    Enqueue -->|入队成功| Download["Worker 开始下载"]
+    Enqueue -->|入队失败 / 取消| Wait
+    Fetch -->|FLOOD_WAIT / 网络错误 / 超时| Cooldown["设置冷却与退避"]
+    Cooldown --> Wait
+    Fetch -->|空消息 / 非网络错误| Failed["记录失败并移除 Pending"]
+```
+
+并发名额由活跃 Worker 和正在消费/排队的任务共同占用；同一任务不会重复消费。网络问题保留 Pending，冷却结束后重试；入队失败或取消会释放占位。
+
+### TCP 超时补丁
+
+Pyrogram 默认 `TCP.TIMEOUT=10s`，在 TG 限速时导致连接拆除 + MTProto 重新握手，产生大量上传流量。补丁改为 900 秒：
+
+```python
+from pyrogram.connection.transport.tcp import TCP as _TCP
+_TCP.TIMEOUT = 900
+```
+
+---
+
+## 相比上游的改动
+
+本 fork 的直接上游是 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。下面先列出相对该项目的修复，再保留它基于 tangyoha v2.2.6 的原有改造说明。
+
+### 本 fork 的修复
+
+上游已提供任务持久化、Pending 队列和 Worker 池，本 fork 在此基础上修复恢复与下载问题，并增加镜像发布和回归测试。
+
+- **Pending Consumer 生命周期**：修复上游 `recover_tasks()` 无历史任务时提前返回、导致 Consumer 未启动的问题；空任务启动也会运行唯一的周期 Consumer，退出时取消并等待结束；恢复状态和任务编号在注册 Bot handler 前完成。
+- **恢复与队列交接**：排除正在消费和已经入队的任务；入队失败或取消后释放占位并保持 Pending，供下次重试。通知有 30 秒超时，避免阻塞消费循环。
+- **批量下载与转发恢复**：恢复没有单条 message_id 的历史范围任务；下载重新扫描原始范围以找回重启丢失的内存队列，已有文件由下载历史跳过。普通转发从检查点继续，受保护频道使用下载再上传；保留目标频道、主题和任务显示编号。
+- **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
+- **依赖安装**：将上游的 `PyTgCrypto==1.2.6` 更新为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
+- **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
+- **Docker 构建**：CI 在 PR、master 推送或手动运行时构建验证镜像，测试通过后发布 SHA 标签并在 Summary 提供拉取地址；**Build Release Docker Image** 只在发布 GitHub Release 时运行，发布版本标签并更新 `latest`。
+
+分支验证：本仓库的 PR 会自动运行 **Telegram Media Downloader CI**，也可在 Actions 手动选择分支运行 CI。成功后从 Summary 的 **CI image for verification** 复制 `docker pull` 命令或 Compose 的 `image:` 配置。CI 只发布 SHA 标签，`latest` 仅由 Release 工作流更新。
+
+#### 回归测试
+
+无需 Telegram 账号或网络连接；测试用临时任务文件和模拟 Telegram 响应验证真实 Consumer、持久化和 Worker 队列代码。
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 上的构建。真实 Telegram 下载及 NAS 容器重启仍需部署后验证。
+
+### MangoIsIllegal 的原有改造（相比 tangyoha v2.2.6）
+
+以下内容保留自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) 的 README，说明其相对 tangyoha 的改造；这些功能由本 fork 继承。
+
+基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) v2.2.6 深度改造。
+
+#### 新增模块
+
+| 模块 | 说明 |
+|------|------|
+| `module/task_store.py` | 任务持久化 + 崩溃恢复，JSON 存储，原子写入，线程安全 |
+| `run_local.py` | 本地开发模式，Mock 数据，无需 Telegram |
+
+#### 核心改动
+
+| 改动 | tangyoha v2.2.6 | MangoIsIllegal 的改造 |
+|------|------|--------|
+| **任务持久化** | 无（重启丢任务） | `bot_tasks.json` + `task_counter.json`，崩溃后自动恢复 |
+| **下载历史** | 无 | `download_history.json`，完成/失败记录持久化 |
+| **任务 ID** | 纯递增整数 | `MMDD-序号` 格式，每日重置，持久化计数器 |
+| **Web UI** | layui 框架 | 纯原生 HTML/CSS/JS，浅色主题，响应式 |
+| **WebUI 功能** | 基础列表 | 4 标签页 + 暂停/恢复 + 删除 + 重试 + 搜索 + 无限滚动 |
+| **Pending 队列** | 无 | 重启任务统一入 pending，逐个消费，防 FLOOD_WAIT 风暴 |
+| **FLOOD_WAIT** | 阻塞 sleep | 非阻塞冷却时间戳，不卡死队列 |
+| **静默限速** | 不检测 | 速度 < 200 KB/s 持续 120 秒 → WebUI 横幅 + TG 通知（触发和解除各一次） |
+| **并发任务数** | 固定（config） | WebUI 下拉框动态调整 1-6，实时生效 |
+| **进度通知** | 定时轮询 | 20% 里程碑触发 + 完成立即通知 + 从 _download_result 重计数 |
+| **失败处理** | 仅日志 | 失败列表持久化 + 错误原因 + 源链接 + WebUI 重试 |
+| **停止任务** | 直接停止 | 未完成文件记入失败列表（手动终止），不留残留 |
+| **TCP 超时** | 10s（默认） | 900s，防止限速时 reconnect 风暴 |
+| **下载重试** | 3 次 5s 间隔 | 3 次，OSError 指数退避（10s/20s/40s） |
+| **大小不匹配** | 直接覆盖 | 备份 .bak 后重下，成功删备份 |
+| **文件引用过期** | 日志记录 | 自动 fetch_message 刷新引用 |
+| **Queue 初始化** | 模块导入时 | 事件循环启动后，避免 loop 不匹配 |
+| **日志** | 单文件 | `tdl.log` + `download.log`，10MB 轮转，30 天保留 |
+| **Bot 通知** | 简单状态 | 下载进度 + 完成文件列表 + 失败原因 + 限速暂停 + 恢复通知 |
+| **Docker** | 单阶段 | 多阶段构建（alpine），rclone 内置 |
+| **版本号** | v2.2.6 | v1.0.0（独立版本线） |
+
+---
+
+## 作者与维护者
+
+本项目 fork 自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。
+
+- **上游作者**：[MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **本 fork 维护者**：[smilekevin](https://github.com/smilekevin)
+- 更早的基础项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+
+---
+
+## License
+
+[MIT](./LICENSE)
+
+---
+
+## 致谢
+
+- 原项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+- Pyrogram：[pyrogram](https://github.com/pyrogram/pyrogram)
+
+</details>
+<!-- END CHINESE README -->
+
+<p align="center">
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#bot-commands">Bot Commands</a> ·
-  <a href="#web-api">Web API</a> ·
+  <a href="#web-api-1">Web API</a> ·
   <a href="#docker-data-persistence">Docker Data Persistence</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#changes-from-upstream">Changes from Upstream</a>
