@@ -1,14 +1,14 @@
-<h1 align="center">Hermes Telegram Downloader</h1>
+<h1 align="center">Telegram Media Downloader</h1>
 
 <p align="center">
 <strong>Telegram 媒体下载 / 转发 / 监听工具，带任务持久化 + 崩溃恢复 + 现代 WebUI</strong>
 </p>
 
 <p align="center">
-<a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
-<a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
+<a href="https://github.com/smilekevin/telegram-media-downloader/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+<a href="https://github.com/smilekevin/telegram-media-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
 <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue"></a>
-<a href="https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
+<a href="https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@
 
 本项目 fork 自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。
 
-- **Hermes 上游作者**：[MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **上游作者**：[MangoIsIllegal](https://github.com/MangoIsIllegal)
 - **本 fork 维护者**：[smilekevin](https://github.com/smilekevin)
 - 更早的基础项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
 
@@ -42,7 +42,7 @@
 - **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
 - **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/hermes-telegram-downloader`，在 master 推送、定时运行或手动触发时构建；无需构建时临时修改上游文件。
 
-分支验证：在 GitHub Actions 的 **Build Hermes Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅由 master 更新。构建摘要提供 `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
+分支验证：在 GitHub Actions 的 **Build Telegram Media Downloader Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅由 master 更新。构建摘要提供 `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
 
 ### 回归测试
 
@@ -234,8 +234,10 @@ _TCP.TIMEOUT = 900
 
 上游 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) 不提供预构建 Docker 镜像；本 fork 新增 GitHub Actions 自动构建并发布到 GHCR，支持 `linux/amd64` 和 `linux/arm64`。
 
+项目和仓库已改名为 **Telegram Media Downloader**。为兼容已有部署，GHCR 镜像地址及 Compose 服务/容器名继续使用 `hermes-telegram-downloader`；已有镜像 digest 仍可用于验证。
+
 - **镜像地址**：`ghcr.io/smilekevin/hermes-telegram-downloader`
-- **构建入口与记录**：[Build Hermes Docker](https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml)
+- **构建入口与记录**：[Build Telegram Media Downloader Docker](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
 - **master 镜像**：`:latest`，在 master 推送、每 6 小时定时检查或手动触发时构建；已有提交镜像会跳过重复构建。
 - **分支验证镜像**：`:sha-完整提交号`。手动选择 PR 分支、勾选 **Force rebuild**，成功后从运行摘要的 **Image for verification** 复制完整 `@sha256:...` 地址。分支构建不会更新 `latest`。
 
@@ -250,8 +252,8 @@ docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
 ### Docker 部署（推荐）
 
 ```bash
-git clone https://github.com/smilekevin/hermes-telegram-downloader.git
-cd hermes-telegram-downloader
+git clone https://github.com/smilekevin/telegram-media-downloader.git
+cd telegram-media-downloader
 
 # 复制配置
 cp config.yaml.example config.yaml
@@ -270,8 +272,8 @@ docker-compose logs -f
 ### 手动安装
 
 ```bash
-git clone https://github.com/smilekevin/hermes-telegram-downloader.git
-cd hermes-telegram-downloader
+git clone https://github.com/smilekevin/telegram-media-downloader.git
+cd telegram-media-downloader
 pip install -r requirements.txt
 
 cp config.yaml.example config.yaml

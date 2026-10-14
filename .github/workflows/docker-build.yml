@@ -1,4 +1,4 @@
-name: Build Hermes Docker
+name: Build Telegram Media Downloader Docker
 
 on:
   push:
@@ -20,7 +20,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: hermes-docker-build
+  group: telegram-media-downloader-docker-build
   cancel-in-progress: false
 
 env:
@@ -96,6 +96,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
+            org.opencontainers.image.title=Telegram Media Downloader
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.version.outputs.sha }}
             org.opencontainers.image.licenses=MIT
