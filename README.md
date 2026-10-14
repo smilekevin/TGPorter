@@ -112,7 +112,49 @@
 
 Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloader:latest`，由 GitHub Release 发布流程更新。
 
-### Docker 部署（推荐）
+### Docker 镜像部署
+
+服务器或 NAS 已安装 Docker 后，可以直接运行本 fork 的预构建镜像。
+
+1. **准备配置和数据目录**：从本仓库下载 [config.yaml.example](./config.yaml.example)，复制为 `config.yaml`，并创建运行数据文件和持久化目录。下面的命令会保留已有的 `config.yaml` 和 `data.yaml`。
+
+```bash
+mkdir -p telegram-media-downloader
+cd telegram-media-downloader
+mkdir -p downloads log sessions temp
+
+curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/master/config.yaml.example \
+  -o config.yaml.example
+[ -f config.yaml ] || cp config.yaml.example config.yaml
+[ -f data.yaml ] || printf '{}\n' > data.yaml
+```
+
+2. **填写配置**：使用文本编辑器打开 `config.yaml`，填写 `api_id`、`api_hash` 和 `bot_token`，按[配置说明](#配置说明)设置媒体类型、权限和并发数。模板自带示例代理，请按自己的环境修改 `proxy`；无需代理时设为 `proxy: {}`。使用下面的挂载和端口映射时，保留 `save_path: /app/downloads`、`web_host: 0.0.0.0` 和 `web_port: 5000`。
+
+3. **拉取镜像并首次启动**：挂载配置、运行数据、下载、日志、session 和临时目录，以交互模式完成 Telegram 登录。
+
+```bash
+docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
+
+docker run -it \
+  --name hermes-telegram-downloader \
+  --restart unless-stopped \
+  -p 5000:5000 \
+  -e TZ=Asia/Shanghai \
+  -v "$PWD/config.yaml:/app/config.yaml" \
+  -v "$PWD/data.yaml:/app/data.yaml" \
+  -v "$PWD/downloads:/app/downloads" \
+  -v "$PWD/log:/app/log" \
+  -v "$PWD/sessions:/app/sessions" \
+  -v "$PWD/temp:/app/temp" \
+  ghcr.io/smilekevin/telegram-media-downloader:latest
+```
+
+4. **完成登录并打开 WebUI**：按终端提示输入手机号、验证码及两步验证密码（如已启用）。登录成功后依次按 `Ctrl+P`、`Ctrl+Q` 分离终端，容器继续在后台运行。浏览器访问 `http://服务器IP:5000`。登录凭据保存在 `sessions/`，任务与下载历史保存在 `log/`；各挂载目录的用途见[Docker 数据持久化](#docker-数据持久化)。终端分离操作见 [Docker 文档](https://docs.docker.com/reference/cli/docker/container/attach/)。
+
+### Docker 部署
+
+使用仓库中提供的 `docker-compose.yaml` 部署：
 
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
@@ -598,7 +640,49 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 Docker deployment uses this fork's `ghcr.io/smilekevin/telegram-media-downloader:latest` image, updated when GitHub Releases are published.
 
-### Docker (Recommended)
+### Docker Image Deployment
+
+With Docker installed on your server or NAS, run this fork's prebuilt image directly.
+
+1. **Prepare configuration and persistent data**: download [config.yaml.example](./config.yaml.example) from this repository, copy it to `config.yaml`, and create the runtime data file and persistent directories. These commands preserve existing `config.yaml` and `data.yaml` files.
+
+```bash
+mkdir -p telegram-media-downloader
+cd telegram-media-downloader
+mkdir -p downloads log sessions temp
+
+curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/master/config.yaml.example \
+  -o config.yaml.example
+[ -f config.yaml ] || cp config.yaml.example config.yaml
+[ -f data.yaml ] || printf '{}\n' > data.yaml
+```
+
+2. **Edit the configuration**: open `config.yaml` in a text editor and enter `api_id`, `api_hash` and `bot_token`. See [Configuration](#configuration) for media types, permissions and concurrency. The template includes an example proxy; adjust `proxy` for your environment or set `proxy: {}` if you do not need one. With the mounts and port mapping below, keep `save_path: /app/downloads`, `web_host: 0.0.0.0` and `web_port: 5000`.
+
+3. **Pull the image and start it for the first time**: mount configuration, runtime data, downloads, logs, sessions and temporary files, and use interactive mode for Telegram login.
+
+```bash
+docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
+
+docker run -it \
+  --name hermes-telegram-downloader \
+  --restart unless-stopped \
+  -p 5000:5000 \
+  -e TZ=Asia/Shanghai \
+  -v "$PWD/config.yaml:/app/config.yaml" \
+  -v "$PWD/data.yaml:/app/data.yaml" \
+  -v "$PWD/downloads:/app/downloads" \
+  -v "$PWD/log:/app/log" \
+  -v "$PWD/sessions:/app/sessions" \
+  -v "$PWD/temp:/app/temp" \
+  ghcr.io/smilekevin/telegram-media-downloader:latest
+```
+
+4. **Complete login and open WebUI**: enter your phone number, verification code and two-step verification password if enabled. After login succeeds, press `Ctrl+P`, then `Ctrl+Q` to detach your terminal while the container keeps running in the background. Open `http://SERVER_IP:5000` in your browser. Login credentials persist in `sessions/`; tasks and download history persist in `log/`. See [Docker Data Persistence](#docker-data-persistence) for mount details and [Docker's documentation](https://docs.docker.com/reference/cli/docker/container/attach/) for terminal detachment.
+
+### Docker
+
+Deploy with the repository's `docker-compose.yaml`:
 
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
