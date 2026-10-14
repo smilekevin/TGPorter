@@ -40,6 +40,8 @@
 - **依赖安装**：固定为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
 - **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/hermes-telegram-downloader`，在 master 推送、定时运行或手动触发时构建；无需构建时临时修改上游文件。
 
+分支验证：在 GitHub Actions 的 **Build Hermes Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅由 master 更新。构建摘要提供 `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
+
 ### 回归测试
 
 无需 Telegram 账号或网络连接；测试用临时任务文件和模拟 Telegram 响应验证真实 Consumer、持久化和 Worker 队列代码。

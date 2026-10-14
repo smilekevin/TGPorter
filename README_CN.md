@@ -41,6 +41,8 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 - **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
 - **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, scheduled runs or manual dispatch, without patching upstream files during the build.
 
+For branch verification, manually run **Build Hermes Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only master updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
+
 ### Regression Tests
 
 The tests need no Telegram account or network access. They use temporary persistence files and mocked Telegram responses with the real consumer and worker queue code.

@@ -44,6 +44,21 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Source SHA: $SHA"
 
+      - name: Select image tags
+        id: tags
+        shell: bash
+        env:
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          {
+            echo 'tags<<EOF'
+            echo "${IMAGE}:sha-${SHA}"
+            if [[ "$GITHUB_REF" == "refs/heads/master" ]]; then
+              echo "${IMAGE}:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -72,15 +87,14 @@ jobs:
           fi
 
       - name: Build and push
+        id: build
         if: steps.check.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:sha-${{ steps.version.outputs.sha }}
+          tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.version.outputs.sha }}
@@ -88,3 +102,16 @@ jobs:
             org.opencontainers.image.authors=MangoIsIllegal, smilekevin
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Show immutable image reference
+        if: steps.check.outputs.build == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          {
+            echo '### Image for verification'
+            echo "Source commit: ${SHA}"
+            echo
+            echo "\`docker pull ${IMAGE}@${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
