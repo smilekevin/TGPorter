@@ -462,13 +462,15 @@ _TCP.TIMEOUT = 900
 - **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
 - **依赖安装**：将上游的 `PyTgCrypto==1.2.6` 更新为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
 - **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
-- **Docker 构建**：CI 在 PR、master 推送或手动运行时构建验证镜像，测试通过后发布 SHA 标签并在 Summary 提供拉取地址；**Build Release Docker Image** 只在发布 GitHub Release 时运行，发布版本标签并更新 `latest`。
+- **Docker 构建**：CI 在 PR、master 推送或手动运行时构建验证镜像，测试通过后发布 SHA 标签并在 Summary 提供拉取地址；**Build Release Docker Image** 只在发布 GitHub Release 时运行，发布版本标签并更新 `latest`。镜像推送成功后，自动在 Release notes 中补充版本拉取命令、digest 地址和支持的平台；保留原有说明，重新运行时更新同一区块。
 
 分支验证：本仓库的 PR 会自动运行 **Telegram Media Downloader CI**，也可在 Actions 手动选择分支运行 CI。成功后从 Summary 的 **CI image for verification** 复制 `docker pull` 命令或 Compose 的 `image:` 配置。CI 只发布 SHA 标签，`latest` 仅由 Release 工作流更新。
 
 #### 回归测试
 
 无需 Telegram 账号或网络连接；测试用临时任务文件和模拟 Telegram 响应验证真实 Consumer、持久化和 Worker 队列代码。
+
+Release notes 回写测试还需要 Node.js 24，用于执行工作流中的实际脚本；CI 会自动配置该运行环境。
 
 ```bash
 python -m pip install -r requirements.txt
@@ -989,13 +991,15 @@ Upstream already provides task persistence, a Pending queue and a worker pool. T
 - **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
 - **Dependencies**: update the upstream `PyTgCrypto==1.2.6` pin to `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
 - **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
-- **Docker builds**: CI tests and publishes SHA verification images for PRs, master pushes and manual runs, with pull references in its Summary. **Build Release Docker Image** runs only when a GitHub Release is published, publishing version tags and updating `latest`.
+- **Docker builds**: CI tests and publishes SHA verification images for PRs, master pushes and manual runs, with pull references in its Summary. **Build Release Docker Image** runs only when a GitHub Release is published, publishing version tags and updating `latest`. After pushing the image successfully, it adds version and digest pull commands and supported platforms to the Release notes, preserving the existing description and updating the same section on reruns.
 
 For branch verification, this repository's PRs automatically run **Telegram Media Downloader CI**. You can also select a branch and run CI manually in Actions. After success, copy the `docker pull` command or Compose `image:` configuration from **CI image for verification** in the Summary. CI publishes only SHA tags; only the Release workflow updates `latest`.
 
 #### Regression Tests
 
 The tests need no Telegram account or network access. They use temporary persistence files and mocked Telegram responses with the real consumer and worker queue code.
+
+Release notes tests also require Node.js 24 to execute the workflow's actual script; CI sets up this runtime automatically.
 
 ```bash
 python -m pip install -r requirements.txt

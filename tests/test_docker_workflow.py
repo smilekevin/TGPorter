@@ -1,5 +1,6 @@
 """Exercise CI and Release publishing decisions and summaries without Docker."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -66,6 +67,40 @@ class DockerWorkflowTests(unittest.TestCase):
         result, output, _ = self.run_step(workflow, "tags", ref=ref)
         self.assertEqual(result.returncode, 0, result.stderr)
         return output.split("tags<<EOF\n", 1)[1].split("\nEOF", 1)[0].splitlines()
+
+    def run_release_notes(self, body, version="v0.1.0", digest=DIGEST, release_tag=None):
+        """Execute the actual github-script step with an offline Releases API."""
+        runner = r"""
+            const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+            const result = { reads: [], updates: [] };
+            const context = {
+              repo: { owner: 'smilekevin', repo: 'telegram-media-downloader' },
+              payload: { release: { id: 42, body: 'Stale event notes' } },
+            };
+            const github = { rest: { repos: {
+              getRelease: async (params) => {
+                result.reads.push(params);
+                return { data: { body: input.body, tag_name: input.releaseTag } };
+              },
+              updateRelease: async (params) => { result.updates.push(params); },
+            } } };
+            const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+            new AsyncFunction('github', 'context', input.script)(github, context)
+              .catch(error => { result.error = error.message; })
+              .then(() => process.stdout.write(JSON.stringify(result)));
+        """
+        result = subprocess.run(
+            ["node", "-e", runner],
+            input=json.dumps({
+                "script": self.steps["release"]["release_notes"]["with"]["script"],
+                "body": body,
+                "releaseTag": release_tag or version,
+            }),
+            env={**os.environ, "IMAGE": IMAGE, "VERSION_TAG": version, "DIGEST": digest},
+            text=True, capture_output=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
 
     def test_release_workflow_runs_only_when_release_is_published(self):
         release = self.workflows["release"]
@@ -168,6 +203,86 @@ class DockerWorkflowTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("::error::", result.stdout + result.stderr)
                 self.assertEqual(summary, "")
+
+    def test_release_notes_update_requires_successful_build_and_write_permission(self):
+        release = self.workflows["release"]
+        self.assertEqual(release["permissions"]["contents"], "write")
+        self.assertEqual(release["permissions"]["packages"], "write")
+        ids = list(self.steps["release"])
+        self.assertGreater(ids.index("release_notes"), ids.index("summary"))
+        self.assertGreater(ids.index("summary"), ids.index("build"))
+        step = self.steps["release"]["release_notes"]
+        self.assertNotIn("if", step)  # Default success() gate, never always().
+        self.assertEqual(step["env"]["DIGEST"], "${{ steps.build.outputs.digest }}")
+        self.assertEqual(step["env"]["VERSION_TAG"], "${{ steps.tags.outputs.version }}")
+        result, output, _ = self.run_step("release", "tags", ref="refs/tags/v0.1.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("version=v0.1.0\n", output)
+
+    def test_release_notes_preserve_latest_manual_notes_and_append_built_image(self):
+        notes = "# v0.1.0\n\n修复任务恢复。\n\nEdited while the build was running.\n"
+        result = self.run_release_notes(notes)
+        self.assertNotIn("error", result)
+        self.assertEqual(result["reads"], [{
+            "owner": "smilekevin", "repo": "telegram-media-downloader", "release_id": 42,
+        }])
+        self.assertEqual(len(result["updates"]), 1)
+        update = result["updates"][0]
+        self.assertEqual(set(update), {"owner", "repo", "release_id", "body"})
+        self.assertEqual(update["release_id"], 42)
+        self.assertTrue(update["body"].startswith(notes + "\n\n"))
+        self.assertIn(f"docker pull {IMAGE}:v0.1.0", update["body"])
+        self.assertIn(f"docker pull {IMAGE}@{DIGEST}", update["body"])
+        self.assertIn("`linux/amd64`, `linux/arm64`", update["body"])
+        self.assertNotIn("Stale event notes", update["body"])
+
+    def test_release_notes_handle_empty_notes_and_use_the_release_version(self):
+        for notes in (None, ""):
+            with self.subTest(notes=notes):
+                result = self.run_release_notes(notes, version="v0.2.0-rc.1")
+                self.assertNotIn("error", result)
+                self.assertIn(f"docker pull {IMAGE}:v0.2.0-rc.1", result["updates"][0]["body"])
+
+    def test_release_notes_rerun_does_not_duplicate_the_image_section(self):
+        body = self.run_release_notes("Original notes")["updates"][0]["body"]
+        result = self.run_release_notes(body)
+        self.assertNotIn("error", result)
+        self.assertEqual(result["updates"], [])
+
+    def test_release_notes_rebuild_updates_only_the_managed_section(self):
+        body = self.run_release_notes("Original notes")["updates"][0]["body"]
+        body += "\n\n## Extra notes\nKeep this manual section.\n"
+        digest = "sha256:" + "c" * 64
+        result = self.run_release_notes(body, digest=digest)
+        self.assertNotIn("error", result)
+        updated = result["updates"][0]["body"]
+        self.assertTrue(updated.startswith("Original notes\n\n"))
+        self.assertTrue(updated.endswith("\n\n## Extra notes\nKeep this manual section.\n"))
+        self.assertEqual(updated.count("<!-- release-docker-image:start -->"), 1)
+        self.assertIn(f"docker pull {IMAGE}@{digest}", updated)
+        self.assertNotIn(DIGEST, updated)
+
+    def test_release_notes_refuse_missing_invalid_digest_or_changed_tag(self):
+        for digest in ("", "sha256:invalid"):
+            with self.subTest(digest=digest):
+                result = self.run_release_notes("Original notes", digest=digest)
+                self.assertIn("digest", result["error"])
+                self.assertEqual(result["reads"], [])
+                self.assertEqual(result["updates"], [])
+        result = self.run_release_notes("Original notes", release_tag="v0.2.0")
+        self.assertIn("tag changed", result["error"])
+        self.assertEqual(result["updates"], [])
+
+    def test_release_notes_refuse_incomplete_markers_without_overwriting_manual_notes(self):
+        for notes in (
+            "Original notes\n<!-- release-docker-image:start -->",
+            "Original notes\n<!-- release-docker-image:end -->",
+            "<!-- release-docker-image:end -->\n<!-- release-docker-image:start -->",
+        ):
+            with self.subTest(notes=notes):
+                result = self.run_release_notes(notes)
+                self.assertIn("markers are incomplete", result["error"])
+                self.assertEqual(result["updates"], [])
 
 
 if __name__ == "__main__":
