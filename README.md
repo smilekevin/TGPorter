@@ -8,18 +8,52 @@
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
 <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue"></a>
-<a href="https://hub.docker.com/"><img alt="Docker" src="https://img.shields.io/badge/docker-ready-blue"></a>
+<a href="https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
 <p align="center">
   <a href="#功能特性">功能特性</a> ·
   <a href="#架构设计">架构设计</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#本-fork-的-docker-镜像">Docker 镜像</a> ·
   <a href="#配置说明">配置说明</a> ·
   <a href="#bot-命令">Bot 命令</a> ·
   <a href="#web-api">Web API</a> ·
   <a href="#相比上游的改动">相比上游的改动</a>
 </p>
+
+---
+
+## 作者与维护者
+
+本项目 fork 自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。
+
+- **Hermes 上游作者**：[MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **本 fork 维护者**：[smilekevin](https://github.com/smilekevin)
+- 更早的基础项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+
+## 本 fork 的修复
+
+- **Pending Consumer 生命周期**：空任务启动也会运行唯一的周期 Consumer，退出时取消并等待结束；恢复状态和任务编号在注册 Bot handler 前完成。
+- **恢复与队列交接**：排除正在消费和已经入队的任务；入队失败或取消后释放占位并保持 Pending，供下次重试。通知有 30 秒超时，避免阻塞消费循环。
+- **批量下载与转发恢复**：恢复没有单条 message_id 的历史范围任务；下载重新扫描原始范围以找回重启丢失的内存队列，已有文件由下载历史跳过。普通转发从检查点继续，受保护频道使用下载再上传；保留目标频道、主题和任务显示编号。
+- **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
+- **依赖安装**：固定为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
+- **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
+- **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/hermes-telegram-downloader`，在 master 推送、定时运行或手动触发时构建；无需构建时临时修改上游文件。
+
+分支验证：在 GitHub Actions 的 **Build Hermes Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅由 master 更新。构建摘要提供 `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
+
+### 回归测试
+
+无需 Telegram 账号或网络连接；测试用临时任务文件和模拟 Telegram 响应验证真实 Consumer、持久化和 Worker 队列代码。
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 上的构建。真实 Telegram 下载及 NAS 容器重启仍需部署后验证。
 
 ---
 
@@ -58,7 +92,7 @@
 - **任务持久化** — 所有下载/转发任务写入 `log/bot_tasks.json`，容器重启不丢任务
 - **崩溃恢复** — 重启后所有未完成任务统一进入 pending 队列，逐个消费
 - **任务 ID** — `MMDD-序号` 格式（如 `0628-1`），每日序号重置，持久化计数器
-- **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；queued 状态区分已入队等待 worker 的任务
+- **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；内存占位区分已入队等待 worker 的任务
 - **下载进度持久化** — 每 50 条消息自动保存 `last_read_message_id`，中断不丢进度
 - **下载历史持久化** — 完成/失败记录写入 `log/download_history.json`
 - **手动终止** — 停止任务时未完成文件记入失败列表（原因：手动终止）
@@ -106,52 +140,58 @@
 
 ## 架构设计
 
+```mermaid
+flowchart TB
+    User["用户"]
+    Telegram["Telegram"]
+
+    subgraph Container["Docker 容器"]
+        direction TB
+        Bot["Bot 命令与媒体入口<br/>Pyrogram"]
+        Web["WebUI<br/>Flask :5000"]
+        Store["任务持久化<br/>task_store.py"]
+        Recovery["启动恢复<br/>recover_tasks()"]
+        Consumer["Pending Consumer<br/>每 2 秒消费"]
+        Scan["批量扫描 / 实时监听"]
+        Queue["asyncio.Queue<br/>(message, node)"]
+        Workers["Worker Pool<br/>并发上限 max_download_task"]
+        Clients["按消息身份选择<br/>Bot / User Client"]
+        Stats["下载进度与历史<br/>download_stat.py"]
+    end
+
+    Data[("宿主机持久化挂载<br/>log / downloads / temp / sessions")]
+
+    User --> Bot
+    User --> Web
+    Bot -->|保存任务| Store
+    Web -->|重试任务| Store
+    Recovery -->|恢复状态与编号| Store
+    Store -->|读取 Pending| Consumer
+    Consumer -->|单条下载| Queue
+    Consumer -->|恢复范围任务| Scan
+    Bot -.->|批量 / 监听| Scan
+    Scan --> Queue
+    Queue --> Workers
+    Workers --> Clients
+    Clients <-->|下载 / 转发| Telegram
+    Workers --> Stats
+    Store -.->|任务与编号| Data
+    Stats -.->|完成 / 失败历史| Data
+    Clients -.->|媒体 / session| Data
+
+    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
+    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
+    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
+    class Bot,Web entry
+    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class Store,Stats,Data storage
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Docker Container                  │
-│                                                       │
-│  ┌──────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │ Bot (TG) │   │  WebUI :5000 │   │  Worker Pool │ │
-│  │ Pyrogram │   │   Flask      │   │  (N workers) │ │
-│  └────┬─────┘   └──────┬───────┘   └──────┬───────┘ │
-│       │                │                   │         │
-│       │    ┌───────────┼───────────────────┘         │
-│       │    │           │                             │
-│       ▼    ▼           ▼                             │
-│  ┌────────────────────────────┐                      │
-│  │    asyncio.Queue           │                      │
-│  │  (message, node) tuples    │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  Pending Consumer Loop     │                      │
-│  │  (every 5s, fill workers)  │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  task_store.py             │                      │
-│  │  log/bot_tasks.json        │                      │
-│  │  log/task_counter.json     │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  download_stat.py          │                      │
-│  │  log/download_history.json │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  Downloads / Sessions      │                      │
-│  │  /app/downloads/           │                      │
-│  │  /app/sessions/            │                      │
-│  └────────────────────────────┘                      │
-└─────────────────────────────────────────────────────┘
-```
+
+实线表示任务与媒体处理，虚线表示持久化或批量/监听入口。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。下载进度与历史同时供 WebUI 显示和 Bot 通知使用。
 
 ### 核心流程
 
-1. **用户发命令** → Bot handler 创建 TaskNode → `save_task()` 持久化 → `add_download_task()` 入队
+1. **用户提交单条下载** → Bot handler 创建 TaskNode → `save_task()` 保存 Pending → Consumer 取得消息 → `add_download_task()` 入队
 2. **Worker 从队列取任务** → `download_task()` → `download_media()` → Pyrogram 下载
 3. **进度回调** → `update_download_status()` 更新 `_download_result` → 20% 里程碑触发 Bot 通知
 4. **下载完成** → `complete_task()` 从持久化移除 → `save_downloads()` 写入历史
@@ -162,16 +202,22 @@
 
 重启时所有未完成任务统一进入 pending 队列，而非直接恢复。这解决了旧版本重启时 100+ 任务同时恢复导致 FLOOD_WAIT 风暴的问题。
 
+```mermaid
+flowchart TB
+    Tick["每 2 秒检查 Pending 任务"] --> Slot{"有空闲并发名额？"}
+    Slot -->|否| Wait["保持 Pending<br/>等待下一轮"]
+    Slot -->|是| Type{"单条还是范围任务？"}
+    Type -->|范围任务| Scan["恢复历史扫描<br/>投递到 Worker 队列"]
+    Type -->|单条任务| Fetch["使用缓存消息，或按所属身份取消息<br/>get_messages 超时上限 300 秒"]
+    Fetch -->|成功| Enqueue["发送通知并尝试入队"]
+    Enqueue -->|入队成功| Download["Worker 开始下载"]
+    Enqueue -->|入队失败 / 取消| Wait
+    Fetch -->|FLOOD_WAIT / 网络错误 / 超时| Cooldown["设置冷却与退避"]
+    Cooldown --> Wait
+    Fetch -->|空消息 / 非网络错误| Failed["记录失败并移除 Pending"]
 ```
-pending task → _consume_one_pending() → get_messages(300s timeout)
-    ├─ 成功 → 创建 placeholder → add_download_task() → worker 下载
-    ├─ FloodWait → 全局冷却 → 任务保持 pending → 通知用户
-    ├─ 超时 → 记入失败列表 → 移除 pending
-    └─ 其他异常 → 记入失败列表 → 移除 pending
 
-_pending_consumer_loop() 每 5 秒：
-    └─ 填充最多 max_download_task 个 pending 任务到 worker 队列
-```
+并发名额由活跃 Worker 和正在消费/排队的任务共同占用；同一任务不会重复消费。网络问题保留 Pending，冷却结束后重试；入队失败或取消会释放占位。
 
 ### TCP 超时补丁
 
@@ -184,12 +230,27 @@ _TCP.TIMEOUT = 900
 
 ---
 
+## 本 fork 的 Docker 镜像
+
+上游 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) 不提供预构建 Docker 镜像；本 fork 新增 GitHub Actions 自动构建并发布到 GHCR，支持 `linux/amd64` 和 `linux/arm64`。
+
+- **镜像地址**：`ghcr.io/smilekevin/hermes-telegram-downloader`
+- **构建入口与记录**：[Build Hermes Docker](https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml)
+- **master 镜像**：`:latest`，在 master 推送、每 6 小时定时检查或手动触发时构建；已有提交镜像会跳过重复构建。
+- **分支验证镜像**：`:sha-完整提交号`。手动选择 PR 分支、勾选 **Force rebuild**，成功后从运行摘要的 **Image for verification** 复制完整 `@sha256:...` 地址。分支构建不会更新 `latest`。
+
+```bash
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+```
+
+使用预构建镜像时，在自己的 Compose 中设置 `image` 并移除 `build` 和模块源码挂载；继续挂载现有配置、下载、日志、session 和临时目录。验证 PR 时使用该分支构建摘要里的 digest。
+
 ## 快速开始
 
 ### Docker 部署（推荐）
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 
 # 复制配置
@@ -209,7 +270,7 @@ docker-compose logs -f
 ### 手动安装
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 pip install -r requirements.txt
 

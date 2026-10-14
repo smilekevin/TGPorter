@@ -8,7 +8,7 @@
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
 <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue"></a>
-<a href="https://hub.docker.com/"><img alt="Docker" src="https://img.shields.io/badge/docker-ready-blue"></a>
+<a href="https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
 <p align="center">
@@ -16,11 +16,45 @@
   <a href="#features">Features</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#docker-images-from-this-fork">Docker Images</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#bot-commands">Bot Commands</a> ·
   <a href="#web-api">Web API</a> ·
   <a href="#changes-from-upstream">Changes from Upstream</a>
 </p>
+
+---
+
+## Authors and Maintainers
+
+This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader).
+
+- **Hermes upstream author**: [MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **This fork's maintainer**: [smilekevin](https://github.com/smilekevin)
+- Earlier foundation: [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+
+## Fixes in This Fork
+
+- **Pending consumer lifecycle**: start one periodic consumer even with an empty store, cancel and await it at shutdown, and restore states and task IDs before registering Bot handlers.
+- **Recovery and queue handoff**: exclude tasks being consumed or already queued; release reservations on rejected or cancelled handoffs so Pending tasks can retry. Bound notifications to 30 seconds.
+- **Batch downloads and forwards**: restore history-range tasks without a single message_id. Rescan download ranges to recover files lost from the in-memory queue; existing files are skipped by download history. Resume normal forwards from their checkpoint and use download/upload for protected channels, preserving destination, topic and display ID.
+- **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
+- **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
+- **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
+- **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, scheduled runs or manual dispatch, without patching upstream files during the build.
+
+For branch verification, manually run **Build Hermes Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only master updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
+
+### Regression Tests
+
+The tests need no Telegram account or network access. They use temporary persistence files and mocked Telegram responses with the real consumer and worker queue code.
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+PR checks run the tests and build the Alpine Docker image for amd64 and arm64. Live Telegram downloads and NAS container restarts still need deployment validation.
 
 ---
 
@@ -59,7 +93,7 @@
 - **Task persistence** — all download/forward tasks written to `log/bot_tasks.json`, survive container restarts
 - **Crash recovery** — incomplete tasks re-enter pending queue on restart, consumed one by one
 - **Task ID** — `MMDD-N` format (e.g. `0628-1`), resets daily, persistent counter
-- **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; queued state distinguishes tasks waiting for worker pickup
+- **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; in-memory reservations distinguish tasks waiting for worker pickup
 - **Download progress persistence** — auto-saves `last_read_message_id` every 50 messages, no progress loss on interruption
 - **Download history** — completed/failed records in `log/download_history.json`
 - **Manual stop** — stopped tasks' incomplete files recorded as failed (reason: manually stopped)
@@ -107,52 +141,58 @@
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    User["User"]
+    Telegram["Telegram"]
+
+    subgraph Container["Docker Container"]
+        direction TB
+        Bot["Bot commands and media<br/>Pyrogram"]
+        Web["WebUI<br/>Flask :5000"]
+        Store["Task persistence<br/>task_store.py"]
+        Recovery["Startup recovery<br/>recover_tasks()"]
+        Consumer["Pending Consumer<br/>Every 2 seconds"]
+        Scan["History scans / live monitoring"]
+        Queue["asyncio.Queue<br/>(message, node)"]
+        Workers["Worker Pool<br/>Limit: max_download_task"]
+        Clients["Select message owner<br/>Bot / User Client"]
+        Stats["Progress and download history<br/>download_stat.py"]
+    end
+
+    Data[("Persistent host mounts<br/>log / downloads / temp / sessions")]
+
+    User --> Bot
+    User --> Web
+    Bot -->|Save task| Store
+    Web -->|Retry task| Store
+    Recovery -->|Restore states and IDs| Store
+    Store -->|Read Pending| Consumer
+    Consumer -->|Single download| Queue
+    Consumer -->|Recover range task| Scan
+    Bot -.->|Batch / monitoring| Scan
+    Scan --> Queue
+    Queue --> Workers
+    Workers --> Clients
+    Clients <-->|Download / forward| Telegram
+    Workers --> Stats
+    Store -.->|Tasks and IDs| Data
+    Stats -.->|Completed / failed history| Data
+    Clients -.->|Media / sessions| Data
+
+    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
+    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
+    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
+    class Bot,Web entry
+    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class Store,Stats,Data storage
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Docker Container                  │
-│                                                       │
-│  ┌──────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │ Bot (TG) │   │  WebUI :5000 │   │  Worker Pool │ │
-│  │ Pyrogram │   │   Flask      │   │  (N workers) │ │
-│  └────┬─────┘   └──────┬───────┘   └──────┬───────┘ │
-│       │                │                   │         │
-│       │    ┌───────────┼───────────────────┘         │
-│       │    │           │                             │
-│       ▼    ▼           ▼                             │
-│  ┌────────────────────────────┐                      │
-│  │    asyncio.Queue           │                      │
-│  │  (message, node) tuples    │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  Pending Consumer Loop     │                      │
-│  │  (every 5s, fill workers)  │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  task_store.py             │                      │
-│  │  log/bot_tasks.json        │                      │
-│  │  log/task_counter.json     │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  download_stat.py          │                      │
-│  │  log/download_history.json │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  Downloads / Sessions      │                      │
-│  │  /app/downloads/           │                      │
-│  │  /app/sessions/            │                      │
-│  └────────────────────────────┘                      │
-└─────────────────────────────────────────────────────┘
-```
+
+Solid edges show task and media processing. Dashed edges show persistence or batch/monitoring entry points. Single downloads are persisted before the consumer feeds the worker queue; history scans and live monitoring feed the same queue. Progress and history also supply WebUI views and Bot notifications.
 
 ### Core Flow
 
-1. **User sends command** → Bot handler creates TaskNode → `save_task()` persists → `add_download_task()` enqueues
+1. **User submits a single download** → Bot handler creates TaskNode → `save_task()` persists Pending → consumer fetches message → `add_download_task()` enqueues
 2. **Worker dequeues** → `download_task()` → `download_media()` → Pyrogram download
 3. **Progress callback** → `update_download_status()` updates `_download_result` → 20% milestone triggers Bot notification
 4. **Download complete** → `complete_task()` removes from store → `save_downloads()` writes history
@@ -163,16 +203,22 @@
 
 On restart, all incomplete tasks enter the pending queue instead of resuming directly. This prevents FLOOD_WAIT storms from 100+ tasks resuming simultaneously.
 
+```mermaid
+flowchart TB
+    Tick["Check Pending tasks every 2 seconds"] --> Slot{"Free concurrency slot?"}
+    Slot -->|No| Wait["Keep Pending<br/>Wait for the next tick"]
+    Slot -->|Yes| Type{"Single or range task?"}
+    Type -->|Range| Scan["Restore history scan<br/>Feed the worker queue"]
+    Type -->|Single| Fetch["Use cached message or fetch with its owning account<br/>get_messages timeout: 300 seconds"]
+    Fetch -->|Success| Enqueue["Notify and attempt queue handoff"]
+    Enqueue -->|Accepted| Download["Worker starts download"]
+    Enqueue -->|Rejected / cancelled| Wait
+    Fetch -->|FLOOD_WAIT / network error / timeout| Cooldown["Set cooldown and backoff"]
+    Cooldown --> Wait
+    Fetch -->|Empty message / non-network error| Failed["Record failure and remove Pending"]
 ```
-pending task → _consume_one_pending() → get_messages(300s timeout)
-    ├─ success → create placeholder → add_download_task() → worker downloads
-    ├─ FloodWait → global cooldown → task stays pending → notify user
-    ├─ timeout → record as failed → remove pending
-    └─ other error → record as failed → remove pending
 
-_pending_consumer_loop() every 5s:
-    └─ fill up to max_download_task pending tasks into worker queue
-```
+Active workers and fetching/queued reservations share the concurrency limit; each task is consumed once. Network errors leave tasks Pending for retry after cooldown. Rejected or cancelled queue handoffs release their reservations.
 
 ### TCP Timeout Patch
 
@@ -185,12 +231,27 @@ _TCP.TIMEOUT = 900
 
 ---
 
+## Docker Images from This Fork
+
+The upstream [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) does not provide prebuilt Docker images. This fork adds GitHub Actions builds and GHCR publishing for `linux/amd64` and `linux/arm64`.
+
+- **Image**: `ghcr.io/smilekevin/hermes-telegram-downloader`
+- **Builds and manual runs**: [Build Hermes Docker](https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml)
+- **master image**: `:latest`, built on master pushes, scheduled checks every six hours, or manual dispatch. Existing commit images skip duplicate builds.
+- **Branch verification**: `:sha-FULL_COMMIT`. Manually select the PR branch and enable **Force rebuild**, then copy the complete `@sha256:...` reference from **Image for verification** in the successful run's summary. Branch builds leave `latest` unchanged.
+
+```bash
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+```
+
+For prebuilt images, set the Compose `image` and remove `build` and source-code mounts. Keep existing configuration, downloads, logs, sessions and temporary-file mounts. Use the branch build's digest when verifying a PR.
+
 ## Quick Start
 
 ### Docker (Recommended)
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 
 cp config.yaml.example config.yaml
@@ -209,7 +270,7 @@ docker-compose logs -f
 ### Manual Install
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 pip install -r requirements.txt
 

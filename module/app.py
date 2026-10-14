@@ -207,6 +207,7 @@ class TaskNode:
         """If is finish"""
         return self.is_stop_transmission or (
             self.is_running
+            and not getattr(self, "_recovering_range", False)
             and self.task_type != TaskType.ListenForward
             and self.total_task > 0
             and self.total_task == self.total_download_task

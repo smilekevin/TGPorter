@@ -1,6 +1,9 @@
 name: Build Hermes Docker
 
 on:
+  push:
+    branches: [master]
+
   schedule:
     # Every 6 hours (UTC)
     - cron: '17 */6 * * *'
@@ -21,7 +24,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPSTREAM_REPO: MangoIsIllegal/hermes-telegram-downloader
   IMAGE: ghcr.io/smilekevin/hermes-telegram-downloader
 
 jobs:
@@ -29,26 +31,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout upstream
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.UPSTREAM_REPO }}
-          ref: master
           persist-credentials: false
 
-      - name: Patch upstream dependencies
-        shell: bash
-        run: |
-          sed -i 's/^PyTgCrypto==1\.2\.6$/PyTgCrypto==1.2.12/' requirements.txt
-          grep '^PyTgCrypto' requirements.txt
-
-      - name: Get upstream commit
+      - name: Get source commit
         id: version
         shell: bash
         run: |
           SHA=$(git rev-parse HEAD)
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "Upstream SHA: $SHA"
+          echo "Source SHA: $SHA"
+
+      - name: Select image tags
+        id: tags
+        shell: bash
+        env:
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          {
+            echo 'tags<<EOF'
+            echo "${IMAGE}:sha-${SHA}"
+            if [[ "$GITHUB_REF" == "refs/heads/master" ]]; then
+              echo "${IMAGE}:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -78,18 +87,31 @@ jobs:
           fi
 
       - name: Build and push
+        id: build
         if: steps.check.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:sha-${{ steps.version.outputs.sha }}
+          tags: ${{ steps.tags.outputs.tags }}
           labels: |
-            org.opencontainers.image.source=https://github.com/${{ env.UPSTREAM_REPO }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.version.outputs.sha }}
             org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.authors=MangoIsIllegal, smilekevin
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Show immutable image reference
+        if: steps.check.outputs.build == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          {
+            echo '### Image for verification'
+            echo "Source commit: ${SHA}"
+            echo
+            echo "\`docker pull ${IMAGE}@${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

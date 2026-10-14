@@ -42,6 +42,7 @@ from module.pyrogram_extension import (
     report_bot_forward_status,
     report_bot_status,
     retry,
+    set_max_concurrent_transmissions,
     set_meta_data,
     upload_telegram_chat_message,
 )
@@ -206,11 +207,118 @@ class DownloadBot:
         # Cache of message objects from direct_download so consumer can skip
         # get_messages. {task_id: pyrogram.Message}. Cleared on restart.
         self._cached_messages: dict = {}
+        self._consuming: set = set()
+        self._active_downloads = 0
+        self._pending_consumer_task = None
+        self._range_tasks: dict = {}
+
+    def _ensure_pending_consumer(self):
+        """Keep one live consumer, including when the task store is empty."""
+        if self._pending_consumer_task is None or self._pending_consumer_task.done():
+            self._pending_consumer_task = self.app.loop.create_task(
+                _pending_consumer_loop()
+            )
+            logger.info("Pending consumer started (interval=2s)")
+        return self._pending_consumer_task
+
+    def _start_range_recovery(self, task_data):
+        """Reserve a slot while a recovered history scan feeds the workers."""
+        task_id = task_data["task_id"]
+        self._consuming.add(task_id)
+        self._range_tasks[task_id] = self.app.loop.create_task(
+            self._recover_range_task(task_data)
+        )
+
+    async def _recover_range_task(self, task_data):
+        """Restore batch downloads/forwards that have no single message_id."""
+        task_id = task_data["task_id"]
+        node = None
+        try:
+            extra = task_data.get("extra_data") or {}
+            is_forward = task_data.get("task_type") == "forward"
+            node = TaskNode(
+                chat_id=task_data["chat_id"],
+                from_user_id=task_data.get("from_user_id"),
+                bot=self.bot,
+                task_id=task_id,
+                task_id_display=extra.get("task_id_display", ""),
+                task_type=TaskType.Forward if is_forward else TaskType.Download,
+                upload_telegram_chat_id=extra.get("dst_chat_id"),
+                download_filter=task_data.get("download_filter"),
+                limit=task_data.get("limit", 0),
+                start_offset_id=task_data.get("start_offset_id", 0),
+                end_offset_id=task_data.get("end_offset_id", 0),
+                topic_id=extra.get("topic_id", 0),
+            )
+            node._recovering_range = True
+            self.add_task_node(node)
+            update_download_state(task_id, "downloading")
+            scan_failed = False
+            try:
+                if is_forward:
+                    source = await self.client.get_chat(node.chat_id)
+                    node.has_protected_content = source.has_protected_content
+                    node.upload_user = self.client
+                    if not node.upload_telegram_chat_id:
+                        raise ValueError("Recovered forward task has no destination")
+
+                if is_forward and not node.has_protected_content:
+                    # These forwards finish inline, so the checkpoint is safe.
+                    offset = task_data.get("last_message_id", node.start_offset_id)
+                    async for item in get_chat_history_v2(
+                        self.client, node.chat_id, limit=node.limit,
+                        max_id=node.end_offset_id, offset_id=offset, reverse=True,
+                    ):
+                        await forward_normal_content(self.client, node, item)
+                        update_task_progress(task_id, item.id)
+                        if node.is_stop_transmission:
+                            break
+                else:
+                    config = ChatDownloadConfig()
+                    # A scan checkpoint can include files still in the lost
+                    # in-memory queue. Rescan; download history skips saved files.
+                    config.last_read_message_id = node.start_offset_id
+                    config.download_filter = node.download_filter
+                    await self.download_chat_task(self.client, config, node)
+            except Exception as e:
+                scan_failed = True
+                logger.warning(f"History recovery failed for task {task_id}: {e}")
+
+            # Drain files already queued before retrying a failed scan.
+            while node.total_download_task < node.total_task and not node.is_stop_transmission:
+                await asyncio.sleep(3)
+            if scan_failed and not node.is_stop_transmission:
+                update_download_state(task_id, "pending")
+            else:
+                complete_task(task_id)
+                logger.info(f"History recovery finished for task {task_id}")
+        except Exception as e:
+            update_download_state(task_id, "pending")
+            logger.warning(f"History recovery failed for task {task_id}: {e}")
+        finally:
+            self._consuming.discard(task_id)
+            self._range_tasks.pop(task_id, None)
+            if node is not None:
+                node._recovering_range = False
+                self.task_node.pop(task_id, None)
 
     def gen_task_id(self) -> int:
         """Gen task id"""
         self.task_id += 1
         return self.task_id
+
+    def get_message_client(self, chat_id, from_user_id="", message_client=""):
+        """Restore the account that owns a persisted message's chat/ID pair."""
+        if message_client == "bot":
+            return self.bot
+        if message_client == "user":
+            return self.client
+        # Legacy direct/retry tasks did not store an account. An inbox task's
+        # chat_id is its submitting user's ID; the user's client sees a different
+        # dialog and different message IDs at that same numeric chat_id.
+        if from_user_id and str(chat_id) == str(from_user_id):
+            return self.bot
+        return self.client
 
     def add_task_node(self, node: TaskNode):
         """Add task node"""
@@ -319,9 +427,9 @@ class DownloadBot:
         """
         all_tasks = []
         try:
-            await asyncio.sleep(5)  # Wait for bot to fully start
             running_tasks = get_running_tasks()
             if not running_tasks:
+                logger.info("No incomplete bot tasks to recover")
                 return
 
             # All tasks go through pending queue — no more direct recovery.
@@ -355,14 +463,6 @@ class DownloadBot:
                     logger.info(f"Synced internal task_id counter to {max_tid} (max existing)")
             except Exception:
                 pass
-
-            # Start periodic pending consumer loop (60s interval)
-            if not hasattr(self, "_pending_loop_started") or not self._pending_loop_started:
-                self.app.loop.create_task(_pending_consumer_loop())
-                self._pending_loop_started = True
-
-            # Kick off first consumption immediately
-            self.app.loop.create_task(_consume_one_pending())
 
         except Exception as e:
             logger.warning(f"Task recovery failed: {e}")
@@ -637,6 +737,14 @@ class DownloadBot:
         self.client = client
         self.add_download_task = add_download_task
         self.download_chat_task = download_chat_task
+        self.is_running = True
+        set_max_concurrent_transmissions(
+            self.bot, getattr(app, "max_concurrent_transmissions", 1)
+        )
+
+        # Normalize persisted states and reserve existing IDs before registering
+        # handlers or starting the consumer. New commands cannot overwrite them.
+        await self.recover_tasks()
 
         # load config
         if os.path.exists(self.config_path):
@@ -669,10 +777,8 @@ class DownloadBot:
         except Exception as e:
             logger.warning(f"Failed to send help message: {e}")
 
-        self.reply_task = _bot.app.loop.create_task(_bot.update_reply_message())
-
-        # Recover incomplete tasks from previous run
-        _bot.app.loop.create_task(_bot.recover_tasks())
+        self.reply_task = self.app.loop.create_task(self.update_reply_message())
+        self._ensure_pending_consumer()
 
         self.bot.add_handler(
             MessageHandler(
@@ -909,9 +1015,15 @@ async def stop_download_bot():
     """Stop download bot"""
     _bot.update_config()
     _bot.is_running = False
-    if _bot.reply_task:
-        _bot.reply_task.cancel()
     _bot.stop_task("all")
+    background_tasks = [
+        task for task in [_bot.reply_task, _bot._pending_consumer_task,
+                          *_bot._range_tasks.values()] if task is not None
+    ]
+    for task in background_tasks:
+        task.cancel()
+    await asyncio.gather(*background_tasks, return_exceptions=True)
+    _bot._pending_consumer_task = None
     if _bot.bot:
         await _bot.bot.stop()
 
@@ -1428,11 +1540,8 @@ async def direct_download(
         task_id=_bot.gen_task_id(),
     )
 
-    # node.client = client
-    # ↑ 注释掉以统一使用 HookClient（设置了 max_concurrent_transmissions=25 的 client），
-    #   让 worker 走 media_downloader.py:466 的 download_task(client, ...) 分支。
-    #   否则 bot handler 的 client 默认 max_concurrent_transmissions=1，导致单线程下载。
-    #   如需恢复旧行为，取消注释即可。
+    # The consumer selects the message-owning account before queueing. Bot
+    # inbox media must be downloaded with the Bot's account/file references.
     node.source_chat_title = source_chat_title
     node.source_chat_id = source_chat_id
     node.source_message_id = source_message_id
@@ -1443,6 +1552,10 @@ async def direct_download(
         "message_id": download_message.id,
         "task_id_display": node.task_id_display,
     }
+    owner = getattr(download_message, "_client", None) or download_bot.get_message_client(
+        chat_id, message.from_user.id
+    )
+    extra_data["message_client"] = "bot" if owner is download_bot.bot else "user"
     if source_chat_id and source_message_id:
         extra_data["source_chat_id"] = source_chat_id
         extra_data["source_message_id"] = source_message_id
@@ -1898,7 +2011,7 @@ async def forward_message_impl(
         download_filter=download_filter,
         from_user_id=message.from_user.id,
         task_type="forward",
-        extra_data={"dst_chat_id": node.upload_telegram_chat_id, "dst_chat_link": dst_chat_link, "task_id_display": node.task_id_display},
+        extra_data={"dst_chat_id": node.upload_telegram_chat_id, "dst_chat_link": dst_chat_link, "task_id_display": node.task_id_display, "topic_id": node.topic_id},
     )
 
     if not node.has_protected_content:
@@ -2008,31 +2121,34 @@ async def _consume_one_pending():
     """
     import logging
     logger = logging.getLogger("bot.pending")
+    task_id = None
+    reserved = False
+    queued = False
+    msg = None
     try:
         from module.task_store import get_pending_tasks, update_download_state, remove_task
         add_download_task = _bot.add_download_task
         pending = get_pending_tasks()
         if not pending:
             return
-        # 并发守卫：用内存计数器替代 JSON 文件读写，消除 TOCTOU 竞态
-        # _active_downloads 在 __main__ 模块（python media_downloader.py 启动时）
-        # worker 的 global _active_downloads 改的是 __main__ 的全局变量，
-        # 而不是 import media_downloader 的。必须用 sys.modules['__main__']
-        import sys
-        _main = sys.modules.get('__main__')
-        in_queue_count = len(getattr(_bot, '_in_queue', set()))
-        consuming_count = len(getattr(_bot, '_consuming', set()))
-        max_tasks = getattr(_bot.app, 'max_download_task', 5)
-        _active = getattr(_main, '_active_downloads', 0) if _main else 0
-        _total_active = _active + in_queue_count + consuming_count
-        if _total_active >= max_tasks:
-            logger.debug(f"Pending consumer: concurrency guard blocked (active={_active} in_queue={in_queue_count} consuming={consuming_count} max={max_tasks})")
+        # Reservations cover fetching, notification and queue handoff. The same
+        # task can be in both sets during handoff, so count their union once.
+        reserved_count = len(_bot._in_queue | _bot._consuming)
+        max_tasks = max(1, getattr(_bot.app, "max_download_task", 5))
+        active = _bot._active_downloads
+        if active + reserved_count >= max_tasks:
+            logger.debug(
+                "Pending consumer: no free slot (active=%s reserved=%s max=%s)",
+                active, reserved_count, max_tasks,
+            )
             return
 
         # Find first truly pending task (not already in asyncio Queue)
         task_data = None
         for t in pending:
-            if t.get("download_state") == "pending" and t.get("task_id") not in _bot._in_queue:
+            if (t.get("download_state", "pending") == "pending"
+                    and t.get("task_id") not in _bot._in_queue
+                    and t.get("task_id") not in _bot._consuming):
                 task_data = t
                 break
         if not task_data:
@@ -2053,9 +2169,11 @@ async def _consume_one_pending():
             logger.info(f"Skipped config task {task_id} (handled by download_all_chat)")
             return
         
-        if not chat_id or not msg_id:
+        if not chat_id:
+            logger.warning("Pending task %s has no chat_id", task_id)
             return
-        client = _bot.client
+        client = (_bot.get_message_client(chat_id, from_user_id, extra.get("message_client", ""))
+                  if msg_id else _bot.client)
         if not client:
             return
 
@@ -2071,155 +2189,158 @@ async def _consume_one_pending():
         except (ValueError, TypeError):
             cid = chat_id
 
-        # Mark as consuming (in get_messages phase, counts towards concurrency guard)
-        if not hasattr(_bot, '_consuming'):
-            _bot._consuming = set()
-        _bot._consuming.add(task_id)
-        try:
-            # Use cached message from direct_download if available (skip get_messages)
-            cached_msg = _bot._cached_messages.pop(task_id, None)
-            if cached_msg:
-                msg = cached_msg
+        if not msg_id:
+            if task_type in ("download", "forward"):
+                _bot._start_range_recovery(task_data)
             else:
-                try:
-                    msg = await asyncio.wait_for(client.get_messages(cid, int(msg_id)), timeout=300)
-                except asyncio.TimeoutError:
-                    # TG 静默限速：get_messages 300s 超时
-                    # 9-24 用户确认：永不判死（诉求3——300s×3 也只是
-                    # "TG 没响应"，不等于任务坏了；S1 静默限速可以挂
-                    # 24h+。改无限退避，任务保持 pending
-                    _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
-                    consecutive = _pending_timeout_counts[task_id]
-                    from module.pyrogram_extension import _unified_flood_wait
-                    backoff = min(60 * consecutive, 600)  # 60s→…→600s 封顶
-                    _unified_flood_wait["until"] = time.time() + backoff + 5
-                    _unified_flood_wait["reason"] = f"get_messages 超时疑似限速 chat {cid} msg {msg_id} (第{consecutive}次)"
-                    if consecutive % 5 == 1:
-                        logger.warning(
-                            f"Pending consumer: get_messages TIMEOUT (300s) x{consecutive} for "
-                            f"chat {cid} msg {msg_id}, backoff {backoff}s. "
-                            f"Task stays pending (never fails on network)."
-                        )
-                    return  # 保持 pending
-                except pyrogram.errors.exceptions.flood_420.FloodWait as e:
-                    # Don't move to failed list — keep pending, set unified cooldown
-                    wait_val = getattr(e, "value", 60)
-                    from module.pyrogram_extension import _unified_flood_wait
-                    _unified_flood_wait["until"] = time.time() + wait_val + 5
-                    _unified_flood_wait["reason"] = f"FloodWait {wait_val}s on get_messages chat {cid} msg {msg_id}"
+                logger.warning("Pending task %s has no message_id", task_id)
+            return
+
+        # Hold this reservation across every await until queue handoff succeeds.
+        _bot._consuming.add(task_id)
+        reserved = True
+        # Use cached message from direct_download if available (skip get_messages)
+        cached_msg = _bot._cached_messages.pop(task_id, None)
+        if cached_msg:
+            msg = cached_msg
+        else:
+            try:
+                msg = await asyncio.wait_for(client.get_messages(cid, int(msg_id)), timeout=300)
+            except asyncio.TimeoutError:
+                # TG 静默限速：get_messages 300s 超时
+                # 9-24 用户确认：永不判死（诉求3——300s×3 也只是
+                # "TG 没响应"，不等于任务坏了；S1 静默限速可以挂
+                # 24h+。改无限退避，任务保持 pending
+                _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
+                consecutive = _pending_timeout_counts[task_id]
+                from module.pyrogram_extension import _unified_flood_wait
+                backoff = min(60 * consecutive, 600)  # 60s→…→600s 封顶
+                _unified_flood_wait["until"] = time.time() + backoff + 5
+                _unified_flood_wait["reason"] = f"get_messages 超时疑似限速 chat {cid} msg {msg_id} (第{consecutive}次)"
+                if consecutive % 5 == 1:
                     logger.warning(
-                        f"Pending consumer: FLOOD_WAIT {wait_val}s on get_messages "
-                        f"(chat {cid} msg {msg_id}), pausing consumer. Task stays pending."
+                        f"Pending consumer: get_messages TIMEOUT (300s) x{consecutive} for "
+                        f"chat {cid} msg {msg_id}, backoff {backoff}s. "
+                        f"Task stays pending (never fails on network)."
                     )
-                    # Notify user about rate limit pause
-                    if from_user_id and _bot and _bot.bot:
-                        try:
-                            notify_text = (
-                                f"⏸️ TG 限速暂停\n"
-                                f"需要等待 {wait_val} 秒\n"
-                                f"任务: {extra.get('task_id_display', str(task_id))} 保持待执行\n"
-                                f"原因: FloodWait (get_messages)"
-                            )
-                            await _bot.bot.send_message(int(from_user_id), notify_text)
-                        except Exception:
-                            pass
-                    return
-                except Exception as e:
-                    # 防御性检测：如果异常是 TimeoutError 类型，按限速处理
-                    if isinstance(e, TimeoutError):
-                        # 9-24 用户确认：永不判死（网络类只退避不预算）
-                        _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
-                        consecutive = _pending_timeout_counts[task_id]
-                        backoff = min(60 * consecutive, 600)
-                        from module.pyrogram_extension import _unified_flood_wait
-                        _unified_flood_wait["until"] = time.time() + backoff + 5
-                        _unified_flood_wait["reason"] = f"get_messages 连接超时疑似限速 chat {cid} msg {msg_id} (第{consecutive}次)"
-                        if consecutive % 5 == 1:
-                            logger.warning(
-                                f"Pending consumer: TimeoutError x{consecutive} for chat {cid} msg {msg_id}: {e}, "
-                                f"backoff {backoff}s. Task stays pending (never fails on network)."
-                            )
-                        return  # 保持 pending，不 remove_task
-                    # 9-23 判死审计批次2：网络类异常不再一次判死——
-                    # 重连窗口期 "Client has not been started yet" 曾连环误杀
-                    # 20+ 任务。复用 _pending_timeout_counts 计数（与超时
-                    # 路径同款），3 次才判死；期间设 cooldown 保持 pending。
-                    _net_err_str = str(e)
-                    _is_net_err = (
-                        "client has not been started" in _net_err_str.lower()
-                        or "connectionerror" in _net_err_str.lower()
-                        or "connection" in _net_err_str.lower()
-                        or "timeout" in _net_err_str.lower()
-                        or "flood" in _net_err_str.lower()
-                    )
-                    if _is_net_err:
-                        # 9-24 用户确认：网络类 get_messages 失败永不判死
-                        # （诉求3：网络类只退避不预算）。删 3 次判死分支——
-                        # 断网期 pending consumer 每 3s 一轮，3 次仅需 9 秒，
-                        # 断网必死（0916-1124 死于 Connection lost x3）。
-                        # 改为无上限退避（60s→120s→180s 封顶 180s），
-                        # 任务保持 pending，网络恢复自动继续
-                        _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
-                        consecutive = _pending_timeout_counts[task_id]
-                        backoff = min(60 * consecutive, 180)
-                        from module.pyrogram_extension import _unified_flood_wait
-                        _unified_flood_wait["until"] = time.time() + backoff + 5
-                        _unified_flood_wait["reason"] = (
-                            f"get_messages 网络错误 chat {cid} msg {msg_id} (第{consecutive}次)"
-                        )
-                        if consecutive % 5 == 1:  # 限频告警：每5次记一条
-                            logger.warning(
-                                f"Pending consumer: get_messages network error x{consecutive} "
-                                f"for chat {cid} msg {msg_id}: {e}, "
-                                f"backoff {backoff}s. Task stays pending (never fails on network)."
-                            )
-                        return  # 保持 pending，不 remove_task
-                    logger.warning(f"Pending consumer: get_messages failed for chat {cid} msg {msg_id}: {e}, moving to failed")
+                return  # 保持 pending
+            except pyrogram.errors.exceptions.flood_420.FloodWait as e:
+                # Don't move to failed list — keep pending, set unified cooldown
+                wait_val = getattr(e, "value", 60)
+                from module.pyrogram_extension import _unified_flood_wait
+                _unified_flood_wait["until"] = time.time() + wait_val + 5
+                _unified_flood_wait["reason"] = f"FloodWait {wait_val}s on get_messages chat {cid} msg {msg_id}"
+                logger.warning(
+                    f"Pending consumer: FLOOD_WAIT {wait_val}s on get_messages "
+                    f"(chat {cid} msg {msg_id}), pausing consumer. Task stays pending."
+                )
+                # Notify user about rate limit pause
+                if from_user_id and _bot and _bot.bot:
                     try:
-                        from module.download_stat import add_failed_download
-                        task_id_display = extra.get("task_id_display", str(task_id))
-                        add_failed_download(
-                            chat_id=cid,
-                            msg_id=msg_id,
-                            task_id=task_id_display,
-                            file_name="",
-                            error_message=f"获取消息失败: {e}",
-                            total_size=0,
-                            source_link="",
-                            from_user_id=str(from_user_id) if from_user_id else "",
+                        notify_text = (
+                            f"⏸️ TG 限速暂停\n"
+                            f"需要等待 {wait_val} 秒\n"
+                            f"任务: {extra.get('task_id_display', str(task_id))} 保持待执行\n"
+                            f"原因: FloodWait (get_messages)"
                         )
+                        await _bot.bot.send_message(int(from_user_id), notify_text)
                     except Exception:
                         pass
-                    remove_task(task_id)
-                    return
-            if not msg or msg.empty:
-                logger.warning(f"Pending consumer: msg {msg_id} not found in chat {cid}, moving to failed")
+                return
+            except Exception as e:
+                # 防御性检测：如果异常是 TimeoutError 类型，按限速处理
+                if isinstance(e, TimeoutError):
+                    # 9-24 用户确认：永不判死（网络类只退避不预算）
+                    _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
+                    consecutive = _pending_timeout_counts[task_id]
+                    backoff = min(60 * consecutive, 600)
+                    from module.pyrogram_extension import _unified_flood_wait
+                    _unified_flood_wait["until"] = time.time() + backoff + 5
+                    _unified_flood_wait["reason"] = f"get_messages 连接超时疑似限速 chat {cid} msg {msg_id} (第{consecutive}次)"
+                    if consecutive % 5 == 1:
+                        logger.warning(
+                            f"Pending consumer: TimeoutError x{consecutive} for chat {cid} msg {msg_id}: {e}, "
+                            f"backoff {backoff}s. Task stays pending (never fails on network)."
+                        )
+                    return  # 保持 pending，不 remove_task
+                # 9-23 判死审计批次2：网络类异常不再一次判死——
+                # 重连窗口期 "Client has not been started yet" 曾连环误杀
+                # 20+ 任务。复用 _pending_timeout_counts 计数（与超时
+                # 路径同款），3 次才判死；期间设 cooldown 保持 pending。
+                _net_err_str = str(e)
+                _is_net_err = (
+                    "client has not been started" in _net_err_str.lower()
+                    or "connectionerror" in _net_err_str.lower()
+                    or "connection" in _net_err_str.lower()
+                    or "timeout" in _net_err_str.lower()
+                    or "flood" in _net_err_str.lower()
+                )
+                if _is_net_err:
+                    # 9-24 用户确认：网络类 get_messages 失败永不判死
+                    # （诉求3：网络类只退避不预算）。删 3 次判死分支——
+                    # 断网期 pending consumer 每 3s 一轮，3 次仅需 9 秒，
+                    # 断网必死（0916-1124 死于 Connection lost x3）。
+                    # 改为无上限退避（60s→120s→180s 封顶 180s），
+                    # 任务保持 pending，网络恢复自动继续
+                    _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
+                    consecutive = _pending_timeout_counts[task_id]
+                    backoff = min(60 * consecutive, 180)
+                    from module.pyrogram_extension import _unified_flood_wait
+                    _unified_flood_wait["until"] = time.time() + backoff + 5
+                    _unified_flood_wait["reason"] = (
+                        f"get_messages 网络错误 chat {cid} msg {msg_id} (第{consecutive}次)"
+                    )
+                    if consecutive % 5 == 1:  # 限频告警：每5次记一条
+                        logger.warning(
+                            f"Pending consumer: get_messages network error x{consecutive} "
+                            f"for chat {cid} msg {msg_id}: {e}, "
+                            f"backoff {backoff}s. Task stays pending (never fails on network)."
+                        )
+                    return  # 保持 pending，不 remove_task
+                logger.warning(f"Pending consumer: get_messages failed for chat {cid} msg {msg_id}: {e}, moving to failed")
                 try:
                     from module.download_stat import add_failed_download
                     task_id_display = extra.get("task_id_display", str(task_id))
-                    source_link = ""
-                    if extra.get("source_chat_id") and extra.get("source_message_id"):
-                        sid = extra["source_chat_id"]
-                        link_id = str(sid)[4:] if str(sid).startswith("-100") else str(sid)
-                        source_link = f"https://t.me/c/{link_id}/{extra['source_message_id']}"
                     add_failed_download(
                         chat_id=cid,
                         msg_id=msg_id,
                         task_id=task_id_display,
                         file_name="",
-                        error_message="消息不存在或已被删除",
+                        error_message=f"获取消息失败: {e}",
                         total_size=0,
-                        source_link=source_link,
+                        source_link="",
                         from_user_id=str(from_user_id) if from_user_id else "",
                     )
                 except Exception:
                     pass
                 remove_task(task_id)
                 return
-            # get_messages 成功 — 清除连续超时计数
-            _pending_timeout_counts.pop(task_id, None)
-        finally:
-            _bot._consuming.discard(task_id)
+        if not msg or msg.empty:
+            logger.warning(f"Pending consumer: msg {msg_id} not found in chat {cid}, moving to failed")
+            try:
+                from module.download_stat import add_failed_download
+                task_id_display = extra.get("task_id_display", str(task_id))
+                source_link = ""
+                if extra.get("source_chat_id") and extra.get("source_message_id"):
+                    sid = extra["source_chat_id"]
+                    link_id = str(sid)[4:] if str(sid).startswith("-100") else str(sid)
+                    source_link = f"https://t.me/c/{link_id}/{extra['source_message_id']}"
+                add_failed_download(
+                    chat_id=cid,
+                    msg_id=msg_id,
+                    task_id=task_id_display,
+                    file_name="",
+                    error_message="消息不存在或已被删除",
+                    total_size=0,
+                    source_link=source_link,
+                    from_user_id=str(from_user_id) if from_user_id else "",
+                )
+            except Exception:
+                pass
+            remove_task(task_id)
+            return
+        # get_messages 成功 — 清除连续超时计数
+        _pending_timeout_counts.pop(task_id, None)
         node = _bot.task_node.get(int(task_id)) if str(task_id).isdigit() else _bot.task_node.get(task_id)
         if not node:
             from module.app import TaskNode
@@ -2239,6 +2360,8 @@ async def _consume_one_pending():
             node.source_message_id = extra.get("source_message_id", 0)
             node.source_chat_title = extra.get("source_chat_title", "")
             _bot.add_task_node(node)
+        owner = getattr(msg, "_client", None) or client
+        node.client = _bot.bot if owner is _bot.bot else None
         # Mark as in-queue (in-memory, not persisted). Worker will remove on pickup.
         _bot._in_queue.add(task_id)
         node.is_running = True
@@ -2282,34 +2405,42 @@ async def _consume_one_pending():
                     f"任务: {node.task_id_display}\n"
                     f"群组: {chat_name}"
                 )
-                recovery_msg = await _bot.bot.send_message(int(from_user_id), notify_text)
+                recovery_msg = await asyncio.wait_for(
+                    _bot.bot.send_message(int(from_user_id), notify_text), timeout=30
+                )
                 node.reply_message_id = recovery_msg.id
                 node.last_edit_msg = ""       # Force first progress update to trigger
                 node.last_progress_pct = -1   # Force first 20% bucket to trigger
             except Exception as e:
                 logger.warning(f"Pending consumer notification failed: {e}")
 
-        await add_download_task(msg, node)
-        # Mark as downloading so concurrency guard counts this task.
-        # Without this, get_downloading_tasks() can't see it, and the
-        # guard keeps feeding new tasks beyond max_download_task.
+        queued = await add_download_task(msg, node)
+        if not queued:
+            logger.warning("Pending consumer: queue rejected task %s; will retry", task_id)
+            return
+        # Persist the handoff only after the queue confirms acceptance.
         update_download_state(task_id, "downloading")
         logger.info(f"Pending consumer: queued task {task_id} (msg {msg_id}) to download queue")
     except Exception as e:
         logger.warning(f"Pending consumer error: {e}")
-
-
+    finally:
+        if reserved:
+            _bot._consuming.discard(task_id)
+            if not queued and task_id in _bot._in_queue:
+                _bot._in_queue.discard(task_id)
+                if msg is not None:
+                    _bot._cached_messages[task_id] = msg
 async def _pending_consumer_loop():
     """Periodically fill the worker queue with pending tasks.
 
     Runs every 2s. Each tick consumes ONE pending task — the concurrency
-    guard inside _consume_one_pending checks downloading + in_queue + consuming
+    guard inside _consume_one_pending checks active workers + reserved tasks
     >= max_download_task and returns early if all slots are full.
     This prevents over-filling when get_messages is fast (cached messages).
     """
     import logging
     logger = logging.getLogger("bot.pending_loop")
-    while True:
+    while _bot.is_running:
         try:
             await asyncio.sleep(2)
             from module.task_store import get_pending_tasks
@@ -2317,7 +2448,7 @@ async def _pending_consumer_loop():
             if pending:
                 await _consume_one_pending()
         except asyncio.CancelledError:
-            break
+            raise
         except Exception as e:
             logger.warning(f"Pending consumer loop error: {e}")
 
@@ -2362,8 +2493,7 @@ async def set_listen_forward_msg(
 
     # 用事件驱动替代轮询：注册 NewMessage handler 实时监听
     _bot._register_listen_handler()
-    if not hasattr(_bot, "pending_consumer_task") or _bot.pending_consumer_task is None:
-        _bot.pending_consumer_task = _bot.app.loop.create_task(_consume_one_pending())
+    _bot._ensure_pending_consumer()
 
 
 async def stop(client: pyrogram.Client, message: pyrogram.types.Message):
