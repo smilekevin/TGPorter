@@ -983,7 +983,12 @@ def record_download_status(func):
 
         _download_cache[(node.chat_id, message.id)] = DownloadStatus.Downloading
 
-        status, file_name, error_message = await func(client, message, media_types, file_formats, node)
+        try:
+            status, file_name, error_message = await func(client, message, media_types, file_formats, node)
+        except BaseException:
+            # A cancelled/failed attempt must not block the next retry forever.
+            remove_download_cache(node.chat_id, message.id)
+            raise
 
         _download_cache[(node.chat_id, message.id)] = status
 

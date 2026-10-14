@@ -271,14 +271,14 @@ def set_max_workers():
     if n is None or n < 1 or n > 6:
         return jsonify(error="n must be 1-6"), 400
     _app.max_download_task = n
-    # max_concurrent_transmissions follows max_download_task * 5
-    _app.max_concurrent_transmissions = n * 5
+    # Leave enough transport slots for each file's independent fixed ranges.
+    _app.max_concurrent_transmissions = n * max(5, getattr(_app, "file_download_concurrency", 1))
     # Apply to pyrogram client if available
     from module.pyrogram_extension import set_max_concurrent_transmissions
     try:
         from module.bot import _bot
         if _bot and _bot.client:
-            set_max_concurrent_transmissions(_bot.client, n * 5)
+            set_max_concurrent_transmissions(_bot.client, _app.max_concurrent_transmissions)
     except Exception:
         pass
     # 热生效：动态伸缩 worker 池（9-21）

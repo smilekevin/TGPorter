@@ -38,6 +38,11 @@ file_name_prefix:
 - file_name
 #file_name_prefix_split: ' - '
 max_download_task: 5
+# 单文件启动时固定分片数上限；设为 1 使用单路下载。
+file_download_concurrency: 4
+# 实际分片数 = min(单文件并发数, max(1, 文件大小 // 最小分片大小))。
+# 最小分片大小（单位 MiB）；不足此大小时使用串行下载。
+download_min_part_size_mb: 16
 web_host: 0.0.0.0
 web_port: 5000
 # WebUI 访问密码；部署前修改。设为 "" 可关闭密码登录。

@@ -420,6 +420,8 @@ class Application:
         self.web_host: str = "0.0.0.0"
         self.web_port: int = 5000
         self.max_download_task: int = 5
+        self.file_download_concurrency: int = 1
+        self.download_min_part_size_mb: int = 16
         self.language = Language.EN
         self.after_upload_telegram_delete: bool = True
         self.web_login_secret: str = ""
@@ -525,7 +527,17 @@ class Application:
             "max_download_task", self.max_download_task
         )
 
-        self.max_concurrent_transmissions = self.max_download_task * 5
+        self.file_download_concurrency = _config.get("file_download_concurrency", 1)
+        self.download_min_part_size_mb = _config.get("download_min_part_size_mb", 16)
+        for key in ("file_download_concurrency", "download_min_part_size_mb"):
+            value = getattr(self, key)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{key} must be a positive integer")
+
+        self.max_concurrent_transmissions = max(
+            self.max_download_task * 5,
+            self.max_download_task * self.file_download_concurrency,
+        )
 
         self.max_concurrent_transmissions = _config.get(
             "max_concurrent_transmissions", self.max_concurrent_transmissions
@@ -911,6 +923,9 @@ class Application:
             self.config.pop("last_read_message_id")
 
         self.config["max_download_task"] = self.max_download_task
+        self.config.pop("download_concurrency", None)  # Removed setting from earlier versions.
+        self.config["file_download_concurrency"] = self.file_download_concurrency
+        self.config["download_min_part_size_mb"] = self.download_min_part_size_mb
 
         self.config["language"] = self.language.name
         # for it in self.downloaded_ids:
