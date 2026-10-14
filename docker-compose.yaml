@@ -1,7 +1,7 @@
 services:
-  hermes-telegram-downloader:
+  telegam-media-downloader:
     image: ghcr.io/smilekevin/telegram-media-downloader:latest
-    container_name: hermes-telegram-downloader
+    container_name: telegam-media-downloader
     network_mode: bridge
     stdin_open: true
     tty: true
