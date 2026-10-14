@@ -9,18 +9,23 @@
 
 ```sh
 python -B -m unittest discover -s tests -p 'test_parallel*.py' -v
+python -B -m unittest discover -s tests -p 'test_download_connections.py' -v
 python -B -m unittest discover -s tests -v
 ```
 
 测试通过模拟 `get_file` 返回不同内容的 1 MiB 数据块，验证：
 
 - 乱序返回后合并文件的 SHA-256 与原始数据一致，尾部不足 1 MiB 也正确。
-- 多个文件独立启动自己的固定分片，分片结束不重新分配工作，不再预留全局下载名额。
-- 暂停恢复不创建新分片；取消可打断挂起的请求或等待并发名额的任务。
+- 多个文件独立启动自己的固定大小切片，worker 完成切片后继续领取下一片，不再预留全局下载名额。
+- 使用真实 Pyrogram 下载代码、模拟网络 Session，验证同一数据中心的两个文件、每文件四个 worker 创建八个独立连接，同一 worker 的后续切片沿用该连接；单分片文件之间也不复用连接。
+- 暂停保留原连接，取消、启动中断和客户端重启会清理连接；跨数据中心授权和 CDN 文件哈希校验继续使用 Pyrogram 的处理逻辑。
+- 暂停恢复不改变切片计划和 worker 数；取消可打断挂起的请求或等待并发名额的任务。
 - 断流、短块、旧串行断点、非完整块、程序重启和合并中断均能保留断点并正确续传。
 - 现有下载入口能刷新过期文件引用，并使用消息所属账号刷新引用。
 - UI 数据只有一个文件进度记录，已下载字节汇总全部分片。
-- 小文件按整除规则减少分片，配置保存和非法配置校验正确。
+- 网页删除使用的真实 Flask 接口、Web API 单删/批删及 Bot 停止回调均会清理对应临时数据；下载中、暂停中、合并中和合并后归位前取消均有覆盖。
+- 用户取消先关闭连接，再删除该下载的临时文件和 `.parts/`；程序关闭和异常中断保留断点。取消单个文件不影响同任务其他文件，取消后同消息可创建新任务重新下载。
+- 固定大小切片包含不足一片的尾部，小文件只创建必要的 worker，配置保存和非法配置校验正确。
 
 ## 真实下载验收
 
@@ -28,7 +33,7 @@ python -B -m unittest discover -s tests -v
 通过登录账号读取 Telegram 文件，不需要启动 Bot 或 WebUI；耗时不包含 WebUI/Bot 回调开销。
 
 先在 Git 忽略的 `local_test/config.yaml` 中填写 `api_id`、`api_hash` 和代理。
-并发设置与应用配置相同。首次登录在本地终端运行，按提示输入手机号、验证码及必要的两步验证密码：
+并发设置与应用配置相同。首次登录在本地终端运行，可输入 Bot Token，或输入手机号、验证码及必要的两步验证密码：
 
 ```sh
 python -B tools/benchmark_download.py --login
@@ -68,17 +73,26 @@ python -B tools/benchmark_download.py --chat me --message-id 123 --lanes 1 4
    ```yaml
    max_download_task: 5
    file_download_concurrency: 4
-   download_min_part_size_mb: 16
+   download_part_size_mb: 64
    ```
 
 3. 对原文件和每轮下载结果运行 `shasum -a 256 文件路径`（Linux 可用 `sha256sum`）。
-   三者哈希必须一致，不能只比较文件长度。日志中的 `fixed range(s)` 表示本次使用的固定分片数。
+   三者哈希必须一致，不能只比较文件长度。日志中的 `in N part(s) with M worker(s)` 表示切片数和实际启动的 worker 数。
+   `Opened independent download connection #…` 表示已通过独立连接收到文件数据，包含文件名和 worker 编号；
+   `Closed independent download connection #…` 表示该连接已清理。应用运行时，这些 INFO 日志同时写入 `log/tdl.log` 和 `log/download.log`。
+   切片数本身不能证明 TCP 连接数。实际连接验收还应通过系统 socket 信息或代理连接页面，
+   确认同一个下载进程存在不同源端口的下载 TCP；同时下载两个至少四片的文件、每文件四个 worker 时，应能看到八条下载连接。
+   统计同时活跃的连接数，不要将网络重连产生的累计连接次数当作并发数。
+   同一 worker 连续下载后续切片时会沿用自己的连接；控制连接和 CDN 连接可能额外出现。
 4. 新建一次多分片测试任务，在有进度后暂停，确认进度停止；恢复后确认分片数不变且哈希一致。
 5. 再新建一次任务，下载一部分后停止程序，保留整个 `temp` 目录，再启动程序。
    任务恢复后应沿用 `.parts/manifest.json` 中的范围，不从零开始，最终哈希仍一致。
-   可以在重启前修改单文件并发数或最小分片大小，验证原任务没有重新分片。
-6. 用约 10 MiB 和 40 MiB 的文件验证最小分片规则：上述配置应分别使用 1 片和 2 片。
+   可以在重启前修改单文件 worker 数或切片大小，验证原任务没有重新分片。
+6. 用约 40 MiB、100 MiB 和 500 MiB 的文件验证切片大小：上述配置应分别使用 1、2 和 8 片，worker 数最多为 4。
 7. 如需验证 Bot 自有消息，再直接给现有 Bot 发送文件，验证进度、引用刷新和最终哈希。
+8. 下载产生数据后，分别通过网页删除、`POST /delete_task?task_id=…`、`POST /batch_delete`（JSON `task_ids`）以及 Bot 的 `/stop` 菜单取消任务。
+   等下载协程结束后，确认对应 `temp/` 中的临时文件、合并文件和 `.parts/` 已删除，连接已关闭；其他下载文件及已完成文件保持原状。
+   `Removed cancelled download data: …` 日志表示具体临时路径已清理。暂停和程序退出后仍应保留断点，以便恢复。
 
 完成时间改善与否取决于账号限速、连接延迟、代理带宽和磁盘。离线测试确认文件正确性和调度规则，
 实际加速比例需要通过上述真实下载对比测量。多分片合并会短暂占用最多约两倍文件大小的临时空间。
@@ -105,7 +119,7 @@ python -B tools/benchmark_download.py --work-dir local_test/resume-test \
   --expected-file /path/to/previous-verified-download.bin
 ```
 
-启动参数可改为 2 片，用来验证原有 4 片计划不会被重新拆分。
+启动参数可改为 2 个 worker，用来验证保存的切片计划和 worker 数不会变化。
 `.resume.json` 会记录恢复的字节基数、保存的分片范围、预期和实际请求偏移以及最终 SHA-256。
 验收时检查 `resumed_from_bytes` 大于 0、请求从各分片断点开始、`completed` 和 `hash_matches` 均为 `true`。
 页面接口的离线集成测试还会验证：恢复后保留一个汇总进度条，已有断点字节不计入初始下载速度。

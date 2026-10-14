@@ -23,7 +23,7 @@ import pyrogram
 from pyrogram.file_id import FileId
 from ruamel.yaml import YAML
 
-from module.parallel_download import CHUNK_SIZE, download_file, parts_path, split_count
+from module.parallel_download import CHUNK_SIZE, download_file, parts_path, part_count
 
 
 def message_target(link):
@@ -57,7 +57,7 @@ def load_config(path):
     if api_id < 1 or not isinstance(api_hash, str) or len(api_hash) != 32:
         raise ValueError("请在本地配置文件填写有效的 api_id 和 api_hash")
     settings = {"file_download_concurrency": config.get("file_download_concurrency", 4),
-                "download_min_part_size_mb": config.get("download_min_part_size_mb", 16)}
+                "download_part_size_mb": config.get("download_part_size_mb", config.get("download_min_part_size_mb", 64))}
     for key, value in settings.items():
         if type(value) is not int or value < 1:
             raise ValueError(f"{key} 必须为正整数")
@@ -94,14 +94,14 @@ def sha256_file(path):
 
 async def benchmark(client, chat, message_id, counts, config, run_dir, expected=None):
     run_dir.mkdir(parents=True, exist_ok=False)
-    minimum = config["download_min_part_size_mb"] * CHUNK_SIZE
+    part_size = config.get("download_part_size_mb", config.get("download_min_part_size_mb", 64)) * CHUNK_SIZE
     rows = []
     original_identity = None
     original_size = None
     expected_hash = sha256_file(expected) if expected else None
     report = {"completed": False, "timezone": "Asia/Shanghai", "pyrogram_version": pyrogram.__version__,
               "proxy_used": bool(config.get("proxy")),
-              "minimum_part_size_mib": config["download_min_part_size_mb"],
+              "part_size_mib": part_size // CHUNK_SIZE,
               "expected_sha256": expected_hash, "runs": rows}
 
     for index, count in enumerate(counts, 1):
@@ -119,9 +119,10 @@ async def benchmark(client, chat, message_id, counts, config, run_dir, expected=
             original_identity, original_size = identity, size
         if identity != original_identity or size != original_size:
             raise ValueError("两轮之间文件发生变化，测速结果不可比较")
-        effective = split_count(size, count, minimum)
+        pieces = part_count(size, part_size)
+        effective = min(count, pieces)
         if count > 1 and effective < 2:
-            raise ValueError("文件太小，无法测试多分片；请选择更大的文件或调整配置")
+            raise ValueError("文件太小，无法测试多分片；请选择更大的文件或调整切片大小配置")
         output = run_dir / f"{index:02d}-{count}-lanes.bin"
         started = time.perf_counter()
         received_at = None
@@ -134,7 +135,7 @@ async def benchmark(client, chat, message_id, counts, config, run_dir, expected=
                 received_at = now
             if now - last_print >= 1 or current == total:
                 elapsed = max(now - started, 0.001)
-                print(f"\r第 {index} 轮：{effective} 片，{current / total:.1%}，"
+                print(f"\r第 {index} 轮：{effective} worker，{pieces} 片，{current / total:.1%}，"
                       f"平均 {current / CHUNK_SIZE / elapsed:.2f} MiB/s", end="", flush=True)
                 last_print = now
 
@@ -143,7 +144,7 @@ async def benchmark(client, chat, message_id, counts, config, run_dir, expected=
 
         try:
             await download_file(client, file_id, size, str(output), identity,
-                                count, progress, ready, minimum)
+                                count, progress, ready, part_size)
         except BaseException:
             report["incomplete_round"] = index
             (run_dir / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -152,7 +153,7 @@ async def benchmark(client, chat, message_id, counts, config, run_dir, expected=
         transfer_seconds = (received_at or finished) - started
         elapsed = finished - started
         digest = sha256_file(output)
-        rows.append({"requested_parts": count, "actual_parts": effective, "bytes": size,
+        rows.append({"requested_workers": count, "actual_workers": effective, "actual_parts": pieces, "bytes": size,
                      "transfer_seconds": round(transfer_seconds, 3),
                      "total_seconds": round(elapsed, 3),
                      "transfer_mib_per_second": round(size / CHUNK_SIZE / transfer_seconds, 3),
@@ -198,18 +199,16 @@ async def resume_download(client, chat, message_id, config, output, count,
             if length < end - start:
                 expected_offsets.append(start // CHUNK_SIZE + length // CHUNK_SIZE)
     report = {"completed": False, "file": str(output), "size": size,
-              "requested_parts": count, "saved_ranges": plan["ranges"] if plan else None,
+              "requested_workers": count, "saved_ranges": plan["ranges"] if plan else None,
               "expected_resume_offsets_mib": expected_offsets,
               "request_offsets_mib": [], "resumed_from_bytes": None,
               "expected_sha256": sha256_file(expected) if expected else None}
     report_path = Path(str(output) + ".resume.json")
     started = time.perf_counter()
     last_print = 0.0
-    original_get_file = client.get_file
 
-    def record_request(file_id, file_size, limit, offset, **kwargs):
+    def record_request(file_id, file_size, limit, offset):
         report["request_offsets_mib"].append(offset)
-        return original_get_file(file_id, file_size, limit, offset, **kwargs)
 
     async def progress(current, total):
         nonlocal last_print
@@ -217,7 +216,7 @@ async def resume_download(client, chat, message_id, config, output, count,
         report["downloaded_bytes"] = current
         if report["resumed_from_bytes"] is None:
             report["resumed_from_bytes"] = current
-            print(f"从 {current / CHUNK_SIZE:.1f} MiB 继续，当前配置上限 {count} 片", flush=True)
+            print(f"从 {current / CHUNK_SIZE:.1f} MiB 继续，当前配置 {count} worker", flush=True)
         if now - last_print >= 1 or current == total:
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
             print(f"\r文件进度：{current / total:.1%}，已下载 {current / CHUNK_SIZE:.1f} MiB",
@@ -232,15 +231,13 @@ async def resume_download(client, chat, message_id, config, output, count,
     async def ready():
         return
 
-    client.get_file = record_request
     try:
         await download_file(client, file_id, size, str(output), identity, count,
-                            progress, ready, config["download_min_part_size_mb"] * CHUNK_SIZE)
+                            progress, ready, config.get("download_part_size_mb", config.get("download_min_part_size_mb", 64)) * CHUNK_SIZE,
+                            request_started=record_request)
     except BaseException:
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         raise
-    finally:
-        client.get_file = original_get_file
     report["total_seconds"] = round(time.perf_counter() - started, 3)
     report["sha256"] = sha256_file(output)
     report["hash_matches"] = report["expected_sha256"] is None or report["sha256"] == report["expected_sha256"]
@@ -261,7 +258,8 @@ async def run(args, config):
     if args.resume_file:
         manifest = parts_path(str(args.resume_file.resolve())) / "manifest.json"
         if manifest.exists():
-            transport_limit = max(transport_limit, len(json.loads(manifest.read_text())["ranges"]))
+            plan = json.loads(manifest.read_text())
+            transport_limit = max(transport_limit, plan.get("workers", len(plan["ranges"])))
     client = pyrogram.Client("telegram-benchmark", api_id=config["api_id"],
                              api_hash=config["api_hash"], workdir=str(session.parent),
                              proxy=config.get("proxy") or None, no_updates=True,
@@ -301,7 +299,7 @@ def main():
     parser.add_argument("--message", help="Telegram 文件消息链接")
     parser.add_argument("--chat", help="或使用聊天 ID/用户名；收藏夹填 me")
     parser.add_argument("--message-id", type=int)
-    parser.add_argument("--lanes", nargs="+", type=int, help="每轮分片上限，默认 1 和配置中的单文件上限")
+    parser.add_argument("--lanes", nargs="+", type=int, help="每轮 worker 数，默认 1 和配置中的单文件并发数")
     parser.add_argument("--expected-file", type=Path, help="可选原始文件，用于额外校验 SHA-256")
     parser.add_argument("--resume-file", type=Path, help="使用固定输出路径测试中断和重新启动续传")
     parser.add_argument("--interrupt-after-mib", type=int, help="仅测试用：下载到指定 MiB 后立即退出进程")

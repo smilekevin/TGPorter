@@ -31,7 +31,7 @@
 
 ### 下载
 
-- **单文件多流并行加速下载** — 在配置文件中设置单文件并发数与最小分片大小，小文件自动减少分片；支持暂停和中断续传，进度统一汇总
+- **单文件多流并行加速下载** — 配置单文件并发 worker 数与固定切片大小，worker 下载完一片后自动领取下一片；支持暂停和中断续传，进度统一汇总
 - **多类型媒体下载** — audio / document / photo / video / voice / animation / video_note
 - **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
 - **单条下载** — 直接发送 `t.me` 链接给 Bot 即可下载
@@ -40,7 +40,7 @@
 - **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
 - **3 次重试** — 每个文件最多重试 3 次，含指数退避（连接错误 10s/20s/40s）
 - **文件引用过期处理** — BadRequest 时自动 fetch_message 刷新引用
-- **临时文件清理** — 下载失败自动清理 `.temp` 文件，启动时清理残留
+- **临时文件清理** — 删除或取消正在下载的任务时清理其临时文件和分片目录；暂停、断网和程序退出保留断点
 
 ### 转发
 
@@ -288,8 +288,8 @@ hide_file_name: false
 
 # 并发控制
 max_download_task: 5  # worker 数量
-file_download_concurrency: 4  # 每个文件首次开始时的分片数上限
-download_min_part_size_mb: 16  # 最小分片大小（MiB），小文件自动减少分片
+file_download_concurrency: 4  # 每个文件的并发下载 worker 数
+download_part_size_mb: 64  # 固定切片大小（MiB），最后一片按剩余大小下载
 
 # WebUI
 web_host: 0.0.0.0
@@ -324,8 +324,8 @@ proxy:
 | `file_formats` | 各类型文件格式过滤 | — |
 | `save_path` | 文件保存路径 | `./downloads` |
 | `max_download_task` | 并发下载 worker 数 | `5` |
-| `file_download_concurrency` | 单文件首次开始时的分片数上限 | `1` |
-| `download_min_part_size_mb` | 最小分片大小，单位 MiB，必须为正整数 | `16` |
+| `file_download_concurrency` | 单文件并发下载 worker 数 | `1` |
+| `download_part_size_mb` | 固定切片大小，单位 MiB，必须为正整数 | `64` |
 | `web_port` | WebUI 端口 | `5000` |
 | `web_login_secret` | WebUI 访问密码；非空时首页和所有接口均需登录，空字符串关闭登录 | `""` |
 | `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
@@ -336,17 +336,21 @@ proxy:
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `date_format` | 日期目录格式 | `%Y_%m` |
 
-实际分片数为 `min(file_download_concurrency, max(1, 文件大小 // 最小分片大小))`。
-例如单文件上限 4、最小分片 16 MiB 时，10 MiB 文件为 1 片，40 MiB 为 2 片，100 MiB 为 4 片。
-每个文件独立创建固定分片，分片完成后直接结束，不重新拆分剩余数据，也不预留全局下载名额。
-同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 片时，最多有 20 个分片下载协程。
-暂停、重试和程序重启沿用保存的分片范围，进度条显示各分片已下载字节之和。
-续传恢复的已有字节作为进度基数，速度只统计重新收到的数据。
-修改配置后重启程序，已存在断点的文件继续使用原分片计划。旧的 `download_concurrency` 配置已移除。
+文件按 `download_part_size_mb` 切成固定大小的切片，最后一片为剩余大小。
+例如每片 64 MiB 时，40 MiB 文件为 1 片，100 MiB 为 2 片，500 MiB 为 8 片。
+每个文件启动最多 `file_download_concurrency` 个 worker；每个 worker 下载完一片后从队列领取下一片，直到全部完成，再按切片顺序合并。
+每个 worker 使用独立的 Telegram 下载 TCP 连接，并在连续下载后续切片时沿用自己的连接；不同 worker 和文件不共用下载连接。
+暂停时保留连接，完成、取消或客户端重启时关闭连接。
+通过网页、Web API 或 Bot 取消正在下载的任务时，先关闭连接，再清理该文件在 `temp/` 中的临时文件和 `.parts/` 目录；已完成文件按原来的“同时删除本地文件”选项处理。
+同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 个 worker 时，最多有 20 个并发下载 worker，没有额外的总并发配置。
+切片大小和 worker 数在文件首次开始时保存，暂停、重试和程序重启后继续使用该计划，不重复下载已完成切片。
+进度条汇总所有切片的已下载字节，续传恢复的已有字节不计入新传输速度。
+旧版分片断点仍可续传。旧 `download_min_part_size_mb` 在没有新字段时作为切片大小的兼容值读取，保存配置时迁移为 `download_part_size_mb`；旧 `download_concurrency` 已移除。
 
 分片断点保存在 `temp/…/文件名.parts/` 中，部署时应持久化整个 `temp` 目录。
 多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
 离线验证和真实下载验收步骤见 [分片下载测试说明](docs/parallel-download-testing.md)。
+`log/tdl.log` 和 `log/download.log` 中的 `Opened independent download connection #…` 记录独立下载连接的打开，包含文件名和 worker 编号；对应的 `Closed independent download connection #…` 记录连接关闭。
 
 ---
 
@@ -626,7 +630,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Download
 
-- **Parallel streams for faster single-file downloads** — configure per-file concurrency and minimum part size; small files use fewer parts, with pause/resume, interruption recovery and aggregate progress
+- **Parallel streams for faster single-file downloads** — configure per-file workers and fixed part size; workers take the next part when finished, with pause/resume, interruption recovery and aggregate progress
 - **Multi-type media** — audio / document / photo / video / voice / animation / video_note
 - **Batch download** — specify message ID range `[start, end]` with optional filter
 - **Single download** — send a `t.me` link to the Bot
@@ -635,7 +639,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Size mismatch** — backs up existing file (.bak), re-downloads, deletes backup on success
 - **3 retries** — per file, with exponential backoff for connection errors (10s/20s/40s)
 - **File reference refresh** — auto fetch_message on BadRequest
-- **Temp file cleanup** — failed downloads clean up `.temp` files, stale files removed on startup
+- **Temp file cleanup** — deleting or cancelling an active download removes its staging files and part directory; pauses, network interruptions and process exit retain checkpoints
 
 ### Forward
 
@@ -882,8 +886,8 @@ hide_file_name: false
 
 # Concurrency
 max_download_task: 5  # number of workers
-file_download_concurrency: 4  # initial maximum range count per file
-download_min_part_size_mb: 16  # minimum part size in MiB; smaller files use fewer ranges
+file_download_concurrency: 4  # concurrent download workers per file
+download_part_size_mb: 64  # fixed part size in MiB; the final part uses the remaining size
 
 # WebUI
 web_host: 0.0.0.0
@@ -918,8 +922,8 @@ proxy:
 | `file_formats` | Format filter per type | — |
 | `save_path` | File save path | `./downloads` |
 | `max_download_task` | Concurrent download workers | `5` |
-| `file_download_concurrency` | Maximum initial range count per file | `1` |
-| `download_min_part_size_mb` | Minimum part size in MiB; positive integer | `16` |
+| `file_download_concurrency` | Concurrent download workers per file | `1` |
+| `download_part_size_mb` | Fixed part size in MiB; positive integer | `64` |
 | `web_port` | WebUI port | `5000` |
 | `web_login_secret` | WebUI password; a non-empty value protects the dashboard and all APIs, an empty string disables login | `""` |
 | `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
@@ -930,18 +934,25 @@ proxy:
 | `enable_download_txt` | Save text-only messages as .txt | `false` |
 | `date_format` | Date directory format | `%Y_%m` |
 
-The initial range count is `min(file_download_concurrency, max(1, file_size // minimum_part_size))`.
-Files create their fixed ranges independently. Finished ranges simply stop; remaining work is not split again,
-and there is no global download-slot reservation. The existing `max_download_task` setting limits simultaneous
-files: five files with four ranges each can run up to twenty download coroutines.
-Pauses, retries and process restarts reuse the saved ranges. The progress bar sums bytes across all parts,
-while resumed checkpoint bytes do not count toward the new transfer speed.
-Restart the process after changing settings; existing checkpoints keep their original range plan.
-The earlier `download_concurrency` setting has been removed.
+Files are split into fixed-size parts using `download_part_size_mb`; the final part contains the remaining bytes.
+At 64 MiB per part, a 40 MiB file has one part, a 100 MiB file has two and a 500 MiB file has eight.
+Each file starts up to `file_download_concurrency` workers. Finished workers take the next queued part until
+all parts are complete, then the parts are merged in order. Each worker owns an independent Telegram download
+TCP connection and uses it for successive parts; different workers and files do not share download connections.
+Pauses retain connections; completion, cancellation and client restart close them. `max_download_task` limits
+simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
+Cancelling an active download through WebUI, the Web API or the bot closes its connections before removing
+its staging files and `.parts/` directory in `temp/`. Completed files still follow the existing option to delete local files.
+The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
+Progress sums downloaded bytes across all parts; resumed bytes do not count toward new transfer speed.
+Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
+legacy part-size value and migrated to `download_part_size_mb` when saving. The earlier `download_concurrency` setting has been removed.
 
 Persist the entire `temp` directory, including `filename.parts/` checkpoints. Merging multiple parts may
 temporarily require twice the file size in disk space; a single part is moved without a full extra copy.
 See the [download test guide](docs/parallel-download-testing.md) for offline and live acceptance checks.
+In `log/tdl.log` and `log/download.log`, `Opened independent download connection #…` records a connection opening
+with its file and worker number; the matching `Closed independent download connection #…` records its closure.
 
 ---
 

@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from module.parallel_download import CHUNK_SIZE as MB
-from module.parallel_download import download_file, parts_path, split_count
+from module.parallel_download import download_file, parts_path, part_count
 
 
 class Stopped(Exception):
@@ -70,10 +70,10 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(total, len(self.data))
         self.progress.append(current)
 
-    async def download(self, count=3, minimum=MB):
+    async def download(self, count=3, part_size=3 * MB):
         return await download_file(self.client, "file-id", len(self.data), str(self.path),
                                    "file-identity", count,
-                                   self.report, self.wait_ready, minimum)
+                                   self.report, self.wait_ready, part_size)
 
     async def until(self, predicate):
         async def wait():
@@ -102,21 +102,23 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(self.client.tracker["peak"], 1)
         self.assertFalse(parts_path(str(self.path)).exists())
 
-    async def test_completed_range_does_not_split_remaining_ranges(self):
+    async def test_fast_worker_takes_next_parts_while_slow_worker_keeps_its_part(self):
         release = asyncio.Event()
 
         async def before(index):
-            if index >= 3:
+            if index == 0:
                 await release.wait()
         self.client.before_chunk = before
-        task = asyncio.create_task(self.download())
+        task = asyncio.create_task(self.download(count=2, part_size=MB))
         try:
-            await self.until(lambda: len(self.client.calls) == 3
-                             and self.client.tracker["active"] == 2)
-            self.assertEqual(len(self.client.calls), 3)
+            await self.until(lambda: len(self.client.calls) == 9
+                             and self.client.tracker["active"] == 1)
+            self.assertEqual([offset for offset, _ in self.client.calls], list(range(9)))
+            self.assertEqual(self.client.tracker["peak"], 2)
             plan = json.loads((parts_path(str(self.path)) / "manifest.json").read_text())
-            self.assertEqual(plan["ranges"], [[0, 3 * MB], [3 * MB, 6 * MB],
-                                             [6 * MB, len(self.data)]])
+            self.assertEqual(plan["workers"], 2)
+            self.assertEqual(plan["ranges"], [[i * MB, min((i + 1) * MB, len(self.data))]
+                                             for i in range(9)])
         finally:
             release.set()
             await task
@@ -135,7 +137,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
             for index, client in enumerate(clients):
                 tasks.append(asyncio.create_task(download_file(
                     client, "id", len(self.data), str(self.path) + str(index),
-                    "identity", 4, self.report, self.wait_ready)))
+                    "identity", 4, self.report, self.wait_ready, 2 * MB)))
             await self.until(lambda: tracker["active"] == 8)
             self.assertEqual([len(client.calls) for client in clients], [4, 4])
         finally:
@@ -182,8 +184,8 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.path.exists())
         self.client.early_end = None
         self.client.calls.clear()
-        # Restart with a new count and a minimum larger than the entire file.
-        await self.download(count=1, minimum=100 * MB)
+        # Restart with a new count and a part size larger than the entire file.
+        await self.download(count=1, part_size=100 * MB)
         self.assert_file()
         self.assertNotIn((0, 3), self.client.calls)
         self.assertEqual(len(json.loads(plan)["ranges"]), 3)
@@ -239,7 +241,7 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
         self.assertEqual(result.returncode, 86, result.stderr)
         saved = sum(p.stat().st_size for p in parts_path(str(self.path)).glob("*.part"))
         self.assertGreaterEqual(saved, 3 * MB)
-        await self.download(count=1, minimum=100 * MB)
+        await self.download(count=1, part_size=100 * MB)
         self.assertEqual(self.progress[0], saved)
         self.assert_file()
 
@@ -283,6 +285,32 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
             release.set()
             await first
 
+    async def test_discard_waiting_for_file_lock_does_not_delete_other_active_download(self):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def block(_):
+            entered.set()
+            await release.wait()
+
+        self.client.before_chunk = block
+        first = asyncio.create_task(self.download())
+        await asyncio.wait_for(entered.wait(), 2)
+        second = asyncio.create_task(download_file(
+            self.client, "file-id", len(self.data), str(self.path), "file-identity", 4,
+            self.report, self.wait_ready, MB, discard_requested=lambda: True))
+        try:
+            await asyncio.sleep(0.01)
+            second.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await second
+            self.assertTrue(parts_path(str(self.path)).exists())
+            self.assertFalse(first.done())
+        finally:
+            release.set()
+            await first
+        self.assert_file()
+
     async def test_import_old_sequential_checkpoint_and_refetch_incomplete_block(self):
         Path(str(self.path) + ".temp").write_bytes(self.data[:MB + 100])
         await self.download()
@@ -290,9 +318,22 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
         self.assertEqual(self.progress[0], MB)
         self.assertTrue(all(offset != 0 for offset, _ in self.client.calls))
 
-    async def test_minimum_reduces_fixed_range_count_in_actual_download(self):
-        await self.download(count=4, minimum=3 * MB)
-        self.assertEqual(len(self.client.calls), 2)
+    async def test_legacy_fixed_range_manifest_resumes_without_repartitioning(self):
+        directory = parts_path(str(self.path))
+        directory.mkdir()
+        ranges = [[0, 3 * MB], [3 * MB, 6 * MB], [6 * MB, len(self.data)]]
+        (directory / "manifest.json").write_text(json.dumps({
+            "version": 1, "size": len(self.data), "identity": "file-identity",
+            "ranges": ranges, "import_pending": False}))
+        (directory / "0.part").write_bytes(self.data[:MB])
+        await self.download(count=1, part_size=64 * MB)
+        self.assertEqual(self.progress[0], MB)
+        self.assertEqual(sorted(self.client.calls), [(1, 2), (3, 3), (6, 3)])
+        self.assert_file()
+
+    async def test_fixed_size_parts_include_short_final_part(self):
+        await self.download(count=4, part_size=3 * MB)
+        self.assertEqual(len(self.client.calls), 3)
         self.assert_file()
 
     async def test_single_range_checkpoint_survives_callback_interruption(self):
@@ -303,7 +344,7 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
             await original(current, total)
         self.report = interrupted
         with self.assertRaises(Stopped):
-            await self.download(count=1)
+            await self.download(count=1, part_size=100 * MB)
         self.assertTrue(self.path.exists())
         self.client.calls.clear()
         self.report = original
@@ -355,14 +396,12 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
         self.assertEqual((directory / "0.part").read_bytes(), before)
 
 
-class SplitCountTests(unittest.TestCase):
-    def test_minimum_reduces_part_count_using_floor_division(self):
-        for size, expected in ((10, 1), (16, 1), (31, 1), (32, 2),
-                               (40, 2), (48, 3), (64, 4), (100, 4)):
+class PartCountTests(unittest.TestCase):
+    def test_fixed_size_part_count_includes_short_tail(self):
+        for size, expected in ((10, 1), (64, 1), (65, 2), (128, 2), (129, 3), (256, 4)):
             with self.subTest(size=size):
-                self.assertEqual(split_count(size * MB, 4, 16 * MB), expected)
-        self.assertEqual(split_count(32 * MB - 1, 4, 16 * MB), 1)
-        self.assertEqual(split_count(0, 4, 16 * MB), 1)
+                self.assertEqual(part_count(size * MB, 64 * MB), expected)
+        self.assertEqual(part_count(64 * MB + 1, 64 * MB), 2)
 
 
 if __name__ == "__main__":

@@ -552,7 +552,9 @@ def web_delete_task():
             composite_key = f"{chat_id}_{msg_id}"
             if composite_key == str(task_id) or str(value.get("task_id", "")) == str(task_id):
                 file_path = value.get("file_name", "")
-                remove_download_cache(chat_id, msg_id)
+                # The running attempt clears/updates its cache after closing its
+                # writers; clearing it here could start a second writer too soon.
+                remove_download_cache(chat_id, msg_id, only_finished=True)
 
     # Delete local file if requested
     file_deleted = False

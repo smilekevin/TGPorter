@@ -101,7 +101,7 @@ def _cleanup_stopped_task(node):
                     )
                     recorded += 1
                     # Delete only incomplete entries from download result
-                    _delete_download_progress(f"{chat_id}_{msg_id}")
+                    _delete_download_progress(f"{chat_id}_{msg_id}", discard_partial=False)
                     removed += 1
         if removed > 0:
             logger.info(f"Cleaned up {removed} download entries for stopped task {task_id_display}")
@@ -328,16 +328,16 @@ class DownloadBot:
         """Remove task node"""
         self.task_node.pop(task_id)
 
-    def stop_task(self, task_id: str):
+    def stop_task(self, task_id: str, *, discard_partial=True):
         """Stop task"""
         if task_id == "all":
             for value in self.task_node.values():
-                value.stop_transmission()
+                value.stop_transmission(discard_partial=discard_partial)
         else:
             try:
                 task = self.task_node.get(int(task_id))
                 if task:
-                    task.stop_transmission()
+                    task.stop_transmission(discard_partial=discard_partial)
             except Exception:
                 return
 
@@ -1015,7 +1015,7 @@ async def stop_download_bot():
     """Stop download bot"""
     _bot.update_config()
     _bot.is_running = False
-    _bot.stop_task("all")
+    _bot.stop_task("all", discard_partial=False)
     background_tasks = [
         task for task in [_bot.reply_task, _bot._pending_consumer_task,
                           *_bot._range_tasks.values()] if task is not None

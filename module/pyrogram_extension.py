@@ -53,9 +53,11 @@ _mimetypes.readfp(StringIO(mime_types))
 _download_cache = Cache(1024 * 1024 * 1024)
 
 
-def remove_download_cache(chat_id, message_id):
+def remove_download_cache(chat_id, message_id, *, only_finished=False):
     """Remove a specific entry from download cache."""
     try:
+        if only_finished and _download_cache[(chat_id, message_id)] is DownloadStatus.Downloading:
+            return
         _download_cache.store.pop((chat_id, message_id), None)
     except Exception as e:
         logger.warning(f"Failed to remove download cache ({chat_id}, {message_id}): {e}")
@@ -1630,6 +1632,11 @@ class HookClient(pyrogram.Client):
 
         super().__init__(name, **kwargs)
 
+    async def terminate(self):
+        from module.download_connection import close_download_connections
+        await close_download_connections(self)
+        await super().terminate()
+
     async def connect(
         self,
     ) -> bool:
@@ -1692,6 +1699,7 @@ class HookClient(pyrogram.Client):
             self.me = await self.get_me()
             await self.initialize()
             await self.dispatcher.start()
+            self._download_connections_closing = False
 
             return self
 

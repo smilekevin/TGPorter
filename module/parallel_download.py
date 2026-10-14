@@ -1,4 +1,4 @@
-"""Fixed-range downloads with one aggregate progress callback per file."""
+"""Queued fixed-size parts with independent worker connections and aggregate progress."""
 
 import asyncio
 import json
@@ -8,6 +8,8 @@ from pathlib import Path
 from weakref import WeakValueDictionary
 
 from loguru import logger
+
+from module.download_connection import DownloadConnection
 
 
 CHUNK_SIZE = 1024 * 1024
@@ -22,6 +24,22 @@ def has_parts(file_name):
     return parts_path(file_name).exists()
 
 
+def discard_partial_download(file_name):
+    """Delete only this download's staging files after its writers have stopped."""
+    directory = parts_path(file_name)
+    for path in (Path(file_name), Path(file_name + ".temp"), directory):
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path == directory and path.is_dir():
+                shutil.rmtree(path)
+            else:
+                continue
+            logger.info("Removed cancelled download data: {}", path)
+        except OSError as error:
+            logger.warning("Could not remove cancelled download data {}: {}", path, error)
+
+
 def _save_plan(directory, plan):
     temporary = directory / "manifest.json.tmp"
     with temporary.open("w", encoding="utf-8") as file:
@@ -29,39 +47,32 @@ def _save_plan(directory, plan):
     os.replace(temporary, directory / "manifest.json")
 
 
-def _ranges(size, count):
-    chunks = (size + CHUNK_SIZE - 1) // CHUNK_SIZE
-    count = min(count, chunks)
-    ranges = []
-    for index in range(count):
-        start = (chunks * index // count) * CHUNK_SIZE
-        end = min((chunks * (index + 1) // count) * CHUNK_SIZE, size)
-        ranges.append([start, end])
-    return ranges
+def part_count(size, part_size):
+    """Count fixed-size parts, including a shorter final part."""
+    return max(1, (size + part_size - 1) // part_size)
 
 
-def split_count(size, requested, minimum):
-    """Reduce the initial range count for small files, with at least one."""
-    if size <= 0:
-        return 1
-    return max(1, min(requested, size // minimum))
-
-
-def _make_plan(size, count, identity, import_pending):
-    ranges = _ranges(size, count)
-    return {"version": 1, "size": size, "identity": identity,
-            "ranges": ranges, "import_pending": import_pending}
+def _make_plan(size, workers, identity, import_pending, part_size):
+    ranges = [[start, min(start + part_size, size)] for start in range(0, size, part_size)]
+    return {"version": 2, "size": size, "identity": identity,
+            "ranges": ranges, "workers": min(workers, len(ranges)),
+            "part_size": part_size, "import_pending": import_pending}
 
 
 def _read_plan(directory, size, identity):
     with (directory / "manifest.json").open(encoding="utf-8") as file:
         plan = json.load(file)
-    if (plan.get("version") != 1 or plan.get("size") != size
+    if (plan.get("version") not in (1, 2) or plan.get("size") != size
             or plan.get("identity") != identity):
         raise ValueError("Partial download belongs to a different file")
     ranges = plan.get("ranges")
     if not isinstance(ranges, list) or not ranges:
         raise ValueError("Invalid partial download ranges")
+    if plan["version"] == 2:
+        if type(plan.get("workers")) is not int or not 1 <= plan["workers"] <= len(ranges):
+            raise ValueError("Invalid partial download worker count")
+        if type(plan.get("part_size")) is not int or plan["part_size"] < CHUNK_SIZE or plan["part_size"] % CHUNK_SIZE:
+            raise ValueError("Invalid partial download part size")
     previous = 0
     for bounds in ranges:
         if (not isinstance(bounds, list) or len(bounds) != 2
@@ -78,18 +89,24 @@ def _read_plan(directory, size, identity):
 
 
 async def download_file(client, file_id, size, file_name, identity, parallelism,
-                        progress, wait_ready, minimum=CHUNK_SIZE):
+                        progress, wait_ready, part_size=64 * CHUNK_SIZE, request_started=None,
+                        discard_requested=None):
     """Keep ranges across retries/restarts and validate every received block.
 
-    Each file starts its fixed ranges independently of other files.
+    Workers take the next unfinished part when their current part completes.
     Part lengths are its checkpoints; incomplete blocks are fetched again.
     """
     async def run():
         key = os.path.abspath(file_name)
         lock = _file_locks.setdefault(key, asyncio.Lock())
         async with lock:
-            return await _download_file(client, file_id, size, file_name, identity,
-                                        parallelism, progress, wait_ready, minimum)
+            try:
+                return await _download_file(client, file_id, size, file_name, identity,
+                                            parallelism, progress, wait_ready, part_size,
+                                            request_started)
+            finally:
+                if discard_requested is not None and discard_requested():
+                    discard_partial_download(file_name)
 
     async def watch_control():
         # Cancellation must work even when a request or slot acquisition hangs.
@@ -111,12 +128,12 @@ async def download_file(client, file_id, size, file_name, identity, parallelism,
 
 
 async def _download_file(client, file_id, size, file_name, identity, parallelism,
-                         progress, wait_ready, minimum):
+                         progress, wait_ready, part_size, request_started):
+    if size <= 0 or parallelism < 1 or part_size < CHUNK_SIZE or part_size % CHUNK_SIZE:
+        raise ValueError("File size and worker count must be positive; part size must be whole MiB")
     directory = parts_path(file_name)
     manifest = directory / "manifest.json"
     plan = _read_plan(directory, size, identity) if manifest.exists() else None
-    desired = len(plan["ranges"]) if plan else split_count(size, parallelism, minimum)
-    # Every file owns its initial ranges; no global slot reservation.
     await wait_ready()
     legacy = Path(file_name + ".temp")
     # A previous attempt may have finished before its final callback returned.
@@ -127,10 +144,9 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
         return file_name
     if plan is None:
         directory.mkdir(parents=True, exist_ok=True)
-        plan = _make_plan(size, desired, identity, legacy.exists())
+        plan = _make_plan(size, parallelism, identity, legacy.exists(), part_size)
         _save_plan(directory, plan)
     ranges = plan["ranges"]
-    logger.info("Downloading {} in {} fixed range(s)", file_name, len(ranges))
     paths = [directory / f"{index}.part" for index in range(len(ranges))]
 
     # Import an old sequential checkpoint without deleting it until copied.
@@ -180,16 +196,18 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
     async def stream_progress(*_):
         await wait_ready()
 
-    async def download_range(index):
+    async def download_range(index, connection):
         start, end = ranges[index]
         if downloaded[index] == end - start:
             return
-        # Completed ranges are not replaced or redistributed.
         await wait_ready()
         offset = (start + downloaded[index]) // CHUNK_SIZE
         remaining = (end - start - downloaded[index] + CHUNK_SIZE - 1) // CHUNK_SIZE
-        stream = client.get_file(file_id, size, remaining, offset,
-                                 progress=stream_progress)
+        if request_started:
+            request_started(file_id, size, remaining, offset)
+        stream = connection.get_file(file_id, size, remaining, offset, stream_progress)
+        logger.info("Downloading {} part {}/{} at offset {}", file_name,
+                    index + 1, len(ranges), start + downloaded[index])
         try:
             with paths[index].open("ab") as file:
                 async for chunk in stream:
@@ -203,12 +221,30 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
                     await report()
             if downloaded[index] != end - start:
                 # Pyrogram can swallow network/reference errors in get_file.
-                raise ConnectionError("Parallel download stream ended early")
+                raise ConnectionError("Part download stream ended early")
         finally:
             await stream.aclose()
 
     await report()
-    tasks = [asyncio.create_task(download_range(index)) for index in range(len(ranges))]
+    queue = asyncio.Queue()
+    for index, (start, end) in enumerate(ranges):
+        if downloaded[index] < end - start:
+            queue.put_nowait(index)
+    workers = min(plan.get("workers", len(ranges)), queue.qsize())
+    logger.info("Downloading {} in {} part(s) with {} worker(s)", file_name, len(ranges), workers)
+
+    async def worker(index):
+        async with DownloadConnection(client, f"{file_name} worker {index + 1}/{workers}") as connection:
+            while True:
+                await wait_ready()
+                try:
+                    part = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                await download_range(part, connection)
+                await asyncio.sleep(0)
+
+    tasks = [asyncio.create_task(worker(index)) for index in range(workers)]
     try:
         await asyncio.gather(*tasks)
     finally:

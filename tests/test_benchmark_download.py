@@ -31,19 +31,19 @@ class BenchmarkTests(unittest.IsolatedAsyncioTestCase):
             original = Path(directory) / "original.bin"
             original.write_bytes(data)
             with redirect_stdout(io.StringIO()), patch("tools.benchmark_download.os._exit", side_effect=Stopped), self.assertRaises(Stopped):
-                await resume_download(client, "me", 42, {"download_min_part_size_mb": 1},
+                await resume_download(client, "me", 42, {"download_part_size_mb": 1},
                                       output, 3, original, interrupt_after_mib=1)
             partial = json.loads(Path(str(output) + ".resume.json").read_text())
             self.assertTrue(partial["deliberately_interrupted"])
             self.assertFalse(partial["completed"])
             with redirect_stdout(io.StringIO()):
                 report = await resume_download(client, "me", 42,
-                                               {"download_min_part_size_mb": 100},
+                                               {"download_part_size_mb": 100},
                                                output, 1, original)
             self.assertTrue(report["completed"])
             self.assertTrue(report["hash_matches"])
             self.assertGreaterEqual(report["resumed_from_bytes"], MB)
-            self.assertEqual(len(report["saved_ranges"]), 3)
+            self.assertEqual(len(report["saved_ranges"]), 7)
             self.assertEqual(report["request_offsets_mib"], report["expected_resume_offsets_mib"])
             self.assertEqual(output.read_bytes(), data)
 
@@ -56,13 +56,13 @@ class BenchmarkTests(unittest.IsolatedAsyncioTestCase):
                                     file_unique_id="offline")
             client = FakeClient(data)
             client.get_messages = AsyncMock(return_value=SimpleNamespace(document=media))
-            config = {"download_min_part_size_mb": 1}
+            config = {"download_part_size_mb": 1}
             run_dir = Path(directory) / "run"
             with redirect_stdout(io.StringIO()):
                 report = await benchmark(client, "me", 42, [1, 4], config, run_dir)
             self.assertTrue(report["completed"])
             self.assertTrue(report["hashes_match"])
-            self.assertEqual([row["actual_parts"] for row in report["runs"]], [1, 4])
+            self.assertEqual([row["actual_workers"] for row in report["runs"]], [1, 4])
             expected = hashlib.sha256(data).hexdigest()
             self.assertTrue(all(row["sha256"] == expected for row in report["runs"]))
             self.assertTrue(all(row["total_seconds"] >= row["transfer_seconds"]
@@ -85,7 +85,7 @@ class BenchmarkTests(unittest.IsolatedAsyncioTestCase):
             run_dir = Path(directory) / "run"
             with redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                 await benchmark(client, "me", 42, [1],
-                                {"download_min_part_size_mb": 1},
+                                {"download_part_size_mb": 1},
                                 run_dir, expected)
             report = json.loads((run_dir / "results.json").read_text())
             self.assertFalse(report["completed"])
