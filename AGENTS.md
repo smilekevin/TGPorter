@@ -72,6 +72,15 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 - `module/parsetab.py` is generated parser output, not the primary implementation entry point. Make filtering changes in `module/filter.py` first.
 - Never commit real `config.yaml`, `data.yaml`, sessions, Bot Tokens, API credentials, runtime logs, downloaded files, or checkpoints. Keep these out of debug output and PR descriptions as well.
 
+## Documentation Synchronization
+
+- For future project changes, update `README.md` and `DEPLOY.md` together in the same change set. Keep both documents consistent with the final behavior, configuration and supported usage; do not update only one of them.
+- `README.md` owns the project overview, features, architecture, Bot commands, Web API and short startup summaries. Deployment entries must link to `DEPLOY.md`.
+- `DEPLOY.md` owns prerequisites, credentials, complete installation and login steps, configuration examples and defaults, parallel-download settings and checkpoints, image updates, local builds, persistence, proxies and troubleshooting.
+- Maintain both Chinese and English sections when updating either document. Preserve the project/image name `telegram-media-downloader` and the service/container name `telegam-media-downloader`.
+- Keep summaries and links aligned with the detailed guide instead of duplicating complete commands, configuration blocks or persistence tables in README.
+- Before finishing, check relative links and heading anchors, run `git diff --check`, and verify commands, image tags, configuration defaults and paths against `config.yaml.example`, `docker-compose.yaml`, the workflows and relevant source code.
+
 ## Development and Validation
 
 Run commands from the repository root and use an isolated Python environment:
