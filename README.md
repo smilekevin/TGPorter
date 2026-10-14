@@ -175,8 +175,6 @@ flowchart TB
     Workers --> Clients
     Clients <-->|下载 / 转发| Telegram
     Workers --> Stats
-    Stats -.->|任务列表| Web
-    Stats -.->|进度通知| Bot
     Store -.->|任务与编号| Data
     Stats -.->|完成 / 失败历史| Data
     Clients -.->|媒体 / session| Data
@@ -189,7 +187,7 @@ flowchart TB
     class Store,Stats,Data storage
 ```
 
-实线表示任务与媒体处理，虚线表示状态通知、持久化或批量/监听入口。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。
+实线表示任务与媒体处理，虚线表示持久化或批量/监听入口。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。下载进度与历史同时供 WebUI 显示和 Bot 通知使用。
 
 ### 核心流程
 

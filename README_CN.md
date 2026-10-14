@@ -176,8 +176,6 @@ flowchart TB
     Workers --> Clients
     Clients <-->|Download / forward| Telegram
     Workers --> Stats
-    Stats -.->|Task lists| Web
-    Stats -.->|Progress notifications| Bot
     Store -.->|Tasks and IDs| Data
     Stats -.->|Completed / failed history| Data
     Clients -.->|Media / sessions| Data
@@ -190,7 +188,7 @@ flowchart TB
     class Store,Stats,Data storage
 ```
 
-Solid edges show task and media processing. Dashed edges show notifications, persistence, or batch/monitoring entry points. Single downloads are persisted before the consumer feeds the worker queue; history scans and live monitoring feed the same queue.
+Solid edges show task and media processing. Dashed edges show persistence or batch/monitoring entry points. Single downloads are persisted before the consumer feeds the worker queue; history scans and live monitoring feed the same queue. Progress and history also supply WebUI views and Bot notifications.
 
 ### Core Flow
 
