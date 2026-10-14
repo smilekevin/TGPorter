@@ -141,52 +141,60 @@ PR checks run the tests and build the Alpine Docker image for amd64 and arm64. L
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    User["User"]
+    Telegram["Telegram"]
+
+    subgraph Container["Docker Container"]
+        direction TB
+        Bot["Bot commands and media<br/>Pyrogram"]
+        Web["WebUI<br/>Flask :5000"]
+        Store["Task persistence<br/>task_store.py"]
+        Recovery["Startup recovery<br/>recover_tasks()"]
+        Consumer["Pending Consumer<br/>Every 2 seconds"]
+        Scan["History scans / live monitoring"]
+        Queue["asyncio.Queue<br/>(message, node)"]
+        Workers["Worker Pool<br/>Limit: max_download_task"]
+        Clients["Select message owner<br/>Bot / User Client"]
+        Stats["Progress and download history<br/>download_stat.py"]
+    end
+
+    Data[("Persistent host mounts<br/>log / downloads / temp / sessions")]
+
+    User --> Bot
+    User --> Web
+    Bot -->|Save task| Store
+    Web -->|Retry task| Store
+    Recovery -->|Restore states and IDs| Store
+    Store -->|Read Pending| Consumer
+    Consumer -->|Single download| Queue
+    Consumer -->|Recover range task| Scan
+    Bot -.->|Batch / monitoring| Scan
+    Scan --> Queue
+    Queue --> Workers
+    Workers --> Clients
+    Clients <-->|Download / forward| Telegram
+    Workers --> Stats
+    Stats -.->|Task lists| Web
+    Stats -.->|Progress notifications| Bot
+    Store -.->|Tasks and IDs| Data
+    Stats -.->|Completed / failed history| Data
+    Clients -.->|Media / sessions| Data
+
+    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
+    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
+    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
+    class Bot,Web entry
+    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class Store,Stats,Data storage
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Docker Container                  │
-│                                                       │
-│  ┌──────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │ Bot (TG) │   │  WebUI :5000 │   │  Worker Pool │ │
-│  │ Pyrogram │   │   Flask      │   │  (N workers) │ │
-│  └────┬─────┘   └──────┬───────┘   └──────┬───────┘ │
-│       │                │                   │         │
-│       │    ┌───────────┼───────────────────┘         │
-│       │    │           │                             │
-│       ▼    ▼           ▼                             │
-│  ┌────────────────────────────┐                      │
-│  │    asyncio.Queue           │                      │
-│  │  (message, node) tuples    │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  Pending Consumer Loop     │                      │
-│  │  (every 5s, fill workers)  │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  task_store.py             │                      │
-│  │  log/bot_tasks.json        │                      │
-│  │  log/task_counter.json     │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  download_stat.py          │                      │
-│  │  log/download_history.json │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  Downloads / Sessions      │                      │
-│  │  /app/downloads/           │                      │
-│  │  /app/sessions/            │                      │
-│  └────────────────────────────┘                      │
-└─────────────────────────────────────────────────────┘
-```
+
+Solid edges show task and media processing. Dashed edges show notifications, persistence, or batch/monitoring entry points. Single downloads are persisted before the consumer feeds the worker queue; history scans and live monitoring feed the same queue.
 
 ### Core Flow
 
-1. **User sends command** → Bot handler creates TaskNode → `save_task()` persists → `add_download_task()` enqueues
+1. **User submits a single download** → Bot handler creates TaskNode → `save_task()` persists Pending → consumer fetches message → `add_download_task()` enqueues
 2. **Worker dequeues** → `download_task()` → `download_media()` → Pyrogram download
 3. **Progress callback** → `update_download_status()` updates `_download_result` → 20% milestone triggers Bot notification
 4. **Download complete** → `complete_task()` removes from store → `save_downloads()` writes history
@@ -197,16 +205,22 @@ PR checks run the tests and build the Alpine Docker image for amd64 and arm64. L
 
 On restart, all incomplete tasks enter the pending queue instead of resuming directly. This prevents FLOOD_WAIT storms from 100+ tasks resuming simultaneously.
 
+```mermaid
+flowchart TB
+    Tick["Check Pending tasks every 2 seconds"] --> Slot{"Free concurrency slot?"}
+    Slot -->|No| Wait["Keep Pending<br/>Wait for the next tick"]
+    Slot -->|Yes| Type{"Single or range task?"}
+    Type -->|Range| Scan["Restore history scan<br/>Feed the worker queue"]
+    Type -->|Single| Fetch["Use cached message or fetch with its owning account<br/>get_messages timeout: 300 seconds"]
+    Fetch -->|Success| Enqueue["Notify and attempt queue handoff"]
+    Enqueue -->|Accepted| Download["Worker starts download"]
+    Enqueue -->|Rejected / cancelled| Wait
+    Fetch -->|FLOOD_WAIT / network error / timeout| Cooldown["Set cooldown and backoff"]
+    Cooldown --> Wait
+    Fetch -->|Empty message / non-network error| Failed["Record failure and remove Pending"]
 ```
-pending task → _consume_one_pending() → get_messages(300s timeout)
-    ├─ success → create placeholder → add_download_task() → worker downloads
-    ├─ FloodWait → global cooldown → task stays pending → notify user
-    ├─ timeout → record as failed → remove pending
-    └─ other error → record as failed → remove pending
 
-_pending_consumer_loop() every 5s:
-    └─ fill up to max_download_task pending tasks into worker queue
-```
+Active workers and fetching/queued reservations share the concurrency limit; each task is consumed once. Network errors leave tasks Pending for retry after cooldown. Rejected or cancelled queue handoffs release their reservations.
 
 ### TCP Timeout Patch
 

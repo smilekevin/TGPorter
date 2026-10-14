@@ -140,52 +140,60 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ## 架构设计
 
+```mermaid
+flowchart TB
+    User["用户"]
+    Telegram["Telegram"]
+
+    subgraph Container["Docker 容器"]
+        direction TB
+        Bot["Bot 命令与媒体入口<br/>Pyrogram"]
+        Web["WebUI<br/>Flask :5000"]
+        Store["任务持久化<br/>task_store.py"]
+        Recovery["启动恢复<br/>recover_tasks()"]
+        Consumer["Pending Consumer<br/>每 2 秒消费"]
+        Scan["批量扫描 / 实时监听"]
+        Queue["asyncio.Queue<br/>(message, node)"]
+        Workers["Worker Pool<br/>并发上限 max_download_task"]
+        Clients["按消息身份选择<br/>Bot / User Client"]
+        Stats["下载进度与历史<br/>download_stat.py"]
+    end
+
+    Data[("宿主机持久化挂载<br/>log / downloads / temp / sessions")]
+
+    User --> Bot
+    User --> Web
+    Bot -->|保存任务| Store
+    Web -->|重试任务| Store
+    Recovery -->|恢复状态与编号| Store
+    Store -->|读取 Pending| Consumer
+    Consumer -->|单条下载| Queue
+    Consumer -->|恢复范围任务| Scan
+    Bot -.->|批量 / 监听| Scan
+    Scan --> Queue
+    Queue --> Workers
+    Workers --> Clients
+    Clients <-->|下载 / 转发| Telegram
+    Workers --> Stats
+    Stats -.->|任务列表| Web
+    Stats -.->|进度通知| Bot
+    Store -.->|任务与编号| Data
+    Stats -.->|完成 / 失败历史| Data
+    Clients -.->|媒体 / session| Data
+
+    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
+    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
+    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
+    class Bot,Web entry
+    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class Store,Stats,Data storage
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Docker Container                  │
-│                                                       │
-│  ┌──────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │ Bot (TG) │   │  WebUI :5000 │   │  Worker Pool │ │
-│  │ Pyrogram │   │   Flask      │   │  (N workers) │ │
-│  └────┬─────┘   └──────┬───────┘   └──────┬───────┘ │
-│       │                │                   │         │
-│       │    ┌───────────┼───────────────────┘         │
-│       │    │           │                             │
-│       ▼    ▼           ▼                             │
-│  ┌────────────────────────────┐                      │
-│  │    asyncio.Queue           │                      │
-│  │  (message, node) tuples    │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  Pending Consumer Loop     │                      │
-│  │  (every 5s, fill workers)  │                      │
-│  └────────────┬───────────────┘                      │
-│               │                                      │
-│               ▼                                      │
-│  ┌────────────────────────────┐                      │
-│  │  task_store.py             │                      │
-│  │  log/bot_tasks.json        │                      │
-│  │  log/task_counter.json     │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  download_stat.py          │                      │
-│  │  log/download_history.json │                      │
-│  └────────────────────────────┘                      │
-│                                                       │
-│  ┌────────────────────────────┐                      │
-│  │  Downloads / Sessions      │                      │
-│  │  /app/downloads/           │                      │
-│  │  /app/sessions/            │                      │
-│  └────────────────────────────┘                      │
-└─────────────────────────────────────────────────────┘
-```
+
+实线表示任务与媒体处理，虚线表示状态通知、持久化或批量/监听入口。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。
 
 ### 核心流程
 
-1. **用户发命令** → Bot handler 创建 TaskNode → `save_task()` 持久化 → `add_download_task()` 入队
+1. **用户提交单条下载** → Bot handler 创建 TaskNode → `save_task()` 保存 Pending → Consumer 取得消息 → `add_download_task()` 入队
 2. **Worker 从队列取任务** → `download_task()` → `download_media()` → Pyrogram 下载
 3. **进度回调** → `update_download_status()` 更新 `_download_result` → 20% 里程碑触发 Bot 通知
 4. **下载完成** → `complete_task()` 从持久化移除 → `save_downloads()` 写入历史
@@ -196,16 +204,22 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 重启时所有未完成任务统一进入 pending 队列，而非直接恢复。这解决了旧版本重启时 100+ 任务同时恢复导致 FLOOD_WAIT 风暴的问题。
 
+```mermaid
+flowchart TB
+    Tick["每 2 秒检查 Pending 任务"] --> Slot{"有空闲并发名额？"}
+    Slot -->|否| Wait["保持 Pending<br/>等待下一轮"]
+    Slot -->|是| Type{"单条还是范围任务？"}
+    Type -->|范围任务| Scan["恢复历史扫描<br/>投递到 Worker 队列"]
+    Type -->|单条任务| Fetch["使用缓存消息，或按所属身份取消息<br/>get_messages 超时上限 300 秒"]
+    Fetch -->|成功| Enqueue["发送通知并尝试入队"]
+    Enqueue -->|入队成功| Download["Worker 开始下载"]
+    Enqueue -->|入队失败 / 取消| Wait
+    Fetch -->|FLOOD_WAIT / 网络错误 / 超时| Cooldown["设置冷却与退避"]
+    Cooldown --> Wait
+    Fetch -->|空消息 / 非网络错误| Failed["记录失败并移除 Pending"]
 ```
-pending task → _consume_one_pending() → get_messages(300s timeout)
-    ├─ 成功 → 创建 placeholder → add_download_task() → worker 下载
-    ├─ FloodWait → 全局冷却 → 任务保持 pending → 通知用户
-    ├─ 超时 → 记入失败列表 → 移除 pending
-    └─ 其他异常 → 记入失败列表 → 移除 pending
 
-_pending_consumer_loop() 每 5 秒：
-    └─ 填充最多 max_download_task 个 pending 任务到 worker 队列
-```
+并发名额由活跃 Worker 和正在消费/排队的任务共同占用；同一任务不会重复消费。网络问题保留 Pending，冷却结束后重试；入队失败或取消会释放占位。
 
 ### TCP 超时补丁
 
