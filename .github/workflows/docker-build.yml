@@ -1,0 +1,89 @@
+name: Build Hermes Docker
+
+on:
+  schedule:
+    # Every 6 hours (UTC)
+    - cron: '17 */6 * * *'
+
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force rebuild'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: hermes-docker-build
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: MangoIsIllegal/hermes-telegram-downloader
+  IMAGE: ghcr.io/smilekevin/hermes-docker
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: master
+          persist-credentials: false
+
+      - name: Get upstream commit
+        id: version
+        shell: bash
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Upstream SHA: $SHA"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check existing image
+        id: check
+        shell: bash
+        env:
+          SHA: ${{ steps.version.outputs.sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          if [[ "$FORCE" == "true" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif docker buildx imagetools inspect \
+            "${IMAGE}:sha-${SHA}" > /dev/null 2>&1; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Image already exists. Skipping build."
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        if: steps.check.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:sha-${{ steps.version.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ env.UPSTREAM_REPO }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.sha }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
