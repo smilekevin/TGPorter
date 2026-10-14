@@ -22,7 +22,7 @@ concurrency:
 
 env:
   UPSTREAM_REPO: MangoIsIllegal/hermes-telegram-downloader
-  IMAGE: ghcr.io/smilekevin/hermes-docker
+  IMAGE: ghcr.io/smilekevin/hermes-telegram-downloader
 
 jobs:
   build:
