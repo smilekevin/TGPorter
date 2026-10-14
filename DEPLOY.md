@@ -10,6 +10,8 @@
 
 项目和仓库使用 **Telegram Media Downloader** 名称；为兼容已有部署，镜像地址及 Compose 服务/容器名继续使用 `hermes-telegram-downloader`。
 
+镜像发布规则：合并/推送 master 后构建 `:sha-完整提交号`；在 GitHub 发布 Release 后构建同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。
+
 ## 第一步：获取代码
 
 ```bash

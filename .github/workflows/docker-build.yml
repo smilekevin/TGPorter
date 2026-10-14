@@ -4,9 +4,8 @@ on:
   push:
     branches: [master]
 
-  schedule:
-    # Every 6 hours (UTC)
-    - cron: '17 */6 * * *'
+  release:
+    types: [published]
 
   workflow_dispatch:
     inputs:
@@ -21,6 +20,7 @@ permissions:
 
 concurrency:
   group: telegram-media-downloader-docker-build
+  queue: max
   cancel-in-progress: false
 
 env:
@@ -28,6 +28,7 @@ env:
 
 jobs:
   build:
+    if: github.event.deleted != true
     runs-on: ubuntu-latest
 
     steps:
@@ -49,11 +50,26 @@ jobs:
         shell: bash
         env:
           SHA: ${{ steps.version.outputs.sha }}
+          RELEASE_PUBLISHED: ${{ github.event_name == 'release' && github.event.action == 'published' }}
         run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION_TAG="${GITHUB_REF#refs/tags/}"
+            if [[ ! "$VERSION_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "::error::Git tag must be a valid Docker tag (1-128 letters, digits, underscores, dots or hyphens; cannot start with a dot or hyphen)."
+              exit 1
+            fi
+            if [[ "$VERSION_TAG" == "latest" || "$VERSION_TAG" == sha-* ]]; then
+              echo "::error::The latest and sha-* image tags are reserved for releases and source commits."
+              exit 1
+            fi
+          fi
           {
             echo 'tags<<EOF'
             echo "${IMAGE}:sha-${SHA}"
-            if [[ "$GITHUB_REF" == "refs/heads/master" ]]; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo "${IMAGE}:${VERSION_TAG}"
+            fi
+            if [[ "$RELEASE_PUBLISHED" == "true" ]]; then
               echo "${IMAGE}:latest"
             fi
             echo 'EOF'
@@ -76,7 +92,8 @@ jobs:
           SHA: ${{ steps.version.outputs.sha }}
           FORCE: ${{ inputs.force }}
         run: |
-          if [[ "$FORCE" == "true" ]]; then
+          # Master pushes and releases always build; cached PR builds may skip.
+          if [[ "$GITHUB_REF" == "refs/heads/master" || "$GITHUB_REF" == refs/tags/* || "$FORCE" == "true" ]]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           elif docker buildx imagetools inspect \
             "${IMAGE}:sha-${SHA}" > /dev/null 2>&1; then
@@ -109,10 +126,16 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           SHA: ${{ steps.version.outputs.sha }}
+          TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           {
             echo '### Image for verification'
             echo "Source commit: ${SHA}"
+            echo
+            echo 'Published image tags:'
+            while IFS= read -r tag; do
+              echo "- \`${tag}\`"
+            done <<< "$TAGS"
             echo
             echo "\`docker pull ${IMAGE}@${DIGEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"

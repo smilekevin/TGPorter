@@ -41,9 +41,9 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 - **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
 - **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
 - **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
-- **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, scheduled runs or manual dispatch, without patching upstream files during the build.
+- **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, published GitHub Releases or manual dispatch, without patching upstream files during the build.
 
-For branch verification, manually run **Build Telegram Media Downloader Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only master updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
+For branch verification, manually run **Build Telegram Media Downloader Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only publishing a GitHub Release updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
 
 ### Regression Tests
 
@@ -239,7 +239,8 @@ The project and repository are now named **Telegram Media Downloader**. The GHCR
 
 - **Image**: `ghcr.io/smilekevin/hermes-telegram-downloader`
 - **Builds and manual runs**: [Build Telegram Media Downloader Docker](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
-- **master image**: `:latest`, built on master pushes, scheduled checks every six hours, or manual dispatch. Existing commit images skip duplicate builds.
+- **Default branch image**: every merge or push to master builds `:sha-FULL_COMMIT` without updating `latest`. Scheduled builds are disabled.
+- **Release images**: publishing a GitHub Release builds its tagged commit. A Release tagged `v1.0.1` publishes `:v1.0.1`, `:sha-FULL_COMMIT` and updates `:latest`. Different Releases on the same commit still build. Creating a tag alone or saving a Release draft does not trigger publishing. Use Docker-compatible version names; `latest` and `sha-*` are reserved for the workflow.
 - **Branch verification**: `:sha-FULL_COMMIT`. Manually select the PR branch and enable **Force rebuild**, then copy the complete `@sha256:...` reference from **Image for verification** in the successful run's summary. Branch builds leave `latest` unchanged.
 
 ```bash
@@ -247,6 +248,21 @@ docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
 ```
 
 For prebuilt images, set the Compose `image` and remove `build` and source-code mounts. Keep existing configuration, downloads, logs, sessions and temporary-file mounts. Use the branch build's digest when verifying a PR.
+
+### Publish a Version with GitHub Releases
+
+After merging this workflow change, open this repository's [Releases](https://github.com/smilekevin/telegram-media-downloader/releases) and click **Draft a new release**:
+
+1. Under **Choose a tag**, enter a new version such as `v1.0.1` and select the option to create that tag.
+2. Set **Target** to master or a commit containing this workflow change.
+3. Enter the title and release notes, then click **Publish release**.
+
+Publishing automatically builds amd64/arm64 images. The Actions build summary lists the version tags and digest. After the build succeeds, pull the pinned version or use `latest` for the most recently published Release image whose build succeeded:
+
+```bash
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:v1.0.1
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+```
 
 ## Quick Start
 
