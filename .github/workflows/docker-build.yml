@@ -36,6 +36,12 @@ jobs:
           ref: master
           persist-credentials: false
 
+      - name: Patch upstream dependencies
+        shell: bash
+        run: |
+          sed -i 's/^PyTgCrypto==1\.2\.6$/PyTgCrypto==1.2.12/' requirements.txt
+          grep '^PyTgCrypto' requirements.txt
+
       - name: Get upstream commit
         id: version
         shell: bash
