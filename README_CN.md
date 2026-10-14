@@ -41,9 +41,9 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 - **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
 - **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
 - **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
-- **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, published GitHub Releases or manual dispatch, without patching upstream files during the build.
+- **Docker builds**: build this fork's source as `ghcr.io/smilekevin/telegram-media-downloader` on master pushes, published GitHub Releases or manual dispatch, without patching upstream files during the build.
 
-For branch verification, manually run **Build Telegram Media Downloader Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only publishing a GitHub Release updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
+For branch verification, manually run **Build Telegram Media Downloader Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only publishing a GitHub Release updates `latest`. The build summary provides `ghcr.io/smilekevin/telegram-media-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
 
 ### Regression Tests
 
@@ -235,19 +235,32 @@ _TCP.TIMEOUT = 900
 
 The upstream [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) does not provide prebuilt Docker images. This fork adds GitHub Actions builds and GHCR publishing for `linux/amd64` and `linux/arm64`.
 
-The project and repository are now named **Telegram Media Downloader**. The GHCR image path and Compose service/container name retain `hermes-telegram-downloader` for compatibility with existing deployments. Existing image digests remain usable for verification.
+The project, repository and GHCR image path now use the **Telegram Media Downloader** name. The Compose service/container name remains `hermes-telegram-downloader` to simplify migration of existing deployments.
 
-- **Image**: `ghcr.io/smilekevin/hermes-telegram-downloader`
+- **Image**: `ghcr.io/smilekevin/telegram-media-downloader`
 - **Builds and manual runs**: [Build Telegram Media Downloader Docker](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
 - **Default branch image**: every merge or push to master builds `:sha-FULL_COMMIT` without updating `latest`. Scheduled builds are disabled.
 - **Release images**: publishing a GitHub Release builds its tagged commit. A Release tagged `v1.0.1` publishes `:v1.0.1`, `:sha-FULL_COMMIT` and updates `:latest`. Different Releases on the same commit still build. Creating a tag alone or saving a Release draft does not trigger publishing. Use Docker-compatible version names; `latest` and `sha-*` are reserved for the workflow.
 - **Branch verification**: `:sha-FULL_COMMIT`. Manually select the PR branch and enable **Force rebuild**, then copy the complete `@sha256:...` reference from **Image for verification** in the successful run's summary. Branch builds leave `latest` unchanged.
 
 ```bash
-docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
 ```
 
 For prebuilt images, set the Compose `image` and remove `build` and source-code mounts. Keep existing configuration, downloads, logs, sessions and temporary-file mounts. Use the branch build's digest when verifying a PR.
+
+### Migrate from the Previous Image Path
+
+New builds publish to `ghcr.io/smilekevin/telegram-media-downloader`. Historical images remain at `ghcr.io/smilekevin/hermes-telegram-downloader`. Keep using the old path with old digests; when switching to the new path, use a version tag or digest from a new build's summary.
+
+Merging this change publishes a SHA image at the new path. The new `latest` tag is created by the first successful Release build. After publishing the new package for the first time, set its visibility to **Public** in [Package settings](https://github.com/users/smilekevin/packages/container/telegram-media-downloader/settings) so a NAS can pull without authentication.
+
+In an existing Compose configuration, set `image` to a version or digest at the new path, remove `build` and source-code mounts, and retain configuration and data mounts. Then run:
+
+```bash
+docker-compose pull
+docker-compose up -d --force-recreate
+```
 
 ### Publish a Version with GitHub Releases
 
@@ -260,8 +273,8 @@ After merging this workflow change, open this repository's [Releases](https://gi
 Publishing automatically builds amd64/arm64 images. The Actions build summary lists the version tags and digest. After the build succeeds, pull the pinned version or use `latest` for the most recently published Release image whose build succeeded:
 
 ```bash
-docker pull ghcr.io/smilekevin/hermes-telegram-downloader:v1.0.1
-docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+docker pull ghcr.io/smilekevin/telegram-media-downloader:v1.0.1
+docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
 ```
 
 ## Quick Start
@@ -274,6 +287,9 @@ cd telegram-media-downloader
 
 cp config.yaml.example config.yaml
 # Edit config.yaml with your api_id / api_hash / bot_token
+
+# Pull a published Release image
+docker-compose pull
 
 # First run (foreground, for Telegram login)
 docker-compose run --rm hermes-telegram-downloader

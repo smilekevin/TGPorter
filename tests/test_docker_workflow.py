@@ -10,7 +10,7 @@ import yaml
 
 
 WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github/workflows/docker-build.yml"
-IMAGE = "ghcr.io/smilekevin/hermes-telegram-downloader"
+IMAGE = "ghcr.io/smilekevin/telegram-media-downloader"
 SHA = "a" * 40
 
 
@@ -39,7 +39,7 @@ class DockerWorkflowTests(unittest.TestCase):
             docker.chmod(0o755)
             env = {
                 **os.environ,
-                "IMAGE": IMAGE,
+                "IMAGE": self.workflow["env"]["IMAGE"],
                 "SHA": SHA,
                 "GITHUB_REF": ref,
                 "GITHUB_OUTPUT": str(output),
