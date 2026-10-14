@@ -8,7 +8,7 @@
 
 本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/telegram-media-downloader:latest`，支持 amd64/arm64。[CI 验证镜像](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml) / [Build Release Docker Image](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
 
-项目、仓库和 GHCR 镜像统一使用 **Telegram Media Downloader** 名称；Compose 服务/容器名保留 `hermes-telegram-downloader`。
+项目、仓库和 GHCR 镜像统一使用 **Telegram Media Downloader** 名称；Compose 服务/容器名使用 `telegam-media-downloader`。
 
 镜像发布规则：本仓库 PR、合并/推送 master 或手动运行 CI 后，测试通过即发布 `:sha-完整提交号`，Summary 提供可复制的拉取命令和 Compose 配置，不更新 `latest`。**Build Release Docker Image** 只在发布 GitHub Release 后运行，发布同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。
 
@@ -71,9 +71,9 @@ language: ZH
 
 ```yaml
 services:
-  hermes-telegram-downloader:
+  telegam-media-downloader:
     image: ghcr.io/smilekevin/telegram-media-downloader:latest
-    container_name: hermes-telegram-downloader
+    container_name: telegam-media-downloader
     network_mode: bridge
     stdin_open: true
     tty: true
@@ -108,7 +108,7 @@ services:
 docker-compose pull
 
 # 首次启动（前台，用于登录 Telegram）
-docker-compose run --rm hermes-telegram-downloader
+docker-compose run --rm telegam-media-downloader
 
 # 首次启动会要求输入手机号和验证码，按提示完成登录
 # 登录成功后 Ctrl+C 退出

@@ -156,7 +156,7 @@ curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/
 docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
 
 docker run -it \
-  --name hermes-telegram-downloader \
+  --name telegam-media-downloader \
   --restart unless-stopped \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
@@ -179,8 +179,8 @@ docker run -it \
 5. **后台启动并访问 WebUI**：执行以下命令，停止容器后用 [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) 在后台启动已有容器：
 
 ```bash
-docker stop hermes-telegram-downloader
-docker start hermes-telegram-downloader
+docker stop telegam-media-downloader
+docker start telegam-media-downloader
 ```
 
 启动后，在浏览器中访问 `http://服务器IP:5000`。
@@ -204,8 +204,8 @@ docker-compose pull
 **首次登录（或需要重新登录时，比如 session 失效）**：**此处登录的账号为实际下载用户**，程序以该 Telegram 用户或 Bot 账号的身份访问并下载消息，下载权限取决于该账号。使用交互终端启动一次性容器；如果后台服务正在运行，先停止它：
 
 ```bash
-docker-compose stop hermes-telegram-downloader
-docker-compose run --rm hermes-telegram-downloader
+docker-compose stop telegam-media-downloader
+docker-compose run --rm telegam-media-downloader
 ```
 
 出现 `Enter phone number or bot token:` 时，输入带国家区号的手机号或完整 Bot Token，并在确认提示时输入 `y`。手机号登录还需输入验证码，以及两步验证密码（如已启用）；Bot Token 登录无需手机号验证码。登录成功后按 `Ctrl+C` 停止此次前台运行，再启动后台服务：
@@ -755,7 +755,7 @@ curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/
 docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
 
 docker run -it \
-  --name hermes-telegram-downloader \
+  --name telegam-media-downloader \
   --restart unless-stopped \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
@@ -778,8 +778,8 @@ After login succeeds, press `Ctrl+C` to stop the current foreground run. The ses
 5. **Start in the background and access WebUI**: run the following commands to stop the container and use [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) to start the existing container in the background:
 
 ```bash
-docker stop hermes-telegram-downloader
-docker start hermes-telegram-downloader
+docker stop telegam-media-downloader
+docker start telegam-media-downloader
 ```
 
 Once started, open `http://SERVER_IP:5000` in your browser.
@@ -802,8 +802,8 @@ docker-compose pull
 **First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. Start a one-off container in an interactive terminal, stopping the background service first if it is running:
 
 ```bash
-docker-compose stop hermes-telegram-downloader
-docker-compose run --rm hermes-telegram-downloader
+docker-compose stop telegam-media-downloader
+docker-compose run --rm telegam-media-downloader
 ```
 
 At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. After login succeeds, press `Ctrl+C` to stop this foreground run, then start the background service:
