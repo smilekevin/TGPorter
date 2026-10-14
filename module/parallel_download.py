@@ -2,16 +2,16 @@
 
 import asyncio
 import json
-import logging
 import os
 import shutil
 from pathlib import Path
 from weakref import WeakValueDictionary
 
+from loguru import logger
+
 
 CHUNK_SIZE = 1024 * 1024
 _file_locks = WeakValueDictionary()
-_log = logging.getLogger(__name__)
 
 
 def parts_path(file_name):
@@ -130,7 +130,7 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
         plan = _make_plan(size, desired, identity, legacy.exists())
         _save_plan(directory, plan)
     ranges = plan["ranges"]
-    _log.info("Downloading %s in %d fixed range(s)", file_name, len(ranges))
+    logger.info("Downloading {} in {} fixed range(s)", file_name, len(ranges))
     paths = [directory / f"{index}.part" for index in range(len(ranges))]
 
     # Import an old sequential checkpoint without deleting it until copied.
