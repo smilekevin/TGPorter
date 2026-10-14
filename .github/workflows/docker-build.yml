@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/smilekevin/hermes-telegram-downloader
+  IMAGE: ghcr.io/smilekevin/telegram-media-downloader
 
 jobs:
   build:

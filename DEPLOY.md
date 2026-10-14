@@ -6,9 +6,9 @@
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
 3. 已创建 Bot Token（通过 @BotFather）
 
-本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/hermes-telegram-downloader:latest`，支持 amd64/arm64。[构建记录与分支镜像验证](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
+本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/telegram-media-downloader:latest`，支持 amd64/arm64。[构建记录与分支镜像验证](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
 
-项目和仓库使用 **Telegram Media Downloader** 名称；为兼容已有部署，镜像地址及 Compose 服务/容器名继续使用 `hermes-telegram-downloader`。
+项目、仓库和 GHCR 镜像统一使用 **Telegram Media Downloader** 名称；Compose 服务/容器名保留 `hermes-telegram-downloader`。
 
 镜像发布规则：合并/推送 master 后构建 `:sha-完整提交号`；在 GitHub 发布 Release 后构建同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。
 
@@ -69,7 +69,7 @@ language: ZH
 ```yaml
 services:
   hermes-telegram-downloader:
-    build: .
+    image: ghcr.io/smilekevin/telegram-media-downloader:latest
     container_name: hermes-telegram-downloader
     network_mode: bridge
     stdin_open: true
@@ -96,13 +96,13 @@ services:
     restart: unless-stopped
 ```
 
-> **注意**：如果你不需要模块热挂载（bind mount 单个 .py 文件），直接 `docker-compose build && docker-compose up -d` 即可，代码在构建时已经 COPY 进镜像。模块热挂载只用于开发调试。
+使用预构建镜像时保留配置和数据挂载，移除 `build` 及模块源码挂载，避免本地旧代码覆盖镜像。新地址的 `latest` 由首次成功的 Release 构建创建；测试主分支时，将 `image` 改为构建摘要给出的 SHA 标签或 digest。首次发布新 package 后，将其可见性设为 **Public**，即可无需登录拉取。
 
-## 第四步：构建并启动
+## 第四步：拉取并启动
 
 ```bash
-# 构建镜像
-docker-compose build
+# 拉取镜像
+docker-compose pull
 
 # 首次启动（前台，用于登录 Telegram）
 docker-compose run --rm hermes-telegram-downloader
@@ -132,12 +132,19 @@ docker-compose down
 # 重启
 docker-compose restart
 
-# 更新代码后重新构建
-git pull && docker-compose build && docker-compose up -d
+# 更新到 Compose 中指定版本的镜像
+docker-compose pull
+docker-compose up -d --force-recreate
 
 # 查看容器状态
 docker-compose ps
 ```
+
+## 旧镜像迁移与本地构建
+
+旧 package `ghcr.io/smilekevin/hermes-telegram-downloader` 保留历史镜像。迁移时将 Compose 的 `image` 改为新地址，使用新构建的版本或 digest；历史 digest 仍需搭配旧地址。
+
+如需从当前本地源码构建，将 Compose 服务的 `image` 改为 `telegram-media-downloader:local` 并添加 `build: .`，然后执行 `docker-compose up -d --build`。
 
 ## 数据持久化
 
