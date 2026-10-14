@@ -8,13 +8,14 @@
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
 <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue"></a>
-<a href="https://hub.docker.com/"><img alt="Docker" src="https://img.shields.io/badge/docker-ready-blue"></a>
+<a href="https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
 <p align="center">
   <a href="#功能特性">功能特性</a> ·
   <a href="#架构设计">架构设计</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#本-fork-的-docker-镜像">Docker 镜像</a> ·
   <a href="#配置说明">配置说明</a> ·
   <a href="#bot-命令">Bot 命令</a> ·
   <a href="#web-api">Web API</a> ·
@@ -38,6 +39,7 @@
 - **批量下载与转发恢复**：恢复没有单条 message_id 的历史范围任务；下载重新扫描原始范围以找回重启丢失的内存队列，已有文件由下载历史跳过。普通转发从检查点继续，受保护频道使用下载再上传；保留目标频道、主题和任务显示编号。
 - **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
 - **依赖安装**：固定为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
+- **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
 - **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/hermes-telegram-downloader`，在 master 推送、定时运行或手动触发时构建；无需构建时临时修改上游文件。
 
 分支验证：在 GitHub Actions 的 **Build Hermes Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅由 master 更新。构建摘要提供 `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
@@ -216,12 +218,27 @@ _TCP.TIMEOUT = 900
 
 ---
 
+## 本 fork 的 Docker 镜像
+
+上游 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) 不提供预构建 Docker 镜像；本 fork 新增 GitHub Actions 自动构建并发布到 GHCR，支持 `linux/amd64` 和 `linux/arm64`。
+
+- **镜像地址**：`ghcr.io/smilekevin/hermes-telegram-downloader`
+- **构建入口与记录**：[Build Hermes Docker](https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml)
+- **master 镜像**：`:latest`，在 master 推送、每 6 小时定时检查或手动触发时构建；已有提交镜像会跳过重复构建。
+- **分支验证镜像**：`:sha-完整提交号`。手动选择 PR 分支、勾选 **Force rebuild**，成功后从运行摘要的 **Image for verification** 复制完整 `@sha256:...` 地址。分支构建不会更新 `latest`。
+
+```bash
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+```
+
+使用预构建镜像时，在自己的 Compose 中设置 `image` 并移除 `build` 和模块源码挂载；继续挂载现有配置、下载、日志、session 和临时目录。验证 PR 时使用该分支构建摘要里的 digest。
+
 ## 快速开始
 
 ### Docker 部署（推荐）
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 
 # 复制配置
@@ -241,7 +258,7 @@ docker-compose logs -f
 ### 手动安装
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 pip install -r requirements.txt
 

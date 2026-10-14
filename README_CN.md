@@ -8,7 +8,7 @@
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
 <a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
 <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue"></a>
-<a href="https://hub.docker.com/"><img alt="Docker" src="https://img.shields.io/badge/docker-ready-blue"></a>
+<a href="https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
 <p align="center">
@@ -16,6 +16,7 @@
   <a href="#features">Features</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#docker-images-from-this-fork">Docker Images</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#bot-commands">Bot Commands</a> ·
   <a href="#web-api">Web API</a> ·
@@ -39,6 +40,7 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 - **Batch downloads and forwards**: restore history-range tasks without a single message_id. Rescan download ranges to recover files lost from the in-memory queue; existing files are skipped by download history. Resume normal forwards from their checkpoint and use download/upload for protected channels, preserving destination, topic and display ID.
 - **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
 - **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
+- **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
 - **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, scheduled runs or manual dispatch, without patching upstream files during the build.
 
 For branch verification, manually run **Build Hermes Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only master updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
@@ -217,12 +219,27 @@ _TCP.TIMEOUT = 900
 
 ---
 
+## Docker Images from This Fork
+
+The upstream [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) does not provide prebuilt Docker images. This fork adds GitHub Actions builds and GHCR publishing for `linux/amd64` and `linux/arm64`.
+
+- **Image**: `ghcr.io/smilekevin/hermes-telegram-downloader`
+- **Builds and manual runs**: [Build Hermes Docker](https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml)
+- **master image**: `:latest`, built on master pushes, scheduled checks every six hours, or manual dispatch. Existing commit images skip duplicate builds.
+- **Branch verification**: `:sha-FULL_COMMIT`. Manually select the PR branch and enable **Force rebuild**, then copy the complete `@sha256:...` reference from **Image for verification** in the successful run's summary. Branch builds leave `latest` unchanged.
+
+```bash
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+```
+
+For prebuilt images, set the Compose `image` and remove `build` and source-code mounts. Keep existing configuration, downloads, logs, sessions and temporary-file mounts. Use the branch build's digest when verifying a PR.
+
 ## Quick Start
 
 ### Docker (Recommended)
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 
 cp config.yaml.example config.yaml
@@ -241,7 +258,7 @@ docker-compose logs -f
 ### Manual Install
 
 ```bash
-git clone https://github.com/MangoIsIllegal/hermes-telegram-downloader.git
+git clone https://github.com/smilekevin/hermes-telegram-downloader.git
 cd hermes-telegram-downloader
 pip install -r requirements.txt
 
