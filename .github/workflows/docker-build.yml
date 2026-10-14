@@ -1,25 +1,15 @@
-name: Build Telegram Media Downloader Docker
+name: Build Release Docker Image
 
 on:
-  push:
-    branches: [master]
-
   release:
     types: [published]
-
-  workflow_dispatch:
-    inputs:
-      force:
-        description: 'Force rebuild'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: telegram-media-downloader-docker-build
+  group: telegram-media-downloader-release
   queue: max
   cancel-in-progress: false
 
@@ -28,11 +18,9 @@ env:
 
 jobs:
   build:
-    if: github.event.deleted != true
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout release source
         uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -45,38 +33,35 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Source SHA: $SHA"
 
-      - name: Select image tags
+      - name: Select release image tags
         id: tags
         shell: bash
         env:
           SHA: ${{ steps.version.outputs.sha }}
-          RELEASE_PUBLISHED: ${{ github.event_name == 'release' && github.event.action == 'published' }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            VERSION_TAG="${GITHUB_REF#refs/tags/}"
-            if [[ ! "$VERSION_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-              echo "::error::Git tag must be a valid Docker tag (1-128 letters, digits, underscores, dots or hyphens; cannot start with a dot or hyphen)."
-              exit 1
-            fi
-            if [[ "$VERSION_TAG" == "latest" || "$VERSION_TAG" == sha-* ]]; then
-              echo "::error::The latest and sha-* image tags are reserved for releases and source commits."
-              exit 1
-            fi
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo '::error::Release builds require a tag ref.'
+            exit 1
+          fi
+          VERSION_TAG="${GITHUB_REF#refs/tags/}"
+          if [[ ! "$VERSION_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo '::error::Git tag must be a valid Docker tag (1-128 letters, digits, underscores, dots or hyphens; cannot start with a dot or hyphen).'
+            exit 1
+          fi
+          if [[ "$VERSION_TAG" == "latest" || "$VERSION_TAG" == sha-* ]]; then
+            echo '::error::The latest and sha-* image tags are reserved for releases and source commits.'
+            exit 1
           fi
           {
             echo 'tags<<EOF'
             echo "${IMAGE}:sha-${SHA}"
-            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-              echo "${IMAGE}:${VERSION_TAG}"
-            fi
-            if [[ "$RELEASE_PUBLISHED" == "true" ]]; then
-              echo "${IMAGE}:latest"
-            fi
+            echo "${IMAGE}:${VERSION_TAG}"
+            echo "${IMAGE}:latest"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -85,27 +70,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check existing image
-        id: check
-        shell: bash
-        env:
-          SHA: ${{ steps.version.outputs.sha }}
-          FORCE: ${{ inputs.force }}
-        run: |
-          # Master pushes and releases always build; cached PR builds may skip.
-          if [[ "$GITHUB_REF" == "refs/heads/master" || "$GITHUB_REF" == refs/tags/* || "$FORCE" == "true" ]]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          elif docker buildx imagetools inspect \
-            "${IMAGE}:sha-${SHA}" > /dev/null 2>&1; then
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "Image already exists. Skipping build."
-          else
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build and push
+      - name: Build and push release images
         id: build
-        if: steps.check.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -121,21 +87,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Show immutable image reference
-        if: steps.check.outputs.build == 'true'
+      - name: Show release image reference
+        id: summary
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           SHA: ${{ steps.version.outputs.sha }}
           TAGS: ${{ steps.tags.outputs.tags }}
         run: |
+          if [[ ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo '::error::Published image digest is missing or invalid.'
+            exit 1
+          fi
           {
-            echo '### Image for verification'
+            echo '## Release Docker image'
             echo "Source commit: ${SHA}"
+            echo
+            echo 'Package: [telegram-media-downloader](https://github.com/users/smilekevin/packages/container/telegram-media-downloader)'
             echo
             echo 'Published image tags:'
             while IFS= read -r tag; do
               echo "- \`${tag}\`"
             done <<< "$TAGS"
             echo
-            echo "\`docker pull ${IMAGE}@${DIGEST}\`"
+            echo 'Pull this exact image:'
+            echo '```bash'
+            echo "docker pull ${IMAGE}@${DIGEST}"
+            echo '```'
+            echo
+            echo 'Compose image:'
+            echo '```yaml'
+            echo "image: ${IMAGE}@${DIGEST}"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -41,9 +41,9 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 - **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
 - **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
 - **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
-- **Docker builds**: build this fork's source as `ghcr.io/smilekevin/telegram-media-downloader` on master pushes, published GitHub Releases or manual dispatch, without patching upstream files during the build.
+- **Docker builds**: CI tests and publishes SHA verification images for PRs, master pushes and manual runs, with pull references in its Summary. **Build Release Docker Image** runs only when a GitHub Release is published, publishing version tags and updating `latest`.
 
-For branch verification, manually run **Build Telegram Media Downloader Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only publishing a GitHub Release updates `latest`. The build summary provides `ghcr.io/smilekevin/telegram-media-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
+For branch verification, this repository's PRs automatically run **Telegram Media Downloader CI**. You can also select a branch and run CI manually in Actions. After success, copy the `docker pull` command or Compose `image:` configuration from **CI image for verification** in the Summary. CI publishes only SHA tags; only the Release workflow updates `latest`.
 
 ### Regression Tests
 
@@ -238,10 +238,11 @@ The upstream [MangoIsIllegal/hermes-telegram-downloader](https://github.com/Mang
 The project, repository and GHCR image path now use the **Telegram Media Downloader** name. The Compose service/container name remains `hermes-telegram-downloader` to simplify migration of existing deployments.
 
 - **Image**: `ghcr.io/smilekevin/telegram-media-downloader`
-- **Builds and manual runs**: [Build Telegram Media Downloader Docker](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
-- **Default branch image**: every merge or push to master builds `:sha-FULL_COMMIT` without updating `latest`. Scheduled builds are disabled.
+- **CI verification images**: [Telegram Media Downloader CI](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml)
+- **Release publishing**: [Build Release Docker Image](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
+- **Default branch image**: every merge or push to master runs only CI, publishing `:sha-FULL_COMMIT` after tests pass without updating `latest`. Scheduled builds are disabled.
 - **Release images**: publishing a GitHub Release builds its tagged commit. A Release tagged `v1.0.1` publishes `:v1.0.1`, `:sha-FULL_COMMIT` and updates `:latest`. Different Releases on the same commit still build. Creating a tag alone or saving a Release draft does not trigger publishing. Use Docker-compatible version names; `latest` and `sha-*` are reserved for the workflow.
-- **Branch verification**: `:sha-FULL_COMMIT`. Manually select the PR branch and enable **Force rebuild**, then copy the complete `@sha256:...` reference from **Image for verification** in the successful run's summary. Branch builds leave `latest` unchanged.
+- **PR/branch verification**: `:sha-FULL_COMMIT`. PR CI publishes verification images automatically; manual branch CI runs also publish. **CI image for verification** in the Summary includes the package link, tags, digest, pull command and Compose configuration. PRs build their current merge-preview source; Source commit identifies the actual tested and built commit. External fork and Dependabot PRs validate the build without publishing, and their summary states this explicitly.
 
 ```bash
 docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
@@ -270,7 +271,7 @@ After merging this workflow change, open this repository's [Releases](https://gi
 2. Set **Target** to master or a commit containing this workflow change.
 3. Enter the title and release notes, then click **Publish release**.
 
-Publishing automatically builds amd64/arm64 images. The Actions build summary lists the version tags and digest. After the build succeeds, pull the pinned version or use `latest` for the most recently published Release image whose build succeeded:
+Publishing automatically builds amd64/arm64 images. The **Build Release Docker Image** Summary lists version tags and the digest. After the build succeeds, pull the pinned version or use `latest` for the most recently published Release image whose build succeeded:
 
 ```bash
 docker pull ghcr.io/smilekevin/telegram-media-downloader:v1.0.1

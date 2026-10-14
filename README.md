@@ -40,9 +40,9 @@
 - **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
 - **依赖安装**：固定为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
 - **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
-- **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/telegram-media-downloader`，在 master 推送、发布 GitHub Release 或手动触发时构建；无需构建时临时修改上游文件。
+- **Docker 构建**：CI 在 PR、master 推送或手动运行时构建验证镜像，测试通过后发布 SHA 标签并在 Summary 提供拉取地址；**Build Release Docker Image** 只在发布 GitHub Release 时运行，发布版本标签并更新 `latest`。
 
-分支验证：在 GitHub Actions 的 **Build Telegram Media Downloader Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅在发布 GitHub Release 时更新。构建摘要提供 `ghcr.io/smilekevin/telegram-media-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
+分支验证：本仓库的 PR 会自动运行 **Telegram Media Downloader CI**，也可在 Actions 手动选择分支运行 CI。成功后从 Summary 的 **CI image for verification** 复制 `docker pull` 命令或 Compose 的 `image:` 配置。CI 只发布 SHA 标签，`latest` 仅由 Release 工作流更新。
 
 ### 回归测试
 
@@ -237,10 +237,11 @@ _TCP.TIMEOUT = 900
 项目、仓库和 GHCR 镜像地址统一使用 **Telegram Media Downloader** 名称。Compose 服务/容器名继续使用 `hermes-telegram-downloader`，方便现有部署迁移。
 
 - **镜像地址**：`ghcr.io/smilekevin/telegram-media-downloader`
-- **构建入口与记录**：[Build Telegram Media Downloader Docker](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
-- **主分支镜像**：每次合并到 master（或推送 master）后构建 `:sha-完整提交号`，不会更新 `latest`。不再定时构建。
+- **CI 验证镜像**：[Telegram Media Downloader CI](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml)
+- **Release 发布镜像**：[Build Release Docker Image](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
+- **主分支镜像**：每次合并到 master（或推送 master）后只运行 CI，测试通过后发布 `:sha-完整提交号`，不会更新 `latest`。不再定时构建。
 - **Release 镜像**：发布 GitHub Release 时构建对应 tag 的代码，例如 Release 的 tag 为 `v1.0.1`，则发布 `:v1.0.1`、`:sha-完整提交号` 并更新 `:latest`。同一提交发布不同 Release 也会构建。只创建 tag 或保存 Release 草稿不会触发发布构建；请使用符合 Docker 标签格式的版本名称，`latest` 和 `sha-*` 由工作流保留使用。
-- **分支验证镜像**：`:sha-完整提交号`。手动选择 PR 分支、勾选 **Force rebuild**，成功后从运行摘要的 **Image for verification** 复制完整 `@sha256:...` 地址。分支构建不会更新 `latest`。
+- **PR/分支验证镜像**：`:sha-完整提交号`。PR 的 CI 自动发布验证镜像，手动选择分支运行 CI 也会发布。Summary 的 **CI image for verification** 提供包链接、标签、digest、拉取命令与 Compose 配置。PR 使用当前合并预览代码构建，摘要的 Source commit 对应实际测试和构建的提交。外部 fork 和 Dependabot PR 只验证构建，摘要会说明未发布镜像。
 
 ```bash
 docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
@@ -269,7 +270,7 @@ docker-compose up -d --force-recreate
 2. **Target** 选择 master 或包含本次工作流改动的目标提交。
 3. 填写标题和更新说明，点击 **Publish release**。
 
-发布后自动构建 amd64/arm64 镜像。在 Actions 的构建摘要中查看版本标签和 digest；构建成功后可以拉取指定版本，或用 `latest` 获取最近成功发布的 Release 镜像：
+发布后自动构建 amd64/arm64 镜像。在 **Build Release Docker Image** 的 Summary 中查看版本标签和 digest；构建成功后可以拉取指定版本，或用 `latest` 获取最近成功发布的 Release 镜像：
 
 ```bash
 docker pull ghcr.io/smilekevin/telegram-media-downloader:v1.0.1
