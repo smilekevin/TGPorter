@@ -5,7 +5,7 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
@@ -52,6 +52,7 @@ jobs:
             echo '::error::The latest and sha-* image tags are reserved for releases and source commits.'
             exit 1
           fi
+          echo "version=$VERSION_TAG" >> "$GITHUB_OUTPUT"
           {
             echo 'tags<<EOF'
             echo "${IMAGE}:sha-${SHA}"
@@ -119,3 +120,61 @@ jobs:
             echo "image: ${IMAGE}@${DIGEST}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update Release notes with Docker image
+        id: release_notes
+        uses: actions/github-script@v8
+        env:
+          VERSION_TAG: ${{ steps.tags.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        with:
+          retries: 3
+          script: |
+            const { IMAGE: image, VERSION_TAG: version, DIGEST: digest } = process.env;
+            if (!/^sha256:[a-f0-9]{64}$/.test(digest || '')) {
+              throw new Error('Published image digest is missing or invalid.');
+            }
+            const release_id = context.payload.release.id;
+            // Read the current notes to retain edits made while the image built.
+            const { data: release } = await github.rest.repos.getRelease({
+              ...context.repo, release_id,
+            });
+            if (release.tag_name !== version) {
+              throw new Error('Release tag changed after the image build.');
+            }
+            const startMarker = '<!-- release-docker-image:start -->';
+            const endMarker = '<!-- release-docker-image:end -->';
+            const section = [
+              startMarker,
+              '## Docker image',
+              '',
+              'Supported platforms: `linux/amd64`, `linux/arm64`.',
+              '',
+              '```bash',
+              `docker pull ${image}:${version}`,
+              '```',
+              '',
+              'Pull this exact image by digest:',
+              '',
+              '```bash',
+              `docker pull ${image}@${digest}`,
+              '```',
+              endMarker,
+            ].join('\n');
+            const body = release.body || '';
+            const start = body.indexOf(startMarker);
+            const end = body.indexOf(endMarker);
+            let updatedBody;
+            if (start === -1 && end === -1) {
+              updatedBody = body + (body ? '\n\n' : '') + section;
+            } else {
+              if (start === -1 || end < start) {
+                throw new Error('Docker image section markers are incomplete.');
+              }
+              updatedBody = body.slice(0, start) + section + body.slice(end + endMarker.length);
+            }
+            if (updatedBody !== body) {
+              await github.rest.repos.updateRelease({
+                ...context.repo, release_id, body: updatedBody,
+              });
+            }
