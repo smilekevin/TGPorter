@@ -844,7 +844,11 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
 
         # Strategy 2: Fallback to direct get_messages with original chat_id/msg_id
         if not msg:
-            msg = await client.get_messages(cid, int(msg_id))
+            message_client = _bot.get_message_client(cid, from_user_id)
+            if message_client is None:
+                _restore_failed("重试失败: 消息所属客户端不可用")
+                return
+            msg = await message_client.get_messages(cid, int(msg_id))
 
         if not msg or msg.empty:
             logger.error(f"Retry failed: message {msg_id} not found in chat {cid}")
@@ -852,6 +856,11 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
             return
 
         from module.app import TaskNode, TaskType
+
+        # A source-link retry can resolve a different chat/message pair. Persist
+        # the actual fetched pair and account so a later restart can refetch it.
+        cid, msg_id = msg.chat.id, msg.id
+        owner = getattr(msg, "_client", None) or _bot.get_message_client(cid, from_user_id)
 
         node = TaskNode(
             chat_id=cid,
@@ -876,9 +885,10 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
             download_filter=None,
             from_user_id=from_user_id or cid,
             task_type="download",
-            extra_data={"task_id_display": node.task_id_display, "message_id": msg_id},
+            extra_data={"task_id_display": node.task_id_display, "message_id": msg_id,
+                        "message_client": "bot" if owner is _bot.bot else "user"},
         )
-        if not saved_ok:
+        if saved_ok is False:
             logger.warning(f"Retry skipped: save_task refused (duplicate) chat={cid} msg={msg_id}")
             return
 

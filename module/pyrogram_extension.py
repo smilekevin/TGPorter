@@ -1367,13 +1367,21 @@ async def fetch_message(client: pyrogram.Client, message: pyrogram.types.Message
     导致 download_media 重试循环永久阻塞、worker 被永久占用。
     正常 get_messages 1-2 秒返回，60s 超时极其宽松。
     """
-    return await asyncio.wait_for(
-        client.get_messages(
+    if message is None or message.empty or message.chat is None:
+        return None
+    # Message IDs are scoped to the account that retrieved the message.
+    # Bot inbox IDs cannot be refreshed through the user account's dialog.
+    message_client = getattr(message, "_client", None) or client
+    refreshed = await asyncio.wait_for(
+        message_client.get_messages(
             chat_id=message.chat.id,
             message_ids=message.id,
         ),
         timeout=60,
     )
+    if refreshed is None or refreshed.empty or refreshed.chat is None:
+        return None
+    return refreshed
 
 
 async def retry(func: Callable, args: tuple = (), max_attempts=3, wait_second=15):

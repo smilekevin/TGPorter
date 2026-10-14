@@ -739,6 +739,7 @@ async def download_media(
                         message = await fetch_message(client, message)
                         if message is None:
                             logger.error(f"Message[{message_id}] {ui_file_name}: 消息已被删除，终止续传")
+                            error_message = "消息不存在或当前身份无法读取"
                             break
                     except Exception as fetch_err:
                         logger.warning(f"Message[{message_id}] {ui_file_name}: fetch_message failed: {fetch_err}")
@@ -1045,6 +1046,9 @@ async def download_media(
             # 刷新消息引用（可能已过期），用 try-except 防止二次超时
             try:
                 message = await fetch_message(client, message)
+                if message is None:
+                    error_message = "连接超时后消息不存在或当前身份无法读取"
+                    break
             except Exception as fetch_err:
                 logger.warning(f"Message[{message.id}]: fetch_message 也超时: {fetch_err}")
             error_message = f"连接超时疑似限速（等待{backoff}秒后重试）"
@@ -1130,6 +1134,9 @@ async def download_media(
                 await asyncio.sleep(RETRY_TIME_OUT)
                 try:
                     message = await fetch_message(client, message)
+                    if message is None:
+                        error_message = "消息不存在或当前身份无法读取"
+                        break
                 except Exception:
                     pass  # 刷新失败不影响重试本身
                 continue
@@ -1142,20 +1149,20 @@ async def download_media(
         if media_size > 0 and temp_size >= media_size:
             try:
                 _move_to_download_path(temp_file_name, file_name)
-                logger.info(f"Message[{message.id}] {ui_file_name}: 下载实际已完成(temp {temp_size}字节)")
+                logger.info(f"Message[{message_id}] {ui_file_name}: 下载实际已完成(temp {temp_size}字节)")
                 return DownloadStatus.SkipDownload, file_name, ""
             except Exception as e:
-                logger.warning(f"Message[{message.id}]: 移动已完成文件失败: {e}")
+                logger.warning(f"Message[{message_id}]: 移动已完成文件失败: {e}")
     _cleanup_temp_file(temp_file_name)
     # 场景2: 目标文件已存在（可能被并发任务或之前的成功下载写入）
     if file_name and _is_exist(file_name):
         file_size = os.path.getsize(file_name)
         if media_size > 0 and file_size >= media_size:
-            logger.info(f"Message[{message.id}] {ui_file_name}: 文件已存在({file_size}字节)，标记为跳过")
+            logger.info(f"Message[{message_id}] {ui_file_name}: 文件已存在({file_size}字节)，标记为跳过")
             return DownloadStatus.SkipDownload, None, ""
     # Log the specific failure reason before returning
     final_reason = error_message or "下载失败（未知原因）"
-    logger.warning(f"Message[{message.id}] {ui_file_name}: download failed after 3 retries, reason: {final_reason}")
+    logger.warning(f"Message[{message_id}] {ui_file_name}: download failed after retries, reason: {final_reason}")
     return DownloadStatus.FailedDownload, None, final_reason
 
 

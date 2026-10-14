@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import media_downloader as downloader
 from module import bot, download_stat, task_store as store
+from module import web
 from module.app import TaskNode
 
 
@@ -272,6 +273,67 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await bot._consume_one_pending()
         await bot._consume_one_pending()
         self.assertEqual(self.queue.qsize(), 2)
+
+    def inbox_gateway(self):
+        return SimpleNamespace(
+            get_messages=AsyncMock(return_value=self.message(61, 100)),
+            send_message=AsyncMock(return_value=SimpleNamespace(id=5)),
+        )
+
+    async def test_legacy_bot_inbox_recovery_selects_bot_for_fetch_and_download(self):
+        self.save(mid=61)
+        tasks = store.get_running_tasks()
+        tasks[0].update(chat_id=100, from_user_id="100")
+        store._save_all(tasks)
+        self.bot.bot = self.inbox_gateway()
+        await bot._consume_one_pending()
+        self.bot.bot.get_messages.assert_awaited_once_with(100, 61)
+        self.client.get_messages.assert_not_awaited()
+        _, node = self.queue.get_nowait()
+        self.assertIs(node.client, self.bot.bot)
+
+    async def test_explicit_user_owner_overrides_legacy_inbox_inference(self):
+        self.save(mid=61, extra={"message_client": "user"})
+        tasks = store.get_running_tasks()
+        tasks[0].update(chat_id=100, from_user_id="100")
+        store._save_all(tasks)
+        self.bot.bot = self.inbox_gateway()
+        await bot._consume_one_pending()
+        self.client.get_messages.assert_awaited_once_with(100, 61)
+        self.bot.bot.get_messages.assert_not_awaited()
+        _, node = self.queue.get_nowait()
+        self.assertIsNone(node.client)
+
+    async def test_new_direct_task_persists_message_owner(self):
+        self.bot.bot = self.inbox_gateway()
+        command = SimpleNamespace(from_user=SimpleNamespace(id=100), id=2)
+        media = self.message(61, 100)
+        media._client = self.bot.bot
+        await bot.direct_download(self.bot, 100, command, media)
+        self.assertEqual(store.get_running_tasks()[0]["extra_data"]["message_client"], "bot")
+        await bot._consume_one_pending()
+        _, node = self.queue.get_nowait()
+        self.assertIs(node.client, self.bot.bot)
+
+    async def test_web_retry_restores_bot_inbox_identity_and_caches_message(self):
+        self.bot.bot = self.inbox_gateway()
+        await web._async_retry_download(100, 61, from_user_id="100")
+        self.bot.bot.get_messages.assert_awaited_once_with(100, 61)
+        self.client.get_messages.assert_not_awaited()
+        task = store.get_running_tasks()[0]
+        self.assertEqual(task["extra_data"]["message_client"], "bot")
+        self.assertIn(task["task_id"], self.bot._cached_messages)
+
+    async def test_web_retry_source_link_persists_resolved_chat_and_message(self):
+        self.bot.bot = self.inbox_gateway()
+        with patch("module.pyrogram_extension.parse_link", AsyncMock(return_value=(-10002, 901, 0))):
+            await web._async_retry_download(100, 61, from_user_id="100",
+                                          source_link="https://t.me/c/2/901")
+        task = store.get_running_tasks()[0]
+        self.assertEqual(task["chat_id"], -10002)
+        self.assertEqual(task["extra_data"]["message_id"], 901)
+        self.assertEqual(task["extra_data"]["message_client"], "user")
+        self.assertIn(task["task_id"], self.bot._cached_messages)
 
     async def test_batch_recovery_rescans_lost_queue_and_allows_next_pending(self):
         self.save(mid=None, kind="download")

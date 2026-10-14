@@ -42,6 +42,7 @@ from module.pyrogram_extension import (
     report_bot_forward_status,
     report_bot_status,
     retry,
+    set_max_concurrent_transmissions,
     set_meta_data,
     upload_telegram_chat_message,
 )
@@ -305,6 +306,19 @@ class DownloadBot:
         """Gen task id"""
         self.task_id += 1
         return self.task_id
+
+    def get_message_client(self, chat_id, from_user_id="", message_client=""):
+        """Restore the account that owns a persisted message's chat/ID pair."""
+        if message_client == "bot":
+            return self.bot
+        if message_client == "user":
+            return self.client
+        # Legacy direct/retry tasks did not store an account. An inbox task's
+        # chat_id is its submitting user's ID; the user's client sees a different
+        # dialog and different message IDs at that same numeric chat_id.
+        if from_user_id and str(chat_id) == str(from_user_id):
+            return self.bot
+        return self.client
 
     def add_task_node(self, node: TaskNode):
         """Add task node"""
@@ -724,6 +738,9 @@ class DownloadBot:
         self.add_download_task = add_download_task
         self.download_chat_task = download_chat_task
         self.is_running = True
+        set_max_concurrent_transmissions(
+            self.bot, getattr(app, "max_concurrent_transmissions", 1)
+        )
 
         # Normalize persisted states and reserve existing IDs before registering
         # handlers or starting the consumer. New commands cannot overwrite them.
@@ -1523,11 +1540,8 @@ async def direct_download(
         task_id=_bot.gen_task_id(),
     )
 
-    # node.client = client
-    # ↑ 注释掉以统一使用 HookClient（设置了 max_concurrent_transmissions=25 的 client），
-    #   让 worker 走 media_downloader.py:466 的 download_task(client, ...) 分支。
-    #   否则 bot handler 的 client 默认 max_concurrent_transmissions=1，导致单线程下载。
-    #   如需恢复旧行为，取消注释即可。
+    # The consumer selects the message-owning account before queueing. Bot
+    # inbox media must be downloaded with the Bot's account/file references.
     node.source_chat_title = source_chat_title
     node.source_chat_id = source_chat_id
     node.source_message_id = source_message_id
@@ -1538,6 +1552,10 @@ async def direct_download(
         "message_id": download_message.id,
         "task_id_display": node.task_id_display,
     }
+    owner = getattr(download_message, "_client", None) or download_bot.get_message_client(
+        chat_id, message.from_user.id
+    )
+    extra_data["message_client"] = "bot" if owner is download_bot.bot else "user"
     if source_chat_id and source_message_id:
         extra_data["source_chat_id"] = source_chat_id
         extra_data["source_message_id"] = source_message_id
@@ -2154,7 +2172,8 @@ async def _consume_one_pending():
         if not chat_id:
             logger.warning("Pending task %s has no chat_id", task_id)
             return
-        client = _bot.client
+        client = (_bot.get_message_client(chat_id, from_user_id, extra.get("message_client", ""))
+                  if msg_id else _bot.client)
         if not client:
             return
 
@@ -2341,6 +2360,8 @@ async def _consume_one_pending():
             node.source_message_id = extra.get("source_message_id", 0)
             node.source_chat_title = extra.get("source_chat_title", "")
             _bot.add_task_node(node)
+        owner = getattr(msg, "_client", None) or client
+        node.client = _bot.bot if owner is _bot.bot else None
         # Mark as in-queue (in-memory, not persisted). Worker will remove on pickup.
         _bot._in_queue.add(task_id)
         node.is_running = True
