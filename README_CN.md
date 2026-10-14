@@ -1,14 +1,14 @@
-<h1 align="center">Hermes Telegram Downloader</h1>
+<h1 align="center">Telegram Media Downloader</h1>
 
 <p align="center">
 <strong>Telegram media download / forward / listen tool with task persistence, crash recovery, and modern WebUI</strong>
 </p>
 
 <p align="center">
-<a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
-<a href="https://github.com/MangoIsIllegal/hermes-telegram-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
+<a href="https://github.com/smilekevin/telegram-media-downloader/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+<a href="https://github.com/smilekevin/telegram-media-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
 <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue"></a>
-<a href="https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
+<a href="https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader).
 
-- **Hermes upstream author**: [MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **Upstream author**: [MangoIsIllegal](https://github.com/MangoIsIllegal)
 - **This fork's maintainer**: [smilekevin](https://github.com/smilekevin)
 - Earlier foundation: [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
 
@@ -43,7 +43,7 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 - **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
 - **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, scheduled runs or manual dispatch, without patching upstream files during the build.
 
-For branch verification, manually run **Build Hermes Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only master updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
+For branch verification, manually run **Build Telegram Media Downloader Docker** in GitHub Actions with the fix branch selected. Branch builds publish only `sha-FULL_COMMIT` tags; only master updates `latest`. The build summary provides `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...` for pulling and use as the Compose `image`. Remove `build` and source-code mounts when verifying the image, while keeping configuration, downloads, logs, sessions and temporary-file mounts.
 
 ### Regression Tests
 
@@ -235,8 +235,10 @@ _TCP.TIMEOUT = 900
 
 The upstream [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) does not provide prebuilt Docker images. This fork adds GitHub Actions builds and GHCR publishing for `linux/amd64` and `linux/arm64`.
 
+The project and repository are now named **Telegram Media Downloader**. The GHCR image path and Compose service/container name retain `hermes-telegram-downloader` for compatibility with existing deployments. Existing image digests remain usable for verification.
+
 - **Image**: `ghcr.io/smilekevin/hermes-telegram-downloader`
-- **Builds and manual runs**: [Build Hermes Docker](https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml)
+- **Builds and manual runs**: [Build Telegram Media Downloader Docker](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
 - **master image**: `:latest`, built on master pushes, scheduled checks every six hours, or manual dispatch. Existing commit images skip duplicate builds.
 - **Branch verification**: `:sha-FULL_COMMIT`. Manually select the PR branch and enable **Force rebuild**, then copy the complete `@sha256:...` reference from **Image for verification** in the successful run's summary. Branch builds leave `latest` unchanged.
 
@@ -251,8 +253,8 @@ For prebuilt images, set the Compose `image` and remove `build` and source-code 
 ### Docker (Recommended)
 
 ```bash
-git clone https://github.com/smilekevin/hermes-telegram-downloader.git
-cd hermes-telegram-downloader
+git clone https://github.com/smilekevin/telegram-media-downloader.git
+cd telegram-media-downloader
 
 cp config.yaml.example config.yaml
 # Edit config.yaml with your api_id / api_hash / bot_token
@@ -270,8 +272,8 @@ docker-compose logs -f
 ### Manual Install
 
 ```bash
-git clone https://github.com/smilekevin/hermes-telegram-downloader.git
-cd hermes-telegram-downloader
+git clone https://github.com/smilekevin/telegram-media-downloader.git
+cd telegram-media-downloader
 pip install -r requirements.txt
 
 cp config.yaml.example config.yaml

@@ -1,4 +1,4 @@
-# Hermes Telegram Downloader - 部署指南
+# Telegram Media Downloader - 部署指南
 
 ## 前置条件
 
@@ -6,13 +6,15 @@
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
 3. 已创建 Bot Token（通过 @BotFather）
 
-本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/hermes-telegram-downloader:latest`，支持 amd64/arm64。[构建记录与分支镜像验证](https://github.com/smilekevin/hermes-telegram-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
+本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/hermes-telegram-downloader:latest`，支持 amd64/arm64。[构建记录与分支镜像验证](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
+
+项目和仓库使用 **Telegram Media Downloader** 名称；为兼容已有部署，镜像地址及 Compose 服务/容器名继续使用 `hermes-telegram-downloader`。
 
 ## 第一步：获取代码
 
 ```bash
-git clone https://github.com/smilekevin/hermes-telegram-downloader.git
-cd hermes-telegram-downloader
+git clone https://github.com/smilekevin/telegram-media-downloader.git
+cd telegram-media-downloader
 ```
 
 ## 第二步：配置

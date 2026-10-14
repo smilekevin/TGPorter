@@ -1,4 +1,4 @@
-name: Regression tests
+name: Telegram Media Downloader CI
 
 on:
   pull_request:
