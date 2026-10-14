@@ -6,11 +6,11 @@
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
 3. 已创建 Bot Token（通过 @BotFather）
 
-本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/telegram-media-downloader:latest`，支持 amd64/arm64。[构建记录与分支镜像验证](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
+本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/telegram-media-downloader:latest`，支持 amd64/arm64。[CI 验证镜像](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml) / [Build Release Docker Image](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
 
 项目、仓库和 GHCR 镜像统一使用 **Telegram Media Downloader** 名称；Compose 服务/容器名保留 `hermes-telegram-downloader`。
 
-镜像发布规则：合并/推送 master 后构建 `:sha-完整提交号`；在 GitHub 发布 Release 后构建同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。
+镜像发布规则：本仓库 PR、合并/推送 master 或手动运行 CI 后，测试通过即发布 `:sha-完整提交号`，Summary 提供可复制的拉取命令和 Compose 配置，不更新 `latest`。**Build Release Docker Image** 只在发布 GitHub Release 后运行，发布同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。
 
 ## 第一步：获取代码
 
@@ -96,7 +96,7 @@ services:
     restart: unless-stopped
 ```
 
-使用预构建镜像时保留配置和数据挂载，移除 `build` 及模块源码挂载，避免本地旧代码覆盖镜像。新地址的 `latest` 由首次成功的 Release 构建创建；测试主分支时，将 `image` 改为构建摘要给出的 SHA 标签或 digest。首次发布新 package 后，将其可见性设为 **Public**，即可无需登录拉取。
+使用预构建镜像时保留配置和数据挂载，移除 `build` 及模块源码挂载，避免本地旧代码覆盖镜像。新地址的 `latest` 由首次成功的 Release 构建创建；验证 PR 或主分支时，将 `image` 改为 CI Summary 的 **CI image for verification** 给出的 SHA 标签或 digest。首次发布新 package 后，将其可见性设为 **Public**，即可无需登录拉取。
 
 ## 第四步：拉取并启动
 
