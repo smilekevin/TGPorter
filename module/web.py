@@ -1,11 +1,13 @@
 """web ui for media download"""
 
 import datetime
+import hmac
 import logging
 import os
+import secrets
 import threading
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 import utils
 from module.app import Application
@@ -33,7 +35,13 @@ log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
 _flask_app = Flask(__name__, static_folder='static', static_url_path='/static')
-_flask_app.secret_key = "tdl"
+_flask_app.secret_key = secrets.token_bytes(32)
+_flask_app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_REFRESH_EACH_REQUEST=False,
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=7),
+)
 # Always reload templates from disk on each request — needed for NAS deployments
 # where index.html is updated by the deploy script without restarting the container.
 _flask_app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -63,6 +71,85 @@ def run_web_server(app: Application):
 _app: Application = None
 
 
+def _web_login_secret() -> str:
+    """An empty password keeps the existing password-free mode."""
+    value = getattr(_app, "web_login_secret", "")
+    return "" if value is None else str(value)
+
+
+def _login_token() -> str:
+    """Bind sessions to the current password without putting it in the cookie."""
+    return hmac.new(
+        _flask_app.secret_key, _web_login_secret().encode("utf-8"), "sha256"
+    ).hexdigest()
+
+
+def _is_authenticated() -> bool:
+    token = session.get("web_auth")
+    return isinstance(token, str) and hmac.compare_digest(token, _login_token())
+
+
+def _csrf_token() -> str:
+    if "web_csrf_token" not in session:
+        session["web_csrf_token"] = secrets.token_urlsafe(32)
+    return session["web_csrf_token"]
+
+
+@_flask_app.before_request
+def require_web_login():
+    """Protect every dashboard/API route, including future routes."""
+    if not _web_login_secret() or request.endpoint == "static":
+        return None
+    if request.endpoint != "login" and not _is_authenticated():
+        if request.endpoint == "index":
+            return redirect(url_for("login"))
+        return jsonify(error="authentication_required", login_url=url_for("login")), 401
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        expected = session.get("web_csrf_token", "")
+        submitted = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token", "")
+        if not expected or not hmac.compare_digest(
+            expected.encode("utf-8"), submitted.encode("utf-8")
+        ):
+            if request.endpoint == "login":
+                return render_template(
+                    "login.html", error="页面已过期，请重新输入密码。", csrf_token=_csrf_token()
+                ), 400
+            return jsonify(error="invalid_csrf_token"), 400
+    return None
+
+
+@_flask_app.after_request
+def prevent_authenticated_response_cache(response):
+    if _web_login_secret() and request.endpoint != "static":
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@_flask_app.route("/login", methods=["GET", "POST"])
+def login():
+    if not _web_login_secret() or _is_authenticated():
+        return redirect(url_for("index"))
+    error = None
+    status = 200
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if hmac.compare_digest(password.encode("utf-8"), _web_login_secret().encode("utf-8")):
+            session.clear()
+            session["web_auth"] = _login_token()
+            session.permanent = True
+            _csrf_token()
+            return redirect(url_for("index"))
+        error = "密码错误，请重试。"
+        status = 401
+    return render_template("login.html", error=error, csrf_token=_csrf_token()), status
+
+
+@_flask_app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 def init_web(app: Application):
     """
     Initialize and start the web server.
@@ -90,8 +177,12 @@ def init_web(app: Application):
 
 @_flask_app.route("/")
 def index():
-    """Index page - no login required"""
-    return render_template("index.html")
+    """Render the dashboard after the shared authentication check."""
+    login_required = bool(_web_login_secret())
+    return render_template(
+        "index.html", web_login_required=login_required,
+        web_csrf_token=_csrf_token() if login_required else "",
+    )
 
 
 @_flask_app.route("/get_completed_count")
