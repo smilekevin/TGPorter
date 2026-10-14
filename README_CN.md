@@ -1,7 +1,7 @@
 <h1 align="center">Telegram Media Downloader</h1>
 
 <p align="center">
-<strong>Telegram media download / forward / listen tool with task persistence, crash recovery, and modern WebUI</strong>
+<strong>Telegram 媒体下载 / 转发 / 监听工具，带任务持久化 + 崩溃恢复 + 现代 WebUI</strong>
 </p>
 
 <p align="center">
@@ -12,297 +12,128 @@
 </p>
 
 <p align="center">
-  <a href="./README.md">中文</a> ·
-  <a href="#features">Features</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#docker-images-from-this-fork">Docker Images</a> ·
-  <a href="#configuration">Configuration</a> ·
-  <a href="#bot-commands">Bot Commands</a> ·
+  <a href="./README.md">English</a> ·
+  <a href="#功能特性">功能特性</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#配置说明">配置说明</a> ·
+  <a href="#bot-命令">Bot 命令</a> ·
   <a href="#web-api">Web API</a> ·
-  <a href="#changes-from-upstream">Changes from Upstream</a>
+  <a href="#docker-数据持久化">Docker 数据持久化</a> ·
+  <a href="#架构设计">架构设计</a> ·
+  <a href="#相比上游的改动">相比上游的改动</a>
 </p>
 
 ---
 
-## Authors and Maintainers
+## 功能特性
 
-This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader).
+### 下载
 
-- **Upstream author**: [MangoIsIllegal](https://github.com/MangoIsIllegal)
-- **This fork's maintainer**: [smilekevin](https://github.com/smilekevin)
-- Earlier foundation: [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+- **多类型媒体下载** — audio / document / photo / video / voice / animation / video_note
+- **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
+- **单条下载** — 直接发送 `t.me` 链接给 Bot 即可下载
+- **转发媒体下载** — 转发一条媒体消息给 Bot，自动从源频道下载
+- **断点续传** — 文件大小 ≥ 已下载大小即判定为已完成，跳过重复下载
+- **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
+- **3 次重试** — 每个文件最多重试 3 次，含指数退避（连接错误 10s/20s/40s）
+- **文件引用过期处理** — BadRequest 时自动 fetch_message 刷新引用
+- **临时文件清理** — 下载失败自动清理 `.temp` 文件，启动时清理残留
 
-## Fixes in This Fork
+### 转发
 
-- **Pending consumer lifecycle**: start one periodic consumer even with an empty store, cancel and await it at shutdown, and restore states and task IDs before registering Bot handlers.
-- **Recovery and queue handoff**: exclude tasks being consumed or already queued; release reservations on rejected or cancelled handoffs so Pending tasks can retry. Bound notifications to 30 seconds.
-- **Batch downloads and forwards**: restore history-range tasks without a single message_id. Rescan download ranges to recover files lost from the in-memory queue; existing files are skipped by download history. Resume normal forwards from their checkpoint and use download/upload for protected channels, preserving destination, topic and display ID.
-- **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
-- **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
-- **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
-- **Docker builds**: CI tests and publishes SHA verification images for PRs, master pushes and manual runs, with pull references in its Summary. **Build Release Docker Image** runs only when a GitHub Release is published, publishing version tags and updating `latest`.
+- **跨频道转发** — 支持普通频道和受保护频道（has_protected_content）
+- **受保护频道** — 自动切换为下载再上传模式
+- **评论区转发** — `/forward_to_comments` 转发媒体到指定帖子评论区
+- **实时监听转发** — `/listen_forward` 基于 NewMessage 事件驱动，频道有新消息立即触发下载/转发（非轮询）
+- **config.yaml 频道监控** — 配置文件中的 chat 列表也会自动监听新消息，启动后实时更新
 
-For branch verification, this repository's PRs automatically run **Telegram Media Downloader CI**. You can also select a branch and run CI manually in Actions. After success, copy the `docker pull` command or Compose `image:` configuration from **CI image for verification** in the Summary. CI publishes only SHA tags; only the Release workflow updates `latest`.
+### 广告过滤
 
-### Regression Tests
+- **关键词过滤** — `/add_ad` 添加广告关键词，转发时自动跳过包含这些关键词的消息
+- **关键词移除** — `/remove_ad` 移除广告关键词
+- **内容替换** — `/add_replace_ad` 添加替换规则，自动从 caption 中删除匹配的广告文字
+- **替换移除** — `/remove_replace_ad` 移除替换规则
+- **群组广告** — `/set_ad` 为特定群组设置追加广告文字，转发时自动添加到 caption 末尾
 
-The tests need no Telegram account or network access. They use temporary persistence files and mocked Telegram responses with the real consumer and worker queue code.
+### 任务管理
 
-```bash
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
-```
+- **任务持久化** — 所有下载/转发任务写入 `log/bot_tasks.json`，容器重启不丢任务
+- **崩溃恢复** — 重启后所有未完成任务统一进入 pending 队列，逐个消费
+- **任务 ID** — `MMDD-序号` 格式（如 `0628-1`），每日序号重置，持久化计数器
+- **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；内存占位区分已入队等待 worker 的任务
+- **下载进度持久化** — 每 50 条消息自动保存 `last_read_message_id`，中断不丢进度
+- **下载历史持久化** — 完成/失败记录写入 `log/download_history.json`
+- **手动终止** — 停止任务时未完成文件记入失败列表（原因：手动终止）
 
-PR checks run the tests and build the Alpine Docker image for amd64 and arm64. Live Telegram downloads and NAS container restarts still need deployment validation.
+### FLOOD_WAIT 处理
 
----
-
-## Features
-
-### Download
-
-- **Multi-type media** — audio / document / photo / video / voice / animation / video_note
-- **Batch download** — specify message ID range `[start, end]` with optional filter
-- **Single download** — send a `t.me` link to the Bot
-- **Forwarded media** — forward a media message to the Bot, downloads from source channel
-- **Skip detection** — file size ≥ downloaded size = already complete, skip
-- **Size mismatch** — backs up existing file (.bak), re-downloads, deletes backup on success
-- **3 retries** — per file, with exponential backoff for connection errors (10s/20s/40s)
-- **File reference refresh** — auto fetch_message on BadRequest
-- **Temp file cleanup** — failed downloads clean up `.temp` files, stale files removed on startup
-
-### Forward
-
-- **Cross-channel forward** — normal and protected channels (has_protected_content)
-- **Protected channels** — auto-switch to download-then-upload mode
-- **Comments forward** — `/forward_to_comments` forwards media to a post's comment section
-- **Listen forward** — `/listen_forward` uses NewMessage event-driven, triggers download/forward immediately on new channel messages (not polling)
-- **Config.yaml monitoring** — chats in config file also auto-monitor new messages, real-time updates after startup
-
-### Ad Filtering
-
-- **Keyword filtering** — `/add_ad` adds ad keywords, auto-skips messages containing these keywords during forwarding
-- **Keyword removal** — `/remove_ad` removes ad keywords
-- **Content replacement** — `/add_replace_ad` adds replacement rules, auto-removes matching ad text from caption
-- **Replacement removal** — `/remove_replace_ad` removes replacement rules
-- **Group ads** — `/set_ad` sets appended ad text for specific groups, auto-added to caption during forwarding
-
-### Task Management
-
-- **Task persistence** — all download/forward tasks written to `log/bot_tasks.json`, survive container restarts
-- **Crash recovery** — incomplete tasks re-enter pending queue on restart, consumed one by one
-- **Task ID** — `MMDD-N` format (e.g. `0628-1`), resets daily, persistent counter
-- **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; in-memory reservations distinguish tasks waiting for worker pickup
-- **Download progress persistence** — auto-saves `last_read_message_id` every 50 messages, no progress loss on interruption
-- **Download history** — completed/failed records in `log/download_history.json`
-- **Manual stop** — stopped tasks' incomplete files recorded as failed (reason: manually stopped)
-
-### FLOOD_WAIT Handling
-
-- **Non-blocking** — sets a cooldown timestamp instead of sleeping, doesn't block the queue
-- **Pending consumer throttling** — get_messages FloodWait triggers global cooldown, task stays pending
-- **Download throttling** — cumulative FloodWait > 600s = skip file
-- **Message edit throttling** — edit_message FloodWait sets node-level cooldown
-- **User notification** — sends Telegram message when rate-limited
-- **Silent throttle detection** — detects TG silent rate-limiting (speed < 200 KB/s for 120s) without explicit FloodWait error, shows WebUI banner with elapsed timer + sends TG notification (trigger & recovery, once each)
+- **非阻塞式等待** — 设置冷却时间戳，不 sleep，不卡死整个队列
+- **Pending 消费者限速** — get_messages 遇到 FloodWait 时全局冷却，任务保持 pending
+- **下载限速** — 累计 FloodWait > 600 秒则跳过该文件
+- **消息编辑限速** — edit_message 遇到 FloodWait 时设置 node 级冷却
+- **用户通知** — 限速暂停时发送 Telegram 通知告知用户
+- **静默限速检测** — 检测 TG 静默限速（速度 < 200 KB/s 持续 120 秒），无 FloodWait 错误码也能识别，WebUI 横幅显示已限速时长 + TG 通知（触发和解除各一次）
 
 ### WebUI
 
-- **Modern light theme** — no layui, pure HTML/CSS/JS, responsive
-- **Four tabs**:
-  - 📥 **Active** — live progress / speed / ETA
-  - ✅ **Completed** — infinite scroll, server-side search
-  - ❌ **Failed** — error reason + source link, retry supported
-  - ⏳ **Pending** — queue with wait time
-- **Actions** — pause/resume, delete (single/batch), retry (single/batch)
-- **Real-time** — total speed = sum of active task speeds, 3s stale check
-- **Sticky nav** — tabs stay visible while scrolling
+- **现代浅色主题** — 移除 layui，纯原生 HTML/CSS/JS，响应式设计
+- **四个标签页**：
+  - 📥 **进行中** — 活跃下载，实时进度/速度/ETA
+  - ✅ **已完成** — 无限滚动，服务端搜索
+  - ❌ **失败** — 失败原因 + 源消息链接，支持重试
+  - ⏳ **待执行** — pending/queued 队列，等待时间显示，区分等待中/排队中状态
+- **操作** — 暂停/恢复、删除（单个/批量）、重试（单个/批量）
+- **实时数据** — 总速度 = 所有活跃任务速度之和，3 秒无回调判为过期归零
+- **粘性导航栏** — 滚动时标签页固定在顶部
 
-### Notifications
+### 通知
 
-- **Progress** — Bot message update at every 20% milestone
-- **Completion** — immediate final status (re-counted from _download_result to avoid races)
-- **Failure** — lists each failed file with specific error reason
-- **Rate limit** — FLOOD_WAIT pause notification with wait duration
-- **Silent throttle** — TG silent rate-limit detection (speed < 200 KB/s for 120s), WebUI banner with elapsed timer + TG notification (trigger & recovery, once each)
-- **Recovery** — notifies user when interrupted/pending tasks are restored on restart
-- **Retry** — notifies user when a retried task enters the download queue
+- **进度通知** — 每 20% 进度里程碑发送一次 Bot 消息更新
+- **完成通知** — 任务完成时立即发送最终状态（从 _download_result 重新计数，避免竞态）
+- **失败通知** — 列出每个失败文件及具体错误原因
+- **限速通知** — FLOOD_WAIT 暂停时通知用户等待时长
+- **静默限速** — TG 静默限速检测（速度 < 200 KB/s 持续 120 秒），WebUI 横幅显示已限速时长 + TG 通知（触发和解除各一次）
+- **恢复通知** — 重启后恢复中断/待执行任务时通知用户
+- **重试通知** — WebUI 重试任务加入队列时通知用户
 
-### Other
+### 其他
 
-- **Multilingual** — Chinese / English / Russian / Ukrainian
-- **rclone cloud upload** — optional post-download cloud drive upload
-- **Proxy** — Pyrogram native proxy + Docker environment variable proxy
-- **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
-- **Log separation** — `tdl.log` + `download.log`, 10MB rotation, 30-day retention
-
----
-
-## Architecture
-
-```mermaid
-flowchart TB
-    User["User"]
-    Telegram["Telegram"]
-
-    subgraph Container["Docker Container"]
-        direction TB
-        Bot["Bot commands and media<br/>Pyrogram"]
-        Web["WebUI<br/>Flask :5000"]
-        Store["Task persistence<br/>task_store.py"]
-        Recovery["Startup recovery<br/>recover_tasks()"]
-        Consumer["Pending Consumer<br/>Every 2 seconds"]
-        Scan["History scans / live monitoring"]
-        Queue["asyncio.Queue<br/>(message, node)"]
-        Workers["Worker Pool<br/>Limit: max_download_task"]
-        Clients["Select message owner<br/>Bot / User Client"]
-        Stats["Progress and download history<br/>download_stat.py"]
-    end
-
-    Data[("Persistent host mounts<br/>log / downloads / temp / sessions")]
-
-    User --> Bot
-    User --> Web
-    Bot -->|Save task| Store
-    Web -->|Retry task| Store
-    Recovery -->|Restore states and IDs| Store
-    Store -->|Read Pending| Consumer
-    Consumer -->|Single download| Queue
-    Consumer -->|Recover range task| Scan
-    Bot -.->|Batch / monitoring| Scan
-    Scan --> Queue
-    Queue --> Workers
-    Workers --> Clients
-    Clients <-->|Download / forward| Telegram
-    Workers --> Stats
-    Store -.->|Tasks and IDs| Data
-    Stats -.->|Completed / failed history| Data
-    Clients -.->|Media / sessions| Data
-
-    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
-    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
-    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
-    class Bot,Web entry
-    class Consumer,Scan,Queue,Workers,Clients pipeline
-    class Store,Stats,Data storage
-```
-
-Solid edges show task and media processing. Dashed edges show persistence or batch/monitoring entry points. Single downloads are persisted before the consumer feeds the worker queue; history scans and live monitoring feed the same queue. Progress and history also supply WebUI views and Bot notifications.
-
-### Core Flow
-
-1. **User submits a single download** → Bot handler creates TaskNode → `save_task()` persists Pending → consumer fetches message → `add_download_task()` enqueues
-2. **Worker dequeues** → `download_task()` → `download_media()` → Pyrogram download
-3. **Progress callback** → `update_download_status()` updates `_download_result` → 20% milestone triggers Bot notification
-4. **Download complete** → `complete_task()` removes from store → `save_downloads()` writes history
-5. **Download failed** → `add_failed_download()` records to failed list → WebUI retry available
-6. **Container restart** → `recover_tasks()` reads incomplete tasks → resets all to pending → consumer loop feeds workers
-
-### Pending Consumer
-
-On restart, all incomplete tasks enter the pending queue instead of resuming directly. This prevents FLOOD_WAIT storms from 100+ tasks resuming simultaneously.
-
-```mermaid
-flowchart TB
-    Tick["Check Pending tasks every 2 seconds"] --> Slot{"Free concurrency slot?"}
-    Slot -->|No| Wait["Keep Pending<br/>Wait for the next tick"]
-    Slot -->|Yes| Type{"Single or range task?"}
-    Type -->|Range| Scan["Restore history scan<br/>Feed the worker queue"]
-    Type -->|Single| Fetch["Use cached message or fetch with its owning account<br/>get_messages timeout: 300 seconds"]
-    Fetch -->|Success| Enqueue["Notify and attempt queue handoff"]
-    Enqueue -->|Accepted| Download["Worker starts download"]
-    Enqueue -->|Rejected / cancelled| Wait
-    Fetch -->|FLOOD_WAIT / network error / timeout| Cooldown["Set cooldown and backoff"]
-    Cooldown --> Wait
-    Fetch -->|Empty message / non-network error| Failed["Record failure and remove Pending"]
-```
-
-Active workers and fetching/queued reservations share the concurrency limit; each task is consumed once. Network errors leave tasks Pending for retry after cooldown. Rejected or cancelled queue handoffs release their reservations.
-
-### TCP Timeout Patch
-
-Pyrogram's default `TCP.TIMEOUT=10s` causes reconnect storms when Telegram throttles downloads. Patched to 900s:
-
-```python
-from pyrogram.connection.transport.tcp import TCP as _TCP
-_TCP.TIMEOUT = 900
-```
+- **多语言** — 中文 / 英文 / 俄语 / 乌克兰语
+- **rclone 云盘上传** — 下载完成后可选上传到云盘
+- **代理支持** — Pyrogram 原生代理 + Docker 环境变量代理
+- **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
+- **日志分离** — `tdl.log`（主日志）+ `download.log`（下载日志），10MB 轮转，保留 30 天
 
 ---
 
-## Docker Images from This Fork
+## 快速开始
 
-The upstream [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) does not provide prebuilt Docker images. This fork adds GitHub Actions builds and GHCR publishing for `linux/amd64` and `linux/arm64`.
+Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloader:latest`，由 GitHub Release 发布流程更新。
 
-The project, repository and GHCR image path now use the **Telegram Media Downloader** name. The Compose service/container name remains `hermes-telegram-downloader` to simplify migration of existing deployments.
-
-- **Image**: `ghcr.io/smilekevin/telegram-media-downloader`
-- **CI verification images**: [Telegram Media Downloader CI](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml)
-- **Release publishing**: [Build Release Docker Image](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
-- **Default branch image**: every merge or push to master runs only CI, publishing `:sha-FULL_COMMIT` after tests pass without updating `latest`. Scheduled builds are disabled.
-- **Release images**: publishing a GitHub Release builds its tagged commit. A Release tagged `v1.0.1` publishes `:v1.0.1`, `:sha-FULL_COMMIT` and updates `:latest`. Different Releases on the same commit still build. Creating a tag alone or saving a Release draft does not trigger publishing. Use Docker-compatible version names; `latest` and `sha-*` are reserved for the workflow.
-- **PR/branch verification**: `:sha-FULL_COMMIT`. PR CI publishes verification images automatically; manual branch CI runs also publish. **CI image for verification** in the Summary includes the package link, tags, digest, pull command and Compose configuration. PRs build their current merge-preview source; Source commit identifies the actual tested and built commit. External fork and Dependabot PRs validate the build without publishing, and their summary states this explicitly.
-
-```bash
-docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
-```
-
-For prebuilt images, set the Compose `image` and remove `build` and source-code mounts. Keep existing configuration, downloads, logs, sessions and temporary-file mounts. Use the branch build's digest when verifying a PR.
-
-### Migrate from the Previous Image Path
-
-New builds publish to `ghcr.io/smilekevin/telegram-media-downloader`. Historical images remain at `ghcr.io/smilekevin/hermes-telegram-downloader`. Keep using the old path with old digests; when switching to the new path, use a version tag or digest from a new build's summary.
-
-Merging this change publishes a SHA image at the new path. The new `latest` tag is created by the first successful Release build. After publishing the new package for the first time, set its visibility to **Public** in [Package settings](https://github.com/users/smilekevin/packages/container/telegram-media-downloader/settings) so a NAS can pull without authentication.
-
-In an existing Compose configuration, set `image` to a version or digest at the new path, remove `build` and source-code mounts, and retain configuration and data mounts. Then run:
-
-```bash
-docker-compose pull
-docker-compose up -d --force-recreate
-```
-
-### Publish a Version with GitHub Releases
-
-After merging this workflow change, open this repository's [Releases](https://github.com/smilekevin/telegram-media-downloader/releases) and click **Draft a new release**:
-
-1. Under **Choose a tag**, enter a new version such as `v1.0.1` and select the option to create that tag.
-2. Set **Target** to master or a commit containing this workflow change.
-3. Enter the title and release notes, then click **Publish release**.
-
-Publishing automatically builds amd64/arm64 images. The **Build Release Docker Image** Summary lists version tags and the digest. After the build succeeds, pull the pinned version or use `latest` for the most recently published Release image whose build succeeded:
-
-```bash
-docker pull ghcr.io/smilekevin/telegram-media-downloader:v1.0.1
-docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
-```
-
-## Quick Start
-
-### Docker (Recommended)
+### Docker 部署（推荐）
 
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
 cd telegram-media-downloader
 
+# 复制配置
 cp config.yaml.example config.yaml
-# Edit config.yaml with your api_id / api_hash / bot_token
+# 编辑 config.yaml，填入 api_id / api_hash / bot_token
 
-# Pull a published Release image
+# 拉取已发布的 Release 镜像
 docker-compose pull
 
-# First run (foreground, for Telegram login)
+# 首次运行（前台，用于登录 Telegram）
 docker-compose run --rm hermes-telegram-downloader
 
-# Subsequent runs (background)
+# 后续后台运行
 docker-compose up -d
 
-# View logs
+# 查看日志
 docker-compose logs -f
 ```
 
-### Manual Install
+### 手动安装
 
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
@@ -310,32 +141,32 @@ cd telegram-media-downloader
 pip install -r requirements.txt
 
 cp config.yaml.example config.yaml
-# Edit config.yaml...
+# 编辑 config.yaml...
 
 python media_downloader.py
 ```
 
-### Local Dev Mode
+### 本地开发模式
 
 ```bash
-# No Telegram account needed, mock data for WebUI debugging
+# 无需 Telegram 账号，Mock 数据启动 WebUI
 python run_local.py
-# Open http://localhost:5000
+# 访问 http://localhost:5000
 ```
 
 ---
 
-## Configuration
+## 配置说明
 
 ### config.yaml
 
 ```yaml
-# Telegram API credentials (required)
+# Telegram API 凭证（必填）
 api_id: your_api_id
 api_hash: your_api_hash
-bot_token: your_bot_token
+bot_token: your_bot_token  # Bot Token，用于 Bot 命令交互
 
-# Media types
+# 媒体类型
 media_types:
   - audio
   - document
@@ -344,7 +175,7 @@ media_types:
   - voice
   - animation
 
-# File format filter (all = all formats)
+# 文件格式过滤（all = 所有格式）
 file_formats:
   audio:
     - all
@@ -354,7 +185,7 @@ file_formats:
   video:
     - mp4
 
-# Download settings
+# 下载设置
 save_path: /app/downloads
 file_path_prefix:
   - chat_title
@@ -363,182 +194,293 @@ file_name_prefix:
   - file_name
 hide_file_name: false
 
-# Concurrency
-max_download_task: 5  # number of workers
+# 并发控制
+max_download_task: 5  # worker 数量
 
 # WebUI
 web_host: 0.0.0.0
 web_port: 5000
-web_login_secret: 123
+web_login_secret: 123  # 登录密钥（当前未强制验证）
 
-# Permissions
+# 权限
 allowed_user_ids:
-  - 'me'  # 'me' = currently logged-in account
+  - 'me'  # 'me' = 当前登录账号
 
-# Other
+# 其他
 language: ZH
 date_format: '%Y_%m'
 enable_download_txt: false
 log_level: DEBUG
 
-# Proxy (Docker: access host proxy)
+# 代理（Docker 内访问宿主机代理）
 proxy:
   scheme: http
   hostname: 172.17.0.1
   port: 20172
 ```
 
-### Parameters
+### 配置参数说明
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `api_id` | Telegram API ID ([my.telegram.org](https://my.telegram.org/apps)) | — |
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `api_id` | Telegram API ID（[my.telegram.org](https://my.telegram.org/apps)） | — |
 | `api_hash` | Telegram API Hash | — |
-| `bot_token` | Bot Token ([@BotFather](https://t.me/BotFather)) | — |
-| `media_types` | Media types to download | — |
-| `file_formats` | Format filter per type | — |
-| `save_path` | File save path | `./downloads` |
-| `max_download_task` | Concurrent download workers | `5` |
-| `web_port` | WebUI port | `5000` |
-| `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
-| `language` | UI language (`ZH` / `EN` / `RU` / `UA`) | `EN` |
-| `proxy` | Proxy config (scheme / hostname / port) | `{}` |
-| `log_level` | Log level | `INFO` |
-| `hide_file_name` | Hide filenames in UI | `false` |
-| `enable_download_txt` | Save text-only messages as .txt | `false` |
-| `date_format` | Date directory format | `%Y_%m` |
+| `bot_token` | Bot Token（[@BotFather](https://t.me/BotFather)） | — |
+| `media_types` | 下载的媒体类型列表 | — |
+| `file_formats` | 各类型文件格式过滤 | — |
+| `save_path` | 文件保存路径 | `./downloads` |
+| `max_download_task` | 并发下载 worker 数 | `5` |
+| `web_port` | WebUI 端口 | `5000` |
+| `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
+| `language` | 界面语言（`ZH` / `EN` / `RU` / `UA`） | `EN` |
+| `proxy` | 代理配置（scheme / hostname / port） | `{}` |
+| `log_level` | 日志级别 | `INFO` |
+| `hide_file_name` | 隐藏文件名（UI 显示 `****.mp4`） | `false` |
+| `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
+| `date_format` | 日期目录格式 | `%Y_%m` |
 
 ---
 
-## Bot Commands
+## Bot 命令
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/download <link> <start> <end> [filter]` | Batch download | `/download https://t.me/c/123 1 100` |
-| `/forward <src> <dst> <start> <end> [filter]` | Forward messages | `/forward https://t.me/c/A https://t.me/c/B 1 500` |
-| `/forward_to_comments <src> <dst> <start> <end>` | Forward to comments | `/forward_to_comments https://t.me/c/A https://t.me/c/B 1 10` |
-| `/listen_forward <src> <dst> [filter]` | Listen and auto-forward | `/listen_forward https://t.me/c/A https://t.me/c/B` |
-| `/get_info <link>` | Get chat/message info | `/get_info https://t.me/c/123/456` |
-| `/add_filter <filter>` | Set download filter | `/add_filter message_date >= 2024-01-01` |
-| `/add_ad <keyword>` | Add ad keyword (skip during forward) | `/add_ad 推广` |
-| `/remove_ad <keyword>` | Remove ad keyword | `/remove_ad 推广` |
-| `/add_replace_ad <msg_link> <keyword>` | Add replacement rule (remove from caption) | `/add_replace_ad https://t.me/c/123/456 广告` |
-| `/remove_replace_ad <msg_link> <keyword>` | Remove replacement rule | `/remove_replace_ad https://t.me/c/123/456 广告` |
-| `/set_ad <msg_link> <ad_text>` | Set group append ad (empty to delete) | `/set_ad https://t.me/c/123 关注我` |
-| `/set_language <lang>` | Set language (en/ru/zh/ua) | `/set_language zh` |
-| `/stop` | Stop download/forward/listen (interactive) | `/stop` |
-| `/help` `/start` | Show help | — |
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/download <link> <start> <end> [filter]` | 批量下载消息 | `/download https://t.me/c/123 1 100` |
+| `/forward <src> <dst> <start> <end> [filter]` | 转发消息到目标群组 | `/forward https://t.me/c/A https://t.me/c/B 1 500` |
+| `/forward_to_comments <src> <dst> <start> <end>` | 转发媒体到评论区 | `/forward_to_comments https://t.me/c/A https://t.me/c/B 1 10` |
+| `/listen_forward <src> <dst> [filter]` | 实时监听并自动转发 | `/listen_forward https://t.me/c/A https://t.me/c/B` |
+| `/get_info <link>` | 获取群组/频道/消息信息 | `/get_info https://t.me/c/123/456` |
+| `/add_filter <filter>` | 设置下载过滤器 | `/add_filter message_date >= 2024-01-01` |
+| `/add_ad <keyword>` | 添加广告关键词（转发时跳过） | `/add_ad 推广` |
+| `/remove_ad <keyword>` | 移除广告关键词 | `/remove_ad 推广` |
+| `/add_replace_ad <msg_link> <keyword>` | 添加替换规则（从 caption 删除） | `/add_replace_ad https://t.me/c/123/456 广告` |
+| `/remove_replace_ad <msg_link> <keyword>` | 移除替换规则 | `/remove_replace_ad https://t.me/c/123/456 广告` |
+| `/set_ad <msg_link> <ad_text>` | 设置群组追加广告（空文本删除） | `/set_ad https://t.me/c/123 关注我` |
+| `/set_language <lang>` | 设置语言（en/ru/zh/ua） | `/set_language zh` |
+| `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
+| `/help` `/start` | 显示帮助 | — |
 
-### Shortcuts (no command needed)
+### 快捷操作（无需命令）
 
-- **Send a `t.me` link** → downloads single message
-- **Forward media to Bot** → downloads from source channel
+- **发送 `t.me` 链接** → 下载单条消息
+- **转发媒体消息给 Bot** → 下载该媒体（优先从源频道下载）
 
-### Message IDs
+### 消息 ID 说明
 
-- `start_id = 1` → from the earliest message
-- `end_id = 0` → up to the latest message
-- `[filter]` is optional
+- `start_id = 1` → 从最早的消息开始
+- `end_id = 0` → 直到最新消息
+- `[filter]` 可选，支持日期/文件名等过滤
 
 ---
 
 ## Web API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | WebUI page |
-| `/get_download_list` | GET | Download list (`already_down=true` completed, `false` active) |
-| `/get_download_list?offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
-| `/get_pending_list` | GET | Pending queue |
-| `/get_failed_downloads` | GET | Failed list |
-| `/get_download_status` | GET | Total download speed |
-| `/get_download_state` | GET | Global state (downloading / paused) |
-| `/get_completed_count` | GET | Completed count (lightweight polling) |
-| `/get_flood_wait` | GET | FloodWait cooldown status + remaining seconds |
-| `/get_app_version` | GET | App version |
-| `/check_file_exists` | POST | Check if local file exists for a completed task |
-| `/set_download_state` | POST | Global pause/resume (`state=pause` / `state=continue`) |
-| `/pause_task` | POST | Pause a task |
-| `/resume_task` | POST | Resume a task |
-| `/delete_task` | POST | Delete a task (active or failed) |
-| `/batch_delete` | POST | Batch delete (JSON: `{"task_ids": [...]}`) |
-| `/retry_task` | POST | Retry a failed task |
-| `/batch_retry` | POST | Batch retry (JSON: `{"task_ids": [...]}`) |
-| `/remove_pending` | POST | Remove a pending task |
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/` | GET | WebUI 主页 |
+| `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中） |
+| `/get_download_list?offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
+| `/get_pending_list` | GET | Pending 队列 |
+| `/get_failed_downloads` | GET | 失败列表 |
+| `/get_download_status` | GET | 总下载速度 |
+| `/get_download_state` | GET | 全局下载状态（downloading / paused） |
+| `/get_completed_count` | GET | 已完成数量（轻量轮询） |
+| `/get_flood_wait` | GET | FloodWait 冷却状态 + 剩余秒数 |
+| `/get_app_version` | GET | 应用版本 |
+| `/check_file_exists` | POST | 检查已完成任务的本地文件是否存在 |
+| `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
+| `/pause_task` | POST | 暂停单个任务 |
+| `/resume_task` | POST | 恢复单个任务 |
+| `/delete_task` | POST | 删除任务（活跃或失败） |
+| `/batch_delete` | POST | 批量删除（JSON: `{"task_ids": [...]}`） |
+| `/retry_task` | POST | 重试失败任务 |
+| `/batch_retry` | POST | 批量重试（JSON: `{"task_ids": [...]}`） |
+| `/remove_pending` | POST | 移除 pending 任务 |
 
 ---
 
-## Docker Management
+## Docker 数据持久化
 
-```bash
-# Build
-docker-compose build
+| 路径 | 说明 |
+|------|------|
+| `./downloads/` | 下载的文件 |
+| `./config.yaml` | 配置文件 |
+| `./data.yaml` | 运行时数据（ids_to_retry 等） |
+| `./log/` | 日志 + 任务持久化（bot_tasks.json / task_counter.json / download_history.json） |
+| `./sessions/` | Telegram session 文件 |
+| `./temp/` | 下载临时文件 |
 
-# Start
-docker-compose up -d
+---
 
-# Logs
-docker-compose logs -f
+## 架构设计
 
-# Stop
-docker-compose down
+```mermaid
+flowchart TB
+    User["用户"]
+    Telegram["Telegram"]
 
-# Restart
-docker-compose restart
+    subgraph Container["Docker 容器"]
+        direction TB
+        Bot["Bot 命令与媒体入口<br/>Pyrogram"]
+        Web["WebUI<br/>Flask :5000"]
+        Store["任务持久化<br/>task_store.py"]
+        Recovery["启动恢复<br/>recover_tasks()"]
+        Consumer["Pending Consumer<br/>每 2 秒消费"]
+        Scan["批量扫描 / 实时监听"]
+        Queue["asyncio.Queue<br/>(message, node)"]
+        Workers["Worker Pool<br/>并发上限 max_download_task"]
+        Clients["按消息身份选择<br/>Bot / User Client"]
+        Stats["下载进度与历史<br/>download_stat.py"]
+    end
 
-# Update
-git pull && docker-compose build && docker-compose up -d
+    Data[("宿主机持久化挂载<br/>log / downloads / temp / sessions")]
+
+    User --> Bot
+    User --> Web
+    Bot -->|保存任务| Store
+    Web -->|重试任务| Store
+    Recovery -->|恢复状态与编号| Store
+    Store -->|读取 Pending| Consumer
+    Consumer -->|单条下载| Queue
+    Consumer -->|恢复范围任务| Scan
+    Bot -.->|批量 / 监听| Scan
+    Scan --> Queue
+    Queue --> Workers
+    Workers --> Clients
+    Clients <-->|下载 / 转发| Telegram
+    Workers --> Stats
+    Store -.->|任务与编号| Data
+    Stats -.->|完成 / 失败历史| Data
+    Clients -.->|媒体 / session| Data
+
+    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
+    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
+    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
+    class Bot,Web entry
+    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class Store,Stats,Data storage
 ```
 
-### Data Persistence
+实线表示任务与媒体处理，虚线表示持久化或批量/监听入口。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。下载进度与历史同时供 WebUI 显示和 Bot 通知使用。
 
-| Path | Description |
-|------|-------------|
-| `./downloads/` | Downloaded files |
-| `./config.yaml` | Config file |
-| `./data.yaml` | Runtime data (ids_to_retry, etc.) |
-| `./log/` | Logs + task persistence (bot_tasks.json / task_counter.json / download_history.json) |
-| `./sessions/` | Telegram session files |
-| `./temp/` | Download temp files |
+### 核心流程
+
+1. **用户提交单条下载** → Bot handler 创建 TaskNode → `save_task()` 保存 Pending → Consumer 取得消息 → `add_download_task()` 入队
+2. **Worker 从队列取任务** → `download_task()` → `download_media()` → Pyrogram 下载
+3. **进度回调** → `update_download_status()` 更新 `_download_result` → 20% 里程碑触发 Bot 通知
+4. **下载完成** → `complete_task()` 从持久化移除 → `save_downloads()` 写入历史
+5. **下载失败** → `add_failed_download()` 记入失败列表 → WebUI 可重试
+6. **容器重启** → `recover_tasks()` 读取未完成任务 → 全部重置为 pending → 消费循环逐个喂入 worker
+
+### Pending 消费者机制
+
+重启时所有未完成任务统一进入 pending 队列，而非直接恢复。这解决了旧版本重启时 100+ 任务同时恢复导致 FLOOD_WAIT 风暴的问题。
+
+```mermaid
+flowchart TB
+    Tick["每 2 秒检查 Pending 任务"] --> Slot{"有空闲并发名额？"}
+    Slot -->|否| Wait["保持 Pending<br/>等待下一轮"]
+    Slot -->|是| Type{"单条还是范围任务？"}
+    Type -->|范围任务| Scan["恢复历史扫描<br/>投递到 Worker 队列"]
+    Type -->|单条任务| Fetch["使用缓存消息，或按所属身份取消息<br/>get_messages 超时上限 300 秒"]
+    Fetch -->|成功| Enqueue["发送通知并尝试入队"]
+    Enqueue -->|入队成功| Download["Worker 开始下载"]
+    Enqueue -->|入队失败 / 取消| Wait
+    Fetch -->|FLOOD_WAIT / 网络错误 / 超时| Cooldown["设置冷却与退避"]
+    Cooldown --> Wait
+    Fetch -->|空消息 / 非网络错误| Failed["记录失败并移除 Pending"]
+```
+
+并发名额由活跃 Worker 和正在消费/排队的任务共同占用；同一任务不会重复消费。网络问题保留 Pending，冷却结束后重试；入队失败或取消会释放占位。
+
+### TCP 超时补丁
+
+Pyrogram 默认 `TCP.TIMEOUT=10s`，在 TG 限速时导致连接拆除 + MTProto 重新握手，产生大量上传流量。补丁改为 900 秒：
+
+```python
+from pyrogram.connection.transport.tcp import TCP as _TCP
+_TCP.TIMEOUT = 900
+```
 
 ---
 
-## Changes from Upstream
+## 相比上游的改动
 
-Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) v2.2.6, heavily modified.
+本 fork 的直接上游是 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。下面先列出相对该项目的修复，再保留它基于 tangyoha v2.2.6 的原有改造说明。
 
-### New Modules
+### 本 fork 的修复
 
-| Module | Description |
-|--------|-------------|
-| `module/task_store.py` | Task persistence + crash recovery, JSON storage, atomic writes, thread-safe |
-| `run_local.py` | Local dev mode with mock data, no Telegram needed |
+上游已提供任务持久化、Pending 队列和 Worker 池，本 fork 在此基础上修复恢复与下载问题，并增加镜像发布和回归测试。
 
-### Core Changes
+- **Pending Consumer 生命周期**：修复上游 `recover_tasks()` 无历史任务时提前返回、导致 Consumer 未启动的问题；空任务启动也会运行唯一的周期 Consumer，退出时取消并等待结束；恢复状态和任务编号在注册 Bot handler 前完成。
+- **恢复与队列交接**：排除正在消费和已经入队的任务；入队失败或取消后释放占位并保持 Pending，供下次重试。通知有 30 秒超时，避免阻塞消费循环。
+- **批量下载与转发恢复**：恢复没有单条 message_id 的历史范围任务；下载重新扫描原始范围以找回重启丢失的内存队列，已有文件由下载历史跳过。普通转发从检查点继续，受保护频道使用下载再上传；保留目标频道、主题和任务显示编号。
+- **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
+- **依赖安装**：将上游的 `PyTgCrypto==1.2.6` 更新为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
+- **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
+- **Docker 构建**：CI 在 PR、master 推送或手动运行时构建验证镜像，测试通过后发布 SHA 标签并在 Summary 提供拉取地址；**Build Release Docker Image** 只在发布 GitHub Release 时运行，发布版本标签并更新 `latest`。
 
-| Change | Upstream | This Project |
-|--------|---------|--------------|
-| **Task persistence** | None (lost on restart) | `bot_tasks.json` + `task_counter.json`, auto-recovery |
-| **Download history** | None | `download_history.json`, completed/failed records |
-| **Task ID** | Incrementing int | `MMDD-N` format, daily reset, persistent counter |
-| **Web UI** | layui framework | Pure HTML/CSS/JS, light theme, responsive |
-| **WebUI features** | Basic list | 4 tabs + pause/resume + delete + retry + search + infinite scroll |
-| **Pending queue** | None | Restart tasks enter pending, consumed one by one, prevents FLOOD_WAIT storm |
-| **FLOOD_WAIT** | Blocking sleep | Non-blocking cooldown timestamp |
-| **Silent throttle** | Not detected | Speed < 200 KB/s for 120s → WebUI banner + TG notification (trigger & recovery) |
-| **Worker count** | Fixed (config) | WebUI dropdown 1-6, dynamically adjusts concurrency |
-| **Progress notification** | Timed polling | 20% milestone + immediate completion + re-counted from _download_result |
-| **Failure handling** | Log only | Failed list persisted + error reason + source link + WebUI retry |
-| **Stop task** | Direct stop | Incomplete files recorded as failed (manually stopped) |
-| **TCP timeout** | 10s (default) | 900s, prevents reconnect storm during throttling |
-| **Download retry** | 3x 5s interval | 3x, OSError exponential backoff (10s/20s/40s) |
-| **Size mismatch** | Overwrite | Backup .bak, re-download, delete backup on success |
-| **File reference** | Log only | Auto fetch_message to refresh |
-| **Queue init** | Module import time | After event loop starts, avoids loop mismatch |
-| **Logging** | Single file | `tdl.log` + `download.log`, 10MB rotation, 30-day retention |
-| **Bot notifications** | Simple status | Progress + completed file list + failure reasons + rate limit + recovery |
-| **Docker** | Single stage | Multi-stage build (alpine), rclone built-in |
-| **Version** | v2.2.6 | v1.0.0 (independent line) |
+分支验证：本仓库的 PR 会自动运行 **Telegram Media Downloader CI**，也可在 Actions 手动选择分支运行 CI。成功后从 Summary 的 **CI image for verification** 复制 `docker pull` 命令或 Compose 的 `image:` 配置。CI 只发布 SHA 标签，`latest` 仅由 Release 工作流更新。
+
+#### 回归测试
+
+无需 Telegram 账号或网络连接；测试用临时任务文件和模拟 Telegram 响应验证真实 Consumer、持久化和 Worker 队列代码。
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 上的构建。真实 Telegram 下载及 NAS 容器重启仍需部署后验证。
+
+### MangoIsIllegal 的原有改造（相比 tangyoha v2.2.6）
+
+以下内容保留自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) 的 README，说明其相对 tangyoha 的改造；这些功能由本 fork 继承。
+
+基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) v2.2.6 深度改造。
+
+#### 新增模块
+
+| 模块 | 说明 |
+|------|------|
+| `module/task_store.py` | 任务持久化 + 崩溃恢复，JSON 存储，原子写入，线程安全 |
+| `run_local.py` | 本地开发模式，Mock 数据，无需 Telegram |
+
+#### 核心改动
+
+| 改动 | tangyoha v2.2.6 | MangoIsIllegal 的改造 |
+|------|------|--------|
+| **任务持久化** | 无（重启丢任务） | `bot_tasks.json` + `task_counter.json`，崩溃后自动恢复 |
+| **下载历史** | 无 | `download_history.json`，完成/失败记录持久化 |
+| **任务 ID** | 纯递增整数 | `MMDD-序号` 格式，每日重置，持久化计数器 |
+| **Web UI** | layui 框架 | 纯原生 HTML/CSS/JS，浅色主题，响应式 |
+| **WebUI 功能** | 基础列表 | 4 标签页 + 暂停/恢复 + 删除 + 重试 + 搜索 + 无限滚动 |
+| **Pending 队列** | 无 | 重启任务统一入 pending，逐个消费，防 FLOOD_WAIT 风暴 |
+| **FLOOD_WAIT** | 阻塞 sleep | 非阻塞冷却时间戳，不卡死队列 |
+| **静默限速** | 不检测 | 速度 < 200 KB/s 持续 120 秒 → WebUI 横幅 + TG 通知（触发和解除各一次） |
+| **并发任务数** | 固定（config） | WebUI 下拉框动态调整 1-6，实时生效 |
+| **进度通知** | 定时轮询 | 20% 里程碑触发 + 完成立即通知 + 从 _download_result 重计数 |
+| **失败处理** | 仅日志 | 失败列表持久化 + 错误原因 + 源链接 + WebUI 重试 |
+| **停止任务** | 直接停止 | 未完成文件记入失败列表（手动终止），不留残留 |
+| **TCP 超时** | 10s（默认） | 900s，防止限速时 reconnect 风暴 |
+| **下载重试** | 3 次 5s 间隔 | 3 次，OSError 指数退避（10s/20s/40s） |
+| **大小不匹配** | 直接覆盖 | 备份 .bak 后重下，成功删备份 |
+| **文件引用过期** | 日志记录 | 自动 fetch_message 刷新引用 |
+| **Queue 初始化** | 模块导入时 | 事件循环启动后，避免 loop 不匹配 |
+| **日志** | 单文件 | `tdl.log` + `download.log`，10MB 轮转，30 天保留 |
+| **Bot 通知** | 简单状态 | 下载进度 + 完成文件列表 + 失败原因 + 限速暂停 + 恢复通知 |
+| **Docker** | 单阶段 | 多阶段构建（alpine），rclone 内置 |
+| **版本号** | v2.2.6 | v1.0.0（独立版本线） |
+
+---
+
+## 作者与维护者
+
+本项目 fork 自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。
+
+- **上游作者**：[MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **本 fork 维护者**：[smilekevin](https://github.com/smilekevin)
+- 更早的基础项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
 
 ---
 
@@ -546,7 +488,9 @@ Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegr
 
 [MIT](./LICENSE)
 
-## Acknowledgements
+---
 
-- Upstream: [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
-- Pyrogram: [pyrogram](https://github.com/pyrogram/pyrogram)
+## 致谢
+
+- 原项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+- Pyrogram：[pyrogram](https://github.com/pyrogram/pyrogram)
