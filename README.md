@@ -40,9 +40,9 @@
 - **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
 - **依赖安装**：固定为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
 - **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
-- **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/hermes-telegram-downloader`，在 master 推送、定时运行或手动触发时构建；无需构建时临时修改上游文件。
+- **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/hermes-telegram-downloader`，在 master 推送、发布 GitHub Release 或手动触发时构建；无需构建时临时修改上游文件。
 
-分支验证：在 GitHub Actions 的 **Build Telegram Media Downloader Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅由 master 更新。构建摘要提供 `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
+分支验证：在 GitHub Actions 的 **Build Telegram Media Downloader Docker** 中手动选择修复分支运行。分支镜像只发布 `sha-完整提交号` 标签，`latest` 仅在发布 GitHub Release 时更新。构建摘要提供 `ghcr.io/smilekevin/hermes-telegram-downloader@sha256:...`，可直接拉取并作为 Compose 的 `image`；验证镜像时移除 `build` 和模块源码挂载，保留配置、下载、日志、session 和临时目录挂载。
 
 ### 回归测试
 
@@ -238,7 +238,8 @@ _TCP.TIMEOUT = 900
 
 - **镜像地址**：`ghcr.io/smilekevin/hermes-telegram-downloader`
 - **构建入口与记录**：[Build Telegram Media Downloader Docker](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)
-- **master 镜像**：`:latest`，在 master 推送、每 6 小时定时检查或手动触发时构建；已有提交镜像会跳过重复构建。
+- **主分支镜像**：每次合并到 master（或推送 master）后构建 `:sha-完整提交号`，不会更新 `latest`。不再定时构建。
+- **Release 镜像**：发布 GitHub Release 时构建对应 tag 的代码，例如 Release 的 tag 为 `v1.0.1`，则发布 `:v1.0.1`、`:sha-完整提交号` 并更新 `:latest`。同一提交发布不同 Release 也会构建。只创建 tag 或保存 Release 草稿不会触发发布构建；请使用符合 Docker 标签格式的版本名称，`latest` 和 `sha-*` 由工作流保留使用。
 - **分支验证镜像**：`:sha-完整提交号`。手动选择 PR 分支、勾选 **Force rebuild**，成功后从运行摘要的 **Image for verification** 复制完整 `@sha256:...` 地址。分支构建不会更新 `latest`。
 
 ```bash
@@ -246,6 +247,21 @@ docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
 ```
 
 使用预构建镜像时，在自己的 Compose 中设置 `image` 并移除 `build` 和模块源码挂载；继续挂载现有配置、下载、日志、session 和临时目录。验证 PR 时使用该分支构建摘要里的 digest。
+
+### 通过 GitHub Release 发布版本
+
+将本次工作流改动合并后，打开本仓库的 [Releases](https://github.com/smilekevin/telegram-media-downloader/releases)，点击 **Draft a new release**：
+
+1. 在 **Choose a tag** 中输入新版本号，例如 `v1.0.1`，选择创建该 tag。
+2. **Target** 选择 master 或包含本次工作流改动的目标提交。
+3. 填写标题和更新说明，点击 **Publish release**。
+
+发布后自动构建 amd64/arm64 镜像。在 Actions 的构建摘要中查看版本标签和 digest；构建成功后可以拉取指定版本，或用 `latest` 获取最近成功发布的 Release 镜像：
+
+```bash
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:v1.0.1
+docker pull ghcr.io/smilekevin/hermes-telegram-downloader:latest
+```
 
 ## 快速开始
 
