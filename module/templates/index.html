@@ -94,6 +94,12 @@
                         </svg>
                         <span class="font-mono text-xs font-medium text-gray-700" x-text="downloadSpeed">0.00 B/s</span>
                     </div>
+                    {% if web_login_required %}
+                    <form action="{{ url_for('logout') }}" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ web_csrf_token }}">
+                        <button type="submit" class="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200">退出</button>
+                    </form>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -905,6 +911,18 @@
     </div>
 
     <script>
+    async function authenticatedFetch(url, options = {}) {
+        const headers = new Headers(options.headers);
+        const csrfToken = {{ web_csrf_token|default('')|tojson }};
+        if (csrfToken) headers.set('X-CSRF-Token', csrfToken);
+        const response = await fetch(url, { ...options, headers });
+        if (response.status === 401) {
+            window.location.replace('/login');
+            throw new Error('需要重新登录');
+        }
+        return response;
+    }
+
     function app() {
         return {
             activeTab: 'active',
@@ -1013,7 +1031,7 @@
             async pollCompletedCount() {
                 if (this.completedSearch) return; // Don't poll during search
                 try {
-                    const res = await fetch('/get_completed_count');
+                    const res = await authenticatedFetch('/get_completed_count');
                     const data = await res.json();
                     const newTotal = data.total;
                     if (newTotal > this.completedLastTotal) {
@@ -1021,7 +1039,7 @@
                         this.completedLastTotal = newTotal;
                         this.completedTotal = newTotal;
                         // Fetch only the new items (prepend)
-                        const res2 = await fetch(`/get_download_list?already_down=true&offset=0&limit=${diff}`);
+                        const res2 = await authenticatedFetch(`/get_download_list?already_down=true&offset=0&limit=${diff}`);
                         const data2 = await res2.json();
                         const newTasks = (data2.tasks || data2).filter(t => t.download_progress_raw >= 100);
                         // Prepend new tasks, avoid duplicates
@@ -1039,7 +1057,7 @@
                 this.completedLoading = true;
                 try {
                     const searchParam = this.completedSearch ? `&search=${encodeURIComponent(this.completedSearch)}` : '';
-                    const res = await fetch(`/get_download_list?already_down=true&offset=${this.completedOffset}&limit=${this.completedLimit}${searchParam}`);
+                    const res = await authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedOffset}&limit=${this.completedLimit}${searchParam}`);
                     const data = await res.json();
                     const tasks = data.tasks || data;
                     const newTasks = tasks.filter(t => t.download_progress_raw >= 100);
@@ -1074,7 +1092,7 @@
 
             async fetchVersion() {
                 try {
-                    const res = await fetch('/get_app_version');
+                    const res = await authenticatedFetch('/get_app_version');
                     this.version = await res.text();
                 } catch(e) {
                     this.version = '?';
@@ -1083,7 +1101,7 @@
 
             async fetchDownloadStatus() {
                 try {
-                    const res = await fetch('/get_download_status');
+                    const res = await authenticatedFetch('/get_download_status');
                     const data = await res.json();
                     this.downloadSpeed = data.download_speed;
                 } catch(e) {}
@@ -1091,7 +1109,7 @@
 
             async fetchFloodWait() {
                 try {
-                    const res = await fetch('/get_flood_wait');
+                    const res = await authenticatedFetch('/get_flood_wait');
                     const data = await res.json();
                     // Only update remaining from server if it's higher (server is authoritative)
                     // or if state changed from inactive to active
@@ -1122,7 +1140,7 @@
 
             async fetchMaxWorkers() {
                 try {
-                    const res = await fetch('/get_max_workers');
+                    const res = await authenticatedFetch('/get_max_workers');
                     const data = await res.json();
                     if (data.max_workers) {
                         this.maxWorkers = data.max_workers;
@@ -1133,7 +1151,7 @@
             async saveMaxWorkers() {
                 this.savingWorkers = true;
                 try {
-                    await fetch(`/set_max_workers?n=${this.maxWorkers}`, { method: 'POST' });
+                    await authenticatedFetch(`/set_max_workers?n=${this.maxWorkers}`, { method: 'POST' });
                     this.showToast('并发任务数已设置为 ' + this.maxWorkers, 'success');
                 } catch(e) {
                     this.showToast('设置失败', 'error');
@@ -1144,7 +1162,7 @@
 
             async fetchDownloadState() {
                 try {
-                    const res = await fetch('/get_download_state');
+                    const res = await authenticatedFetch('/get_download_state');
                     const state = await res.text();
                     this.isDownloading = (state === 'downloading');
                 } catch(e) {}
@@ -1152,7 +1170,7 @@
 
             async fetchActive() {
                 try {
-                    const res = await fetch('/get_download_list?already_down=false');
+                    const res = await authenticatedFetch('/get_download_list?already_down=false');
                     const data = await res.json();
                     const newTasks = data.filter(t => t.download_progress_raw < 100);
                     // Smart merge: update existing tasks in-place instead of replacing
@@ -1187,7 +1205,7 @@
 
             async fetchFailed() {
                 try {
-                    const failedRes = await fetch('/get_failed_downloads');
+                    const failedRes = await authenticatedFetch('/get_failed_downloads');
                     const failedData = await failedRes.json();
                     this.failedTasks = failedData;
                 } catch(e) {}
@@ -1202,7 +1220,7 @@
                 if (this.pendingLoading || !this.pendingHasMore) return;
                 this.pendingLoading = true;
                 try {
-                    const res = await fetch(`/get_pending_list?offset=${this.pendingOffset}&limit=${this.pendingLimit}`);
+                    const res = await authenticatedFetch(`/get_pending_list?offset=${this.pendingOffset}&limit=${this.pendingLimit}`);
                     const data = await res.json();
                     const tasks = data.tasks || data || [];
                     const existingIds = new Set(this.pendingTasks.map(t => t.task_id));
@@ -1228,7 +1246,7 @@
                 if (this.pendingLoading) return;
                 try {
                     // 已加载 N 条，重拉同区间 + 检查是否有新任务插队
-                    const res = await fetch(`/get_pending_list?offset=0&limit=${Math.max(this.pendingOffset, this.pendingLimit)}`);
+                    const res = await authenticatedFetch(`/get_pending_list?offset=0&limit=${Math.max(this.pendingOffset, this.pendingLimit)}`);
                     const data = await res.json();
                     const tasks = data.tasks || data || [];
                     const total = data.total ?? this.pendingTotal;
@@ -1254,7 +1272,7 @@
 
             async removePending(taskId) {
                 try {
-                    const res = await fetch('/remove_pending?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
+                    const res = await authenticatedFetch('/remove_pending?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
                         this.showToast('已移除待下载任务', 'success');
@@ -1271,7 +1289,7 @@
                 try {
                     const wasDownloading = this.isDownloading;
                     const state = wasDownloading ? 'pause' : 'continue';
-                    const res = await fetch('/set_download_state?state=' + state, { method: 'POST' });
+                    const res = await authenticatedFetch('/set_download_state?state=' + state, { method: 'POST' });
                     const newState = await res.text();
                     this.isDownloading = (newState === 'pause');
                     this.showToast(
@@ -1316,7 +1334,7 @@
                 }
                 // Other tabs: direct delete without file option
                 try {
-                    const res = await fetch('/batch_delete', {
+                    const res = await authenticatedFetch('/batch_delete', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ task_ids: this.selectedTasks })
@@ -1338,7 +1356,7 @@
             async batchRetry() {
                 if (this.selectedTasks.length === 0) return;
                 try {
-                    const res = await fetch('/batch_retry', {
+                    const res = await authenticatedFetch('/batch_retry', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ task_ids: this.selectedTasks })
@@ -1361,7 +1379,7 @@
 
             async pauseTask(taskId) {
                 try {
-                    const res = await fetch('/pause_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
+                    const res = await authenticatedFetch('/pause_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
                         this.showToast('任务已暂停', 'info');
@@ -1375,7 +1393,7 @@
 
             async resumeTask(taskId) {
                 try {
-                    const res = await fetch('/resume_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
+                    const res = await authenticatedFetch('/resume_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
                         this.showToast('任务已继续', 'success');
@@ -1405,7 +1423,7 @@
                 };
                 // Check file existence
                 try {
-                    const res = await fetch('/check_file_exists?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
+                    const res = await authenticatedFetch('/check_file_exists?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
                         this.deleteModal.fileExists = data.exists;
@@ -1450,7 +1468,7 @@
                     try {
                         const body = { task_ids: dm.taskIds };
                         if (dm.deleteFile) body.delete_file = true;
-                        const res = await fetch('/batch_delete', {
+                        const res = await authenticatedFetch('/batch_delete', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(body)
@@ -1478,7 +1496,7 @@
                             const reloadLimit = Math.min(deletedCount, 100);
                             if (this.completedHasMore && reloadLimit > 0) {
                                 const searchParam = this.completedSearch ? `&search=${encodeURIComponent(this.completedSearch)}` : '';
-                                fetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=${reloadLimit}${searchParam}`)
+                                authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=${reloadLimit}${searchParam}`)
                                     .then(r => r.json()).then(d => {
                                         const tasks = d.tasks || d;
                                         const existingIds = new Set(this.completedTasks.map(t => t.task_id));
@@ -1492,7 +1510,7 @@
                                 this.completedOffset = this.completedTasks.length;
                             }
                             // Update total count from server
-                            fetch('/get_completed_count').then(r => r.json()).then(d => {
+                            authenticatedFetch('/get_completed_count').then(r => r.json()).then(d => {
                                 this.completedTotal = d.total;
                                 this.completedLastTotal = this.completedTotal;
                             }).catch(() => {});
@@ -1507,7 +1525,7 @@
                     try {
                         let url = '/delete_task?task_id=' + encodeURIComponent(dm.taskIds[0]);
                         if (dm.deleteFile) url += '&delete_file=true';
-                        const res = await fetch(url, { method: 'POST' });
+                        const res = await authenticatedFetch(url, { method: 'POST' });
                         const data = await res.json();
                         if (data.code === '1') {
                             let msg = '任务已删除';
@@ -1525,7 +1543,7 @@
                             this.failedTasks = this.failedTasks.filter(t => t.task_id !== tid);
                             if (this.completedHasMore) {
                                 const searchParam = this.completedSearch ? `&search=${encodeURIComponent(this.completedSearch)}` : '';
-                                fetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=1${searchParam}`)
+                                authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=1${searchParam}`)
                                     .then(r => r.json()).then(d => {
                                         const tasks = d.tasks || d;
                                         const existingIds = new Set(this.completedTasks.map(t => t.task_id));
@@ -1538,7 +1556,7 @@
                             } else {
                                 this.completedOffset = this.completedTasks.length;
                             }
-                            fetch('/get_completed_count').then(r => r.json()).then(d => {
+                            authenticatedFetch('/get_completed_count').then(r => r.json()).then(d => {
                                 this.completedTotal = d.total;
                                 this.completedLastTotal = this.completedTotal;
                             }).catch(() => {});
@@ -1560,7 +1578,7 @@
                 }
                 // Other tabs: direct delete
                 try {
-                    const res = await fetch('/delete_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
+                    const res = await authenticatedFetch('/delete_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
                         this.showToast('任务已删除', 'success');
@@ -1572,7 +1590,7 @@
                         // Reload 1 new item to fill the gap
                         if (this.completedHasMore) {
                             const searchParam = this.completedSearch ? `&search=${encodeURIComponent(this.completedSearch)}` : '';
-                            fetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=1${searchParam}`)
+                            authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=1${searchParam}`)
                                 .then(r => r.json()).then(d => {
                                     const tasks = d.tasks || d;
                                     const existingIds = new Set(this.completedTasks.map(t => t.task_id));
@@ -1585,7 +1603,7 @@
                         } else {
                             this.completedOffset = this.completedTasks.length;
                         }
-                        fetch('/get_completed_count').then(r => r.json()).then(d => {
+                        authenticatedFetch('/get_completed_count').then(r => r.json()).then(d => {
                             this.completedTotal = d.total;
                             this.completedLastTotal = this.completedTotal;
                         }).catch(() => {});
@@ -1599,7 +1617,7 @@
 
             async retryTask(taskId) {
                 try {
-                    const res = await fetch('/retry_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
+                    const res = await authenticatedFetch('/retry_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
                         this.showToast('已加入重试队列', 'success');

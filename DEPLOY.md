@@ -57,6 +57,7 @@ max_download_task: 5
 
 web_host: 0.0.0.0
 web_port: 5000
+web_login_secret: "replace-with-a-long-password"  # 部署前修改为自己的密码
 
 allowed_user_ids:
   - 'me'
@@ -123,7 +124,9 @@ docker-compose logs -f
 
 浏览器打开 `http://你的服务器IP:5000`
 
-无需登录，直接进入控制面板。
+配置了非空的 `web_login_secret` 时，会先显示登录页，输入配置的密码后进入控制面板。首页和所有下载接口都会校验登录状态；右上角可退出。登录有效期为 7 天，重启服务或修改密码后需要重新登录。
+
+要关闭密码登录，可在 `config.yaml` 中设置 `web_login_secret: ""`。修改配置后重启容器。已有部署需更新到包含此修复的镜像，仅修改旧版本的配置不会启用登录。
 
 ## 常用命令
 

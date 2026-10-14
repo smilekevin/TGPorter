@@ -244,7 +244,7 @@ max_download_task: 5  # worker 数量
 # WebUI
 web_host: 0.0.0.0
 web_port: 5000
-web_login_secret: 123  # 登录密钥（当前未强制验证）
+web_login_secret: "replace-with-a-long-password"  # WebUI 访问密码；设为 "" 关闭登录
 
 # 权限
 allowed_user_ids:
@@ -275,6 +275,7 @@ proxy:
 | `save_path` | 文件保存路径 | `./downloads` |
 | `max_download_task` | 并发下载 worker 数 | `5` |
 | `web_port` | WebUI 端口 | `5000` |
+| `web_login_secret` | WebUI 访问密码；非空时首页和所有接口均需登录，空字符串关闭登录 | `""` |
 | `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
 | `language` | 界面语言（`ZH` / `EN` / `RU` / `UA`） | `EN` |
 | `proxy` | 代理配置（scheme / hostname / port） | `{}` |
@@ -773,7 +774,7 @@ max_download_task: 5  # number of workers
 # WebUI
 web_host: 0.0.0.0
 web_port: 5000
-web_login_secret: 123
+web_login_secret: "replace-with-a-long-password"  # WebUI password; "" disables login
 
 # Permissions
 allowed_user_ids:
@@ -804,6 +805,7 @@ proxy:
 | `save_path` | File save path | `./downloads` |
 | `max_download_task` | Concurrent download workers | `5` |
 | `web_port` | WebUI port | `5000` |
+| `web_login_secret` | WebUI password; a non-empty value protects the dashboard and all APIs, an empty string disables login | `""` |
 | `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
 | `language` | UI language (`ZH` / `EN` / `RU` / `UA`) | `EN` |
 | `proxy` | Proxy config (scheme / hostname / port) | `{}` |

@@ -40,7 +40,8 @@ file_name_prefix:
 max_download_task: 5
 web_host: 0.0.0.0
 web_port: 5000
-web_login_secret: 123
+# WebUI 访问密码；部署前修改。设为 "" 可关闭密码登录。
+web_login_secret: "replace-with-a-long-password"
 allowed_user_ids:
 - 'me'
 date_format: ''
