@@ -24,6 +24,36 @@
 
 ---
 
+## Authors and Maintainers
+
+This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader).
+
+- **Hermes upstream author**: [MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **This fork's maintainer**: [smilekevin](https://github.com/smilekevin)
+- Earlier foundation: [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+
+## Fixes in This Fork
+
+- **Pending consumer lifecycle**: start one periodic consumer even with an empty store, cancel and await it at shutdown, and restore states and task IDs before registering Bot handlers.
+- **Recovery and queue handoff**: exclude tasks being consumed or already queued; release reservations on rejected or cancelled handoffs so Pending tasks can retry. Bound notifications to 30 seconds.
+- **Batch downloads and forwards**: restore history-range tasks without a single message_id. Rescan download ranges to recover files lost from the in-memory queue; existing files are skipped by download history. Resume normal forwards from their checkpoint and use download/upload for protected channels, preserving destination, topic and display ID.
+- **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
+- **Dependencies**: pin `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
+- **Docker builds**: build this fork's source as `ghcr.io/smilekevin/hermes-telegram-downloader` on master pushes, scheduled runs or manual dispatch, without patching upstream files during the build.
+
+### Regression Tests
+
+The tests need no Telegram account or network access. They use temporary persistence files and mocked Telegram responses with the real consumer and worker queue code.
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+PR checks run the tests and build the Alpine Docker image for amd64 and arm64. Live Telegram downloads and NAS container restarts still need deployment validation.
+
+---
+
 ## Features
 
 ### Download
@@ -59,7 +89,7 @@
 - **Task persistence** — all download/forward tasks written to `log/bot_tasks.json`, survive container restarts
 - **Crash recovery** — incomplete tasks re-enter pending queue on restart, consumed one by one
 - **Task ID** — `MMDD-N` format (e.g. `0628-1`), resets daily, persistent counter
-- **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; queued state distinguishes tasks waiting for worker pickup
+- **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; in-memory reservations distinguish tasks waiting for worker pickup
 - **Download progress persistence** — auto-saves `last_read_message_id` every 50 messages, no progress loss on interruption
 - **Download history** — completed/failed records in `log/download_history.json`
 - **Manual stop** — stopped tasks' incomplete files recorded as failed (reason: manually stopped)

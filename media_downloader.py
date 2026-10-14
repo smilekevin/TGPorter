@@ -66,8 +66,6 @@ _CLIENT_RECONNECT_COOLDOWN = 300  # 5 min between reconnect attempts
 _MAX_WATCHDOG_RETRIES = 2  # watchdog cancel 后最多重试次数
 _watchdog_retry_count = {}  # task_id → 已重试次数
 _main_client_ref = {"client": None}  # set in start_server()
-_active_downloads = 0  # 内存计数器：当前正在下载的任务数（worker pick up +1, 完成/失败/cancel -1）
-                       # 替代 get_downloading_tasks() JSON 读写做并发守卫，消除 TOCTOU 竞态
 
 # --- 9-24 S1+ 静默限速超时重启器（用户方案）---
 # 静默限速持续超过阈值时，断开节点重连一次（等效手动重启节点/v2rayA
@@ -113,8 +111,6 @@ def _worker_pool_set_target(n: int):
                     fut.result(timeout=10)
                 else:
                     _aio.get_running_loop().create_task(worker(client))
-                with _worker_pool_lock:
-                    _live_workers += 1
                 added += 1
             except Exception as e:
                 logger.error(
@@ -1208,12 +1204,15 @@ async def worker(client: pyrogram.client.Client):
     from module.download_stat import (
         _TASK_HEARTBEAT_TIMEOUT, get_task_heartbeat_age, clear_task_heartbeat,
     )
+    from module.bot import _bot
     global _live_workers
     with _worker_pool_lock:
         _live_workers += 1
     try:
         while app.is_running:
-            global _active_downloads
+            counted_active = False
+            message = None
+            node = None
             try:
                 logger.info(f"Worker waiting for queue item...")
                 item = await queue.get()
@@ -1222,19 +1221,18 @@ async def worker(client: pyrogram.client.Client):
                     with _worker_pool_lock:
                         target = max(1, getattr(app, "max_download_task", 2))
                         if _worker_exit_signal and _live_workers > target:
-                            _live_workers -= 1
-                            logger.info(f"Worker exiting (pool scale-down, live={_live_workers})")
+                            logger.info(f"Worker exiting (pool scale-down, live={_live_workers - 1})")
                             return
                         # 非多余 worker：忽略哨兵，继续工作
                     continue
                 message = item[0]
                 node: TaskNode = item[1]
-                _active_downloads += 1  # 并发计数 +1
-                logger.info(f"Worker picked up message {message.id} from chat {node.chat_id} for task {node.task_id_display} (active={_active_downloads})")
+                _bot._active_downloads += 1
+                counted_active = True
+                logger.info(f"Worker picked up message {message.id} from chat {node.chat_id} for task {node.task_id_display} (active={_bot._active_downloads})")
                 _requeued = False  # 保留变量供 requeue 分支标记（不再影响计数，见 finally）
                 # Mark task as actively downloading (no longer pending/in-queue)
                 if node.task_id:
-                    from module.bot import _bot
                     _bot._in_queue.discard(node.task_id)
                     update_download_state(node.task_id, "downloading")
                 if node.is_stop_transmission:
@@ -1317,6 +1315,7 @@ async def worker(client: pyrogram.client.Client):
                             clear_task_heartbeat(composite_key)
                             node.total_task = 1
                             node.is_running = True
+                            _bot._in_queue.add(node.task_id)
                             await queue.put((message, node))
                             _requeued = True
                             continue
@@ -1331,6 +1330,8 @@ async def worker(client: pyrogram.client.Client):
                             )
                             _move_task_to_failed(node, message, err_msg)
                     else:
+                        dl_task.cancel()
+                        await asyncio.gather(dl_task, return_exceptions=True)
                         raise
                 finally:
                     clear_task_heartbeat(composite_key)
@@ -1367,6 +1368,7 @@ async def worker(client: pyrogram.client.Client):
                         node.total_task = 1
                         node.is_running = True
                         if message:
+                            _bot._in_queue.add(node.task_id)
                             await queue.put((message, node))
                         _requeued = True
                         continue
@@ -1381,6 +1383,7 @@ async def worker(client: pyrogram.client.Client):
                     node.is_running = True
                     await asyncio.sleep(60)
                     if message:
+                        _bot._in_queue.add(node.task_id)
                         await queue.put((message, node))
                     _requeued = True
                     continue
@@ -1393,7 +1396,8 @@ async def worker(client: pyrogram.client.Client):
                 # 占 2 个计数（22:53 事故 active=4 > max=3 的铁证），
                 # watchdog 每循环一轮泄漏 +1，最终守卫被泄漏值误拦。
                 # 任务在队列中的占用由守卫公式的 in_queue 项计入。
-                _active_downloads -= 1
+                if counted_active:
+                    _bot._active_downloads -= 1
     finally:
         with _worker_pool_lock:
             _live_workers -= 1
@@ -1904,10 +1908,9 @@ def main():
         _MAX_WORKERS = max(1, getattr(app, 'max_download_task', 2))
         logger.info(f"Starting {_MAX_WORKERS} workers (max_download_task={_MAX_WORKERS})")
         with _worker_pool_lock:
+            global _live_workers
             _live_workers = 0  # 重置计数（main 只在启动时跑一次）
         for _ in range(_MAX_WORKERS):
-            with _worker_pool_lock:
-                _live_workers += 1
             tasks.append(app.loop.create_task(worker(client)))
         # 9-24 S1+ 静默限速重启器（方案改动 3）
         tasks.append(app.loop.create_task(_throttle_restart_loop(client)))

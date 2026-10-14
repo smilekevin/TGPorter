@@ -23,6 +23,36 @@
 
 ---
 
+## 作者与维护者
+
+本项目 fork 自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。
+
+- **Hermes 上游作者**：[MangoIsIllegal](https://github.com/MangoIsIllegal)
+- **本 fork 维护者**：[smilekevin](https://github.com/smilekevin)
+- 更早的基础项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+
+## 本 fork 的修复
+
+- **Pending Consumer 生命周期**：空任务启动也会运行唯一的周期 Consumer，退出时取消并等待结束；恢复状态和任务编号在注册 Bot handler 前完成。
+- **恢复与队列交接**：排除正在消费和已经入队的任务；入队失败或取消后释放占位并保持 Pending，供下次重试。通知有 30 秒超时，避免阻塞消费循环。
+- **批量下载与转发恢复**：恢复没有单条 message_id 的历史范围任务；下载重新扫描原始范围以找回重启丢失的内存队列，已有文件由下载历史跳过。普通转发从检查点继续，受保护频道使用下载再上传；保留目标频道、主题和任务显示编号。
+- **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
+- **依赖安装**：固定为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
+- **Docker 构建**：从本 fork 的源码构建 `ghcr.io/smilekevin/hermes-telegram-downloader`，在 master 推送、定时运行或手动触发时构建；无需构建时临时修改上游文件。
+
+### 回归测试
+
+无需 Telegram 账号或网络连接；测试用临时任务文件和模拟 Telegram 响应验证真实 Consumer、持久化和 Worker 队列代码。
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 上的构建。真实 Telegram 下载及 NAS 容器重启仍需部署后验证。
+
+---
+
 ## 功能特性
 
 ### 下载
@@ -58,7 +88,7 @@
 - **任务持久化** — 所有下载/转发任务写入 `log/bot_tasks.json`，容器重启不丢任务
 - **崩溃恢复** — 重启后所有未完成任务统一进入 pending 队列，逐个消费
 - **任务 ID** — `MMDD-序号` 格式（如 `0628-1`），每日序号重置，持久化计数器
-- **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；queued 状态区分已入队等待 worker 的任务
+- **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；内存占位区分已入队等待 worker 的任务
 - **下载进度持久化** — 每 50 条消息自动保存 `last_read_message_id`，中断不丢进度
 - **下载历史持久化** — 完成/失败记录写入 `log/download_history.json`
 - **手动终止** — 停止任务时未完成文件记入失败列表（原因：手动终止）
