@@ -26,6 +26,7 @@ _last_download_time: float = time.time()
 _download_state: DownloadState = DownloadState.Downloading
 _paused_tasks: set = set()
 _cancelled_tasks: set = set()
+_discarded_tasks: set = set()
 _failed_downloads: list = []
 _chat_titles: dict = {}  # chat_id -> chat_title mapping
 _download_lock: asyncio.Lock = asyncio.Lock()  # 保护 _download_result / _total_download_speed / _failed_downloads 等全局变量的并发访问
@@ -150,24 +151,33 @@ def resume_task(task_id) -> bool:
     return False
 
 
-def delete_task(task_id) -> bool:
+def delete_task(task_id, *, discard_partial=True) -> bool:
     """Delete a specific task from download results by task_id.
     Also cancels the download so it doesn't reappear."""
     task_id_str = str(task_id)
-    _cancelled_tasks.add(task_id_str)
+    found = False
     with _sync_lock:
         for chat_id, messages in list(_download_result.items()):
             for msg_id, value in list(messages.items()):
                 composite_key = f"{chat_id}_{msg_id}"
                 if composite_key == task_id_str or str(value.get("task_id", "")) == task_id_str:
-                    _cancelled_tasks.add(composite_key)
-                    _cancelled_tasks.add(str(value.get("task_id", "")))
+                    # File deletion is scoped to this task generation, so a new
+                    # task can download the same Telegram message later.
+                    key = (composite_key, str(value.get("task_id", "")))
+                    _cancelled_tasks.add(key)
+                    if discard_partial:
+                        _discarded_tasks.add(key)
+                    if task_id_str != composite_key:
+                        _cancelled_tasks.add(task_id_str)
+                        if discard_partial:
+                            _discarded_tasks.add(task_id_str)
                     del _download_result[chat_id][msg_id]
                     if not _download_result[chat_id]:
                         del _download_result[chat_id]
-                    save_downloads()
-                    return True
-    return False
+                    found = True
+        if found:
+            save_downloads()
+    return found
 
 
 def delete_download_result_entry(chat_id, msg_id) -> bool:
@@ -295,6 +305,34 @@ def _check_and_reset_global_speed():
         _total_download_speed = 0
 
 
+def _download_control_keys(message_id: int, node: TaskNode):
+    composite_key = f"{node.chat_id}_{message_id}"
+    return composite_key, str(node.task_id), (composite_key, str(node.task_id))
+
+
+def is_download_discarded(message_id: int, node: TaskNode):
+    """Only explicit user cancellation discards resumable data."""
+    return getattr(node, "discard_partial", False) or any(
+        key in _discarded_tasks for key in _download_control_keys(message_id, node))
+
+
+async def wait_download_ready(message_id: int, node: TaskNode, client: Client):
+    """Share pause/cancel controls between serial and fixed-range downloads."""
+    chat_id = node.chat_id
+    composite_key = f"{chat_id}_{message_id}"
+    while True:
+        if (node.is_stop_transmission or any(
+                key in _cancelled_tasks for key in _download_control_keys(message_id, node))):
+            client.stop_transmission()
+        if not (is_task_paused(composite_key) or is_task_paused(node.task_id)
+                or get_download_state() == DownloadState.StopDownload):
+            return
+        # Reset this task's speed to 0 while paused
+        _reset_task_speed(composite_key)
+        _check_and_reset_global_speed()
+        await asyncio.sleep(1)
+
+
 async def update_download_status(
     down_byte: int,
     total_size: int,
@@ -303,39 +341,19 @@ async def update_download_status(
     start_time: float,
     node: TaskNode,
     client: Client,
+    *,
+    initial: bool = False,
 ):
     """update_download_status"""
+    await wait_download_ready(message_id, node, client)
     cur_time = time.time()
     # pylint: disable = W0603
     global _total_download_speed
     global _total_download_size
     global _last_download_time
 
-    if node.is_stop_transmission:
-        client.stop_transmission()
-
     chat_id = node.chat_id
-
-    # Check if this task has been cancelled (deleted from UI)
     composite_key = f"{chat_id}_{message_id}"
-    if composite_key in _cancelled_tasks or str(node.task_id) in _cancelled_tasks:
-        client.stop_transmission()
-        return
-
-    # Check if this individual task is paused (by composite key or task_id)
-    composite_key = f"{chat_id}_{message_id}"
-    while is_task_paused(composite_key) or is_task_paused(node.task_id):
-        if node.is_stop_transmission:
-            client.stop_transmission()
-        # Reset this task's speed to 0 while paused
-        _reset_task_speed(composite_key)
-        _check_and_reset_global_speed()
-        await asyncio.sleep(1)
-
-    while get_download_state() == DownloadState.StopDownload:
-        if node.is_stop_transmission:
-            client.stop_transmission()
-        await asyncio.sleep(1)
 
     # 更新进度心跳 — worker watchdog 用这个检测死连接
     _task_heartbeat[composite_key] = cur_time
@@ -364,10 +382,15 @@ async def update_download_status(
             _prev_total = _download_result[chat_id][message_id].get("total_size", 0)
             _placeholder_resolved = _prev_total <= 1 and total_size > 1
 
-            _total_download_size += down_byte - last_download_byte
-            each_second_total_download += down_byte - last_download_byte
+            if initial:
+                download_speed = 0
+                each_second_total_download = 0
+                end_time = cur_time
+            else:
+                _total_download_size += down_byte - last_download_byte
+                each_second_total_download += down_byte - last_download_byte
 
-            if cur_time - last_time >= 1.0:
+            if not initial and cur_time - last_time >= 1.0:
                 download_speed = int(each_second_total_download / (cur_time - last_time))
                 end_time = cur_time
                 each_second_total_download = 0
@@ -404,7 +427,7 @@ async def update_download_status(
                 # 下载完成时立即持久化
                 save_downloads()
         else:
-            each_second_total_download = down_byte
+            each_second_total_download = 0 if initial else down_byte
             _progress = round(down_byte / total_size * 100, 1) if total_size > 0 else 0
             _download_result[chat_id][message_id] = {
                 "down_byte": down_byte,
@@ -413,7 +436,7 @@ async def update_download_status(
                 "file_name": file_name,
                 "start_time": start_time,
                 "end_time": cur_time,
-                "download_speed": down_byte / max(cur_time - start_time, 0.001),
+                "download_speed": 0 if initial else down_byte / max(cur_time - start_time, 0.001),
                 "each_second_total_download": each_second_total_download,
                 "task_id": node.task_id,
                 "task_id_display": getattr(node, "task_id_display", ""),

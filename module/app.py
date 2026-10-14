@@ -171,6 +171,7 @@ class TaskNode:
         self.client = None
         self.upload_success_count: int = 0
         self.is_stop_transmission = False
+        self.discard_partial = False
         self.media_group_ids: dict = {}
         self.media_group_ids_lock: Lock = Lock()
         self.download_status: dict = {}
@@ -213,9 +214,10 @@ class TaskNode:
             and self.total_task == self.total_download_task
         )
 
-    def stop_transmission(self):
+    def stop_transmission(self, *, discard_partial=False):
         """Stop task"""
         self.is_stop_transmission = True
+        self.discard_partial = self.discard_partial or discard_partial
 
     def stat(self, status: DownloadStatus):
         """
@@ -420,6 +422,8 @@ class Application:
         self.web_host: str = "0.0.0.0"
         self.web_port: int = 5000
         self.max_download_task: int = 5
+        self.file_download_concurrency: int = 1
+        self.download_part_size_mb: int = 64
         self.language = Language.EN
         self.after_upload_telegram_delete: bool = True
         self.web_login_secret: str = ""
@@ -525,7 +529,17 @@ class Application:
             "max_download_task", self.max_download_task
         )
 
-        self.max_concurrent_transmissions = self.max_download_task * 5
+        self.file_download_concurrency = _config.get("file_download_concurrency", 1)
+        self.download_part_size_mb = _config.get("download_part_size_mb", _config.get("download_min_part_size_mb", 64))
+        for key in ("file_download_concurrency", "download_part_size_mb"):
+            value = getattr(self, key)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{key} must be a positive integer")
+
+        self.max_concurrent_transmissions = max(
+            self.max_download_task * 5,
+            self.max_download_task * self.file_download_concurrency,
+        )
 
         self.max_concurrent_transmissions = _config.get(
             "max_concurrent_transmissions", self.max_concurrent_transmissions
@@ -911,6 +925,10 @@ class Application:
             self.config.pop("last_read_message_id")
 
         self.config["max_download_task"] = self.max_download_task
+        self.config.pop("download_concurrency", None)  # Removed setting from earlier versions.
+        self.config["file_download_concurrency"] = self.file_download_concurrency
+        self.config.pop("download_min_part_size_mb", None)
+        self.config["download_part_size_mb"] = self.download_part_size_mb
 
         self.config["language"] = self.language.name
         # for it in self.downloaded_ids:

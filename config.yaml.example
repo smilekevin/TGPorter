@@ -38,6 +38,10 @@ file_name_prefix:
 - file_name
 #file_name_prefix_split: ' - '
 max_download_task: 5
+# 单文件并发 worker 数；每个 worker 独立连接，下载完切片后继续取下一片。
+file_download_concurrency: 4
+# 固定切片大小（单位 MiB）；最后一片按剩余大小下载，小文件只切一片。
+download_part_size_mb: 64
 web_host: 0.0.0.0
 web_port: 5000
 # WebUI 访问密码；部署前修改。设为 "" 可关闭密码登录。

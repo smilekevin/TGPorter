@@ -17,6 +17,7 @@ from module.download_stat import load_downloads, save_downloads, set_chat_title,
 from module.download_stat import add_failed_download as _add_failed_download
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
+from module.parallel_download import download_file, has_parts, discard_partial_download
 from module.language import _t
 from module.pyrogram_extension import (
     HookClient,
@@ -221,6 +222,36 @@ def _cleanup_temp_file(temp_file_name: str):
 _MB = 1024 * 1024
 
 
+async def _download_parallel_media(client, message, temp_file_name, media_size,
+                                   node, ui_file_name, task_start_time, parallelism, part_size):
+    from pyrogram.file_id import FileId
+    from module.download_stat import wait_download_ready, is_download_discarded
+
+    media = next((getattr(message, kind, None) for kind in (
+        "video", "document", "audio", "photo", "voice", "video_note", "animation"
+    ) if getattr(message, kind, None) is not None), None)
+    if media is None:
+        raise ValueError("This message doesn't contain any downloadable media")
+    file_id = FileId.decode(media.file_id)
+    identity = getattr(media, "file_unique_id", None) or f"{file_id.dc_id}:{file_id.media_id}"
+
+    first_progress = True
+
+    async def progress(current, total):
+        nonlocal first_progress
+        await update_download_status(current, total, message.id, ui_file_name,
+                                     task_start_time, node, client, initial=first_progress)
+        first_progress = False
+
+    async def wait_ready():
+        await wait_download_ready(message.id, node, client)
+
+    return await download_file(client, file_id, media_size, temp_file_name,
+                               identity, parallelism,
+                               progress, wait_ready, part_size,
+                               discard_requested=lambda: is_download_discarded(message.id, node))
+
+
 async def _resume_download_from_temp(
     client: pyrogram.client.Client,
     message: pyrogram.types.Message,
@@ -291,6 +322,7 @@ async def _resume_download_from_temp(
 
     from module.download_stat import update_download_status
 
+    # The outer worker pool limits simultaneous files.
     with open(real_temp, "r+b") as f:
         f.seek(aligned)
         async for chunk in client.get_file(
@@ -695,6 +727,12 @@ async def download_media(
     if _media is None:
         logger.warning(f"Message[{message.id}]: no media found in message, skipping download")
         return DownloadStatus.SkipDownload, None, ""
+    # Snapshot once. A saved range plan takes precedence after a restart.
+    file_parallelism = getattr(app, "file_download_concurrency", 1)
+    part_size = getattr(app, "download_part_size_mb", 64) * _MB
+    use_parallel = has_parts(temp_file_name) or (
+        media_size > 0 and hasattr(app, "file_download_concurrency")
+    )
     # Build source link from message for failed downloads
     source_link = ""
     if message and message.chat:
@@ -726,7 +764,7 @@ async def download_media(
         # 绝不能掉进 client.download_media —— handle_download 的
         # open("wb") 会把断点文件截断为 0（606MB→0 元凶）。
         _resume_attempted = False
-        if _pyrogram_temp and os.path.exists(_pyrogram_temp) \
+        if not use_parallel and _pyrogram_temp and os.path.exists(_pyrogram_temp) \
                 and os.path.getsize(_pyrogram_temp) > 0 \
                 and not (media_size > 0 and os.path.getsize(_pyrogram_temp) >= media_size):
             _resume_attempted = True
@@ -754,6 +792,11 @@ async def download_media(
                         _client_conn_errors["count"] = 0
                         logger.info(f"Message[{message.id}] {ui_file_name}: 断点续传完成（pre-loop）")
                         return DownloadStatus.SuccessDownload, file_name, ""
+                except pyrogram.StopTransmission:
+                    from module.download_stat import is_download_discarded
+                    if is_download_discarded(message_id, node):
+                        discard_partial_download(temp_file_name)
+                    return DownloadStatus.SkipDownload, None, ""
                 except pyrogram.errors.exceptions.bad_request_400.BadRequest:
                     # 续传后大小仍不符 → 保留 temp 继续重试循环
                     logger.warning(f"Message[{message.id}]: resume pre-loop size mismatch, will retry")
@@ -870,15 +913,25 @@ async def download_media(
             await asyncio.sleep(RETRY_TIME_OUT)
             retry -= 1  # 本轮不消耗下载重试
             continue
+        temp_download_path = None
         try:
-            temp_download_path = await client.download_media(
-                message, file_name=temp_file_name,
-                progress=update_download_status,
-                progress_args=(message_id, ui_file_name, task_start_time, node, client),
-            )
+            if use_parallel:
+                temp_download_path = await _download_parallel_media(
+                    client, message, temp_file_name, media_size, node,
+                    ui_file_name, task_start_time, file_parallelism, part_size,
+                )
+            else:
+                temp_download_path = await client.download_media(
+                    message, file_name=temp_file_name,
+                    progress=update_download_status,
+                    progress_args=(message_id, ui_file_name, task_start_time, node, client),
+                )
+            from module.download_stat import wait_download_ready
+            await wait_download_ready(message_id, node, client)
             if temp_download_path and isinstance(temp_download_path, str):
                 _check_download_finish(media_size, temp_download_path, ui_file_name)
                 await asyncio.sleep(0.5)
+                await wait_download_ready(message_id, node, client)
                 _move_to_download_path(temp_download_path, file_name)
                 # 清除 .bak 备份（下载成功）
                 bak_path = file_name + ".bak"
@@ -912,6 +965,11 @@ async def download_media(
                     )
                     if error_message:
                         error_message = f"{error_message}（重试3次后失败）"
+        except pyrogram.StopTransmission:
+            from module.download_stat import is_download_discarded
+            if is_download_discarded(message_id, node) and (not use_parallel or temp_download_path):
+                discard_partial_download(temp_file_name)
+            return DownloadStatus.SkipDownload, None, ""
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
             # 断点续传（9-21 修复）：保留 .temp，刷新消息引用后从断点续传
             logger.warning(
@@ -928,7 +986,7 @@ async def download_media(
                 error_message = "消息不存在或已被删除（文件引用过期）"
                 break
             # 尝试从 pyrogram 断点文件（temp_file_name + ".temp"）续传
-            if temp_file_name and os.path.exists(temp_file_name + ".temp"):
+            if not use_parallel and temp_file_name and os.path.exists(temp_file_name + ".temp"):
                 try:
                     resumed = await _resume_download_from_temp(
                         client, message, temp_file_name, media_size,

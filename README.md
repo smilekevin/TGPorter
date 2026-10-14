@@ -31,6 +31,7 @@
 
 ### 下载
 
+- **单文件多流并行加速下载** — 配置单文件并发 worker 数与固定切片大小，worker 下载完一片后自动领取下一片；支持暂停和中断续传，进度统一汇总
 - **多类型媒体下载** — audio / document / photo / video / voice / animation / video_note
 - **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
 - **单条下载** — 直接发送 `t.me` 链接给 Bot 即可下载
@@ -39,7 +40,7 @@
 - **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
 - **3 次重试** — 每个文件最多重试 3 次，含指数退避（连接错误 10s/20s/40s）
 - **文件引用过期处理** — BadRequest 时自动 fetch_message 刷新引用
-- **临时文件清理** — 下载失败自动清理 `.temp` 文件，启动时清理残留
+- **临时文件清理** — 删除或取消正在下载的任务时清理其临时文件和分片目录；暂停、断网和程序退出保留断点
 
 ### 转发
 
@@ -112,6 +113,24 @@
 
 Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloader:latest`，由 GitHub Release 发布流程更新。
 
+### 部署前准备：API 凭据与 Bot Token
+
+以下说明适用于镜像、Docker Compose 和手动部署；本地 Mock 开发模式无需 Telegram 登录。
+
+**获取 `api_id` 和 `api_hash`**
+
+1. 使用已有 Telegram 账号的手机号登录 [my.telegram.org](https://my.telegram.org)。
+2. 打开 [API development tools](https://my.telegram.org/apps)，填写应用信息并创建应用。
+3. 将页面显示的 `api_id` 和 `api_hash` 填入本地 `config.yaml`。手机号登录和 Bot Token 登录都需要这两个字段，请妥善保存，不要提交到公开仓库。详见 [Telegram 官方说明](https://core.telegram.org/api/obtaining_api_id)。
+
+**获取 Bot Token**
+
+1. 在 Telegram 中打开 [@BotFather](https://t.me/BotFather)，发送 `/newbot`。
+2. 按提示设置 Bot 名称和用户名，创建成功后复制 BotFather 返回的完整 Token。
+3. 将 Token 填入 `config.yaml` 的 `bot_token`，用于命令交互和通知 Bot。详见 [Telegram 官方说明](https://core.telegram.org/bots/features#botfather)。
+
+主下载客户端可以选择手机号或 Bot Token 登录；仅填写配置中的 `bot_token` 不会代替主下载客户端的首次登录。使用 Bot 身份下载时，下载范围取决于该 Bot 对目标消息的访问权限。各部署方式的首次登录和 session 丢失后的重新登录步骤见下文，两种登录方式的背景说明见 [Pyrogram 官方文档](https://docs.pyrogram.org/start/auth)。
+
 ### Docker 镜像部署
 
 服务器或 NAS 已安装 Docker 后，可以直接运行本 fork 的预构建镜像。
@@ -150,7 +169,21 @@ docker run -it \
   ghcr.io/smilekevin/telegram-media-downloader:latest
 ```
 
-4. **完成登录并打开 WebUI**：按终端提示输入手机号、验证码及两步验证密码（如已启用）。登录成功后依次按 `Ctrl+P`、`Ctrl+Q` 分离终端，容器继续在后台运行。浏览器访问 `http://服务器IP:5000`。登录凭据保存在 `sessions/`，任务与下载历史保存在 `log/`；各挂载目录的用途见[Docker 数据持久化](#docker-数据持久化)。终端分离操作见 [Docker 文档](https://docs.docker.com/reference/cli/docker/container/attach/)。
+4. **首次登录（或需要重新登录时，比如 session 失效）**：**此处登录的账号为实际下载用户**，程序以该 Telegram 用户或 Bot 账号的身份访问并下载消息，下载权限取决于该账号。在终端出现 `Enter phone number or bot token:` 时，选择一种方式输入，并在确认提示时输入 `y`：
+
+- **手机号**：输入带国家区号的手机号（例如 `+8613812345678`），再输入 Telegram 发送的验证码；启用两步验证时还需输入密码。
+- **Bot Token**：输入在[部署前准备](#部署前准备api-凭据与-bot-token)中获取的完整 Token，无需手机号验证码。
+
+登录成功后，按 `Ctrl+C` 停止当前前台运行。session 保存在挂载的 `sessions/`，保留有效 session 后重启无需再次登录。任务与下载历史保存在 `log/`；各挂载目录的用途见[Docker 数据持久化](#docker-数据持久化)。
+
+5. **后台启动并访问 WebUI**：执行以下命令，停止容器后用 [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) 在后台启动已有容器：
+
+```bash
+docker stop hermes-telegram-downloader
+docker start hermes-telegram-downloader
+```
+
+启动后，在浏览器中访问 `http://服务器IP:5000`。
 
 ### Docker 部署
 
@@ -166,16 +199,25 @@ cp config.yaml.example config.yaml
 
 # 拉取已发布的 Release 镜像
 docker-compose pull
+```
 
-# 首次运行（前台，用于登录 Telegram）
+**首次登录（或需要重新登录时，比如 session 失效）**：**此处登录的账号为实际下载用户**，程序以该 Telegram 用户或 Bot 账号的身份访问并下载消息，下载权限取决于该账号。使用交互终端启动一次性容器；如果后台服务正在运行，先停止它：
+
+```bash
+docker-compose stop hermes-telegram-downloader
 docker-compose run --rm hermes-telegram-downloader
+```
 
-# 后续后台运行
+出现 `Enter phone number or bot token:` 时，输入带国家区号的手机号或完整 Bot Token，并在确认提示时输入 `y`。手机号登录还需输入验证码，以及两步验证密码（如已启用）；Bot Token 登录无需手机号验证码。登录成功后按 `Ctrl+C` 停止此次前台运行，再启动后台服务：
+
+```bash
 docker-compose up -d
 
 # 查看日志
 docker-compose logs -f
 ```
+
+Compose 将 session 保存在宿主机的 `sessions/`；`--rm` 只删除一次性容器，不会删除挂载目录。保留有效 session 后，后续启动无需再次登录。
 
 ### 手动安装
 
@@ -186,9 +228,15 @@ pip install -r requirements.txt
 
 cp config.yaml.example config.yaml
 # 编辑 config.yaml...
+```
 
+**首次登录（或需要重新登录时，比如 session 失效）**：**此处登录的账号为实际下载用户**，程序以该 Telegram 用户或 Bot 账号的身份访问并下载消息，下载权限取决于该账号。如果下载程序正在运行，先停止它，再从项目目录在交互终端中执行：
+
+```bash
 python media_downloader.py
 ```
+
+出现 `Enter phone number or bot token:` 时，输入带国家区号的手机号或完整 Bot Token，并在确认提示时输入 `y`。手机号登录还需输入验证码，以及两步验证密码（如已启用）；Bot Token 登录无需手机号验证码。登录成功后程序继续运行，session 保存在项目的 `sessions/`。保留有效 session 后，后续启动无需再次登录。
 
 ### 本地开发模式
 
@@ -240,6 +288,8 @@ hide_file_name: false
 
 # 并发控制
 max_download_task: 5  # worker 数量
+file_download_concurrency: 4  # 每个文件的并发下载 worker 数
+download_part_size_mb: 64  # 固定切片大小（MiB），最后一片按剩余大小下载
 
 # WebUI
 web_host: 0.0.0.0
@@ -269,11 +319,13 @@ proxy:
 |------|------|--------|
 | `api_id` | Telegram API ID（[my.telegram.org](https://my.telegram.org/apps)） | — |
 | `api_hash` | Telegram API Hash | — |
-| `bot_token` | Bot Token（[@BotFather](https://t.me/BotFather)） | — |
+| `bot_token` | 命令交互和通知 Bot 的 Token（[@BotFather](https://t.me/BotFather)） | — |
 | `media_types` | 下载的媒体类型列表 | — |
 | `file_formats` | 各类型文件格式过滤 | — |
 | `save_path` | 文件保存路径 | `./downloads` |
 | `max_download_task` | 并发下载 worker 数 | `5` |
+| `file_download_concurrency` | 单文件并发下载 worker 数 | `1` |
+| `download_part_size_mb` | 固定切片大小，单位 MiB，必须为正整数 | `64` |
 | `web_port` | WebUI 端口 | `5000` |
 | `web_login_secret` | WebUI 访问密码；非空时首页和所有接口均需登录，空字符串关闭登录 | `""` |
 | `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
@@ -283,6 +335,22 @@ proxy:
 | `hide_file_name` | 隐藏文件名（UI 显示 `****.mp4`） | `false` |
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `date_format` | 日期目录格式 | `%Y_%m` |
+
+文件按 `download_part_size_mb` 切成固定大小的切片，最后一片为剩余大小。
+例如每片 64 MiB 时，40 MiB 文件为 1 片，100 MiB 为 2 片，500 MiB 为 8 片。
+每个文件启动最多 `file_download_concurrency` 个 worker；每个 worker 下载完一片后从队列领取下一片，直到全部完成，再按切片顺序合并。
+每个 worker 使用独立的 Telegram 下载 TCP 连接，并在连续下载后续切片时沿用自己的连接；不同 worker 和文件不共用下载连接。
+暂停时保留连接，完成、取消或客户端重启时关闭连接。
+通过网页、Web API 或 Bot 取消正在下载的任务时，先关闭连接，再清理该文件在 `temp/` 中的临时文件和 `.parts/` 目录；已完成文件按原来的“同时删除本地文件”选项处理。
+同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 个 worker 时，最多有 20 个并发下载 worker，没有额外的总并发配置。
+切片大小和 worker 数在文件首次开始时保存，暂停、重试和程序重启后继续使用该计划，不重复下载已完成切片。
+进度条汇总所有切片的已下载字节，续传恢复的已有字节不计入新传输速度。
+旧版分片断点仍可续传。旧 `download_min_part_size_mb` 在没有新字段时作为切片大小的兼容值读取，保存配置时迁移为 `download_part_size_mb`；旧 `download_concurrency` 已移除。
+
+分片断点保存在 `temp/…/文件名.parts/` 中，部署时应持久化整个 `temp` 目录。
+多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
+离线验证和真实下载验收步骤见 [分片下载测试说明](docs/parallel-download-testing.md)。
+`log/tdl.log` 和 `log/download.log` 中的 `Opened independent download connection #…` 记录独立下载连接的打开，包含文件名和 worker 编号；对应的 `Closed independent download connection #…` 记录连接关闭。
 
 ---
 
@@ -562,6 +630,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Download
 
+- **Parallel streams for faster single-file downloads** — configure per-file workers and fixed part size; workers take the next part when finished, with pause/resume, interruption recovery and aggregate progress
 - **Multi-type media** — audio / document / photo / video / voice / animation / video_note
 - **Batch download** — specify message ID range `[start, end]` with optional filter
 - **Single download** — send a `t.me` link to the Bot
@@ -570,7 +639,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Size mismatch** — backs up existing file (.bak), re-downloads, deletes backup on success
 - **3 retries** — per file, with exponential backoff for connection errors (10s/20s/40s)
 - **File reference refresh** — auto fetch_message on BadRequest
-- **Temp file cleanup** — failed downloads clean up `.temp` files, stale files removed on startup
+- **Temp file cleanup** — deleting or cancelling an active download removes its staging files and part directory; pauses, network interruptions and process exit retain checkpoints
 
 ### Forward
 
@@ -643,6 +712,24 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 Docker deployment uses this fork's `ghcr.io/smilekevin/telegram-media-downloader:latest` image, updated when GitHub Releases are published.
 
+### Before You Deploy: API Credentials and Bot Token
+
+These steps apply to image, Docker Compose and manual deployments. Local mock development mode does not require Telegram login.
+
+**Get `api_id` and `api_hash`**
+
+1. Sign in to [my.telegram.org](https://my.telegram.org) with the phone number of an existing Telegram account.
+2. Open [API development tools](https://my.telegram.org/apps), fill in the application details and create an application.
+3. Copy the displayed `api_id` and `api_hash` into your local `config.yaml`. Both phone and Bot Token login require these fields. Keep them private and out of public repositories. See [Telegram's official instructions](https://core.telegram.org/api/obtaining_api_id).
+
+**Get a Bot Token**
+
+1. Open [@BotFather](https://t.me/BotFather) in Telegram and send `/newbot`.
+2. Follow the prompts to set the bot's name and username, then copy the complete Token returned by BotFather.
+3. Enter the Token in `config.yaml` as `bot_token` for the command and notification bot. See [Telegram's official instructions](https://core.telegram.org/bots/features#botfather).
+
+The main download client supports phone or Bot Token login. Setting `bot_token` in the configuration does not replace the main client's first login. When downloading as a bot, it must have access to the target messages. First login and login after session loss are described under each deployment method below. See [Pyrogram's authentication documentation](https://docs.pyrogram.org/start/auth) for background on both login methods.
+
 ### Docker Image Deployment
 
 With Docker installed on your server or NAS, run this fork's prebuilt image directly.
@@ -681,7 +768,21 @@ docker run -it \
   ghcr.io/smilekevin/telegram-media-downloader:latest
 ```
 
-4. **Complete login and open WebUI**: enter your phone number, verification code and two-step verification password if enabled. After login succeeds, press `Ctrl+P`, then `Ctrl+Q` to detach your terminal while the container keeps running in the background. Open `http://SERVER_IP:5000` in your browser. Login credentials persist in `sessions/`; tasks and download history persist in `log/`. See [Docker Data Persistence](#docker-data-persistence) for mount details and [Docker's documentation](https://docs.docker.com/reference/cli/docker/container/attach/) for terminal detachment.
+4. **First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. When `Enter phone number or bot token:` appears in the terminal, choose either option and confirm with `y` when prompted:
+
+- **Phone**: enter your phone number with its country code (for example, `+8613812345678`), then the verification code sent by Telegram. Enter your two-step verification password if enabled.
+- **Bot Token**: enter the complete Token obtained in [Before You Deploy](#before-you-deploy-api-credentials-and-bot-token). No phone verification code is needed.
+
+After login succeeds, press `Ctrl+C` to stop the current foreground run. The session persists in the mounted `sessions/` directory; a valid saved session avoids repeat login on restart. Tasks and download history persist in `log/`. See [Docker Data Persistence](#docker-data-persistence) for mount details.
+
+5. **Start in the background and access WebUI**: run the following commands to stop the container and use [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) to start the existing container in the background:
+
+```bash
+docker stop hermes-telegram-downloader
+docker start hermes-telegram-downloader
+```
+
+Once started, open `http://SERVER_IP:5000` in your browser.
 
 ### Docker
 
@@ -696,16 +797,25 @@ cp config.yaml.example config.yaml
 
 # Pull a published Release image
 docker-compose pull
+```
 
-# First run (foreground, for Telegram login)
+**First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. Start a one-off container in an interactive terminal, stopping the background service first if it is running:
+
+```bash
+docker-compose stop hermes-telegram-downloader
 docker-compose run --rm hermes-telegram-downloader
+```
 
-# Subsequent runs (background)
+At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. After login succeeds, press `Ctrl+C` to stop this foreground run, then start the background service:
+
+```bash
 docker-compose up -d
 
 # View logs
 docker-compose logs -f
 ```
+
+Compose saves the session in the host's `sessions/` directory. `--rm` removes only the one-off container, leaving mounted directories intact. A valid saved session avoids repeat login on later starts.
 
 ### Manual Install
 
@@ -716,9 +826,15 @@ pip install -r requirements.txt
 
 cp config.yaml.example config.yaml
 # Edit config.yaml...
+```
 
+**First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. Stop any running downloader process, then run the following command from the project directory in an interactive terminal:
+
+```bash
 python media_downloader.py
 ```
+
+At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. The program continues running after login. The session is saved in the project's `sessions/` directory. A valid saved session avoids repeat login on later starts.
 
 ### Local Dev Mode
 
@@ -770,6 +886,8 @@ hide_file_name: false
 
 # Concurrency
 max_download_task: 5  # number of workers
+file_download_concurrency: 4  # concurrent download workers per file
+download_part_size_mb: 64  # fixed part size in MiB; the final part uses the remaining size
 
 # WebUI
 web_host: 0.0.0.0
@@ -799,11 +917,13 @@ proxy:
 |-----------|-------------|---------|
 | `api_id` | Telegram API ID ([my.telegram.org](https://my.telegram.org/apps)) | — |
 | `api_hash` | Telegram API Hash | — |
-| `bot_token` | Bot Token ([@BotFather](https://t.me/BotFather)) | — |
+| `bot_token` | Command and notification bot Token ([@BotFather](https://t.me/BotFather)) | — |
 | `media_types` | Media types to download | — |
 | `file_formats` | Format filter per type | — |
 | `save_path` | File save path | `./downloads` |
 | `max_download_task` | Concurrent download workers | `5` |
+| `file_download_concurrency` | Concurrent download workers per file | `1` |
+| `download_part_size_mb` | Fixed part size in MiB; positive integer | `64` |
 | `web_port` | WebUI port | `5000` |
 | `web_login_secret` | WebUI password; a non-empty value protects the dashboard and all APIs, an empty string disables login | `""` |
 | `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
@@ -813,6 +933,26 @@ proxy:
 | `hide_file_name` | Hide filenames in UI | `false` |
 | `enable_download_txt` | Save text-only messages as .txt | `false` |
 | `date_format` | Date directory format | `%Y_%m` |
+
+Files are split into fixed-size parts using `download_part_size_mb`; the final part contains the remaining bytes.
+At 64 MiB per part, a 40 MiB file has one part, a 100 MiB file has two and a 500 MiB file has eight.
+Each file starts up to `file_download_concurrency` workers. Finished workers take the next queued part until
+all parts are complete, then the parts are merged in order. Each worker owns an independent Telegram download
+TCP connection and uses it for successive parts; different workers and files do not share download connections.
+Pauses retain connections; completion, cancellation and client restart close them. `max_download_task` limits
+simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
+Cancelling an active download through WebUI, the Web API or the bot closes its connections before removing
+its staging files and `.parts/` directory in `temp/`. Completed files still follow the existing option to delete local files.
+The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
+Progress sums downloaded bytes across all parts; resumed bytes do not count toward new transfer speed.
+Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
+legacy part-size value and migrated to `download_part_size_mb` when saving. The earlier `download_concurrency` setting has been removed.
+
+Persist the entire `temp` directory, including `filename.parts/` checkpoints. Merging multiple parts may
+temporarily require twice the file size in disk space; a single part is moved without a full extra copy.
+See the [download test guide](docs/parallel-download-testing.md) for offline and live acceptance checks.
+In `log/tdl.log` and `log/download.log`, `Opened independent download connection #…` records a connection opening
+with its file and worker number; the matching `Closed independent download connection #…` records its closure.
 
 ---
 
