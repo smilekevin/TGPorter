@@ -475,6 +475,8 @@ docker-compose up -d
 
 保留所有挂载目录，容器移除或重建不会删除宿主机数据。迁移时同步保留配置、运行数据、任务日志、session 和分片断点；自定义的宿主机下载路径对应表中的 `./downloads/`。
 
+主下载账号使用 Bot 身份时，请在 `allowed_user_ids` 中填写操作人的数字 Telegram 用户 ID。数字 ID 不依赖该 Bot 的联系人缓存；`me` 指向主下载账号本身，不会自动授权真人用户。Bot 身份不会接收启动帮助通知。
+
 ## 代理配置
 
 Kurigram 连接 Telegram 使用 `config.yaml` 中的 `proxy`：
@@ -960,6 +962,8 @@ After updating local source, run `docker-compose up -d --build`. See [Docker Com
 | `./temp/` | Download staging files and `.parts/` checkpoints |
 
 Keep every data mount when recreating containers. Migration must retain configuration, runtime data, task logs, sessions and part checkpoints. A custom host download directory replaces `./downloads/` in this table.
+
+When the main download account is a Bot, list the human operator's numeric Telegram user ID in `allowed_user_ids`. Numeric IDs do not depend on that Bot's peer cache. `me` refers to the main download account itself and does not automatically authorize a human operator. Startup help notifications are sent only to a human main account.
 
 ## Proxy Configuration
 

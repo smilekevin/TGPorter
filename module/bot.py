@@ -800,6 +800,13 @@ class DownloadBot:
         self.bot_info = await self.bot.get_me()
 
         for allowed_user_id in self.app.allowed_user_ids:
+            # Numeric allowlist entries identify senders directly; a Bot-owned
+            # main account may not have met that user and cannot resolve it yet.
+            if isinstance(allowed_user_id, int) or (
+                isinstance(allowed_user_id, str) and allowed_user_id.lstrip("-").isdigit()
+            ):
+                self.allowed_user_ids.append(int(allowed_user_id))
+                continue
             try:
                 chat = await self.client.get_chat(allowed_user_id)
                 self.allowed_user_ids.append(chat.id)
@@ -807,16 +814,18 @@ class DownloadBot:
                 logger.warning(f"set allowed_user_ids error: {e}")
 
         admin = await self.client.get_me()
-        self.allowed_user_ids.append(admin.id)
+        if not getattr(admin, "is_bot", False):
+            self.allowed_user_ids.append(admin.id)
 
         await self.bot.set_bot_commands(commands)
 
         self._register_bot_handlers()
 
-        try:
-            await send_help_str(self.bot, admin.id)
-        except Exception as e:
-            logger.warning(f"Failed to send help message: {e}")
+        if not getattr(admin, "is_bot", False):
+            try:
+                await send_help_str(self.bot, admin.id)
+            except Exception as e:
+                logger.warning(f"Failed to send help message: {e}")
 
         self.reply_task = self.app.loop.create_task(self.update_reply_message())
         self._ensure_pending_consumer()

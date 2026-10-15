@@ -110,6 +110,7 @@
 
 - **多语言** — Bot 与网页共用 `lang/` JSON 词典，英语只保存词条列表，其他语言保存翻译映射，支持简体中文 / 繁体中文 / 英语 / 日语 / 西班牙语 / 法语 / 俄语 / 乌克兰语；网页自动匹配浏览器并记住选择，Bot 由 `language` 独立配置。源码、配置示例注释和 PWA 应用名称使用英语，测试可保留必要的语言数据。新增语言见[语言包指南](docs/languages.md)，配置见[部署指南](DEPLOY.md)
 - **rclone 云盘上传** — 下载完成后可选上传到云盘
+- **Bot 授权** — `allowed_user_ids` 中的数字用户 ID 直接参与权限判断，无需预先解析联系人；用户名仍需解析。
 - **代理支持** — Kurigram 原生代理 + Docker 环境变量代理；`proxy: {}` 可禁用 Telegram 代理
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
 - **日志分离** — `tdl.log`（主日志）+ `download.log`（下载日志），10MB 轮转，保留 30 天
@@ -497,6 +498,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 - **Multilingual** — Bot and WebUI share JSON catalogs in `lang/`; English lists each key once and other languages map keys to translations: Simplified Chinese / Traditional Chinese / English / Japanese / Spanish / French / Russian / Ukrainian. WebUI matches browser preferences and remembers selection; configure the Bot independently with `language`. Source code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. See the [catalog guide](docs/languages.md) and [deployment guide](DEPLOY.md)
 - **rclone cloud upload** — optional post-download cloud drive upload
+- **Bot authorization** — Numeric user IDs in `allowed_user_ids` authorize senders directly without resolving contacts first; usernames still require resolution.
 - **Proxy** — Kurigram native proxy + Docker environment variable proxy; `proxy: {}` disables the Telegram proxy
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
 - **Log separation** — `tdl.log` + `download.log`, 10MB rotation, 30-day retention
