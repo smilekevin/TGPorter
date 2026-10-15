@@ -30,6 +30,7 @@ from module.download_stat import (
     set_chat_title,
 )
 from module.filter import Filter
+from module.bot_query import query_tasks, query_tasks_callback
 from module.task_store import save_task, complete_task, get_running_tasks, update_task_progress, get_pending_tasks, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
 from lang import CATALOGS
@@ -414,7 +415,9 @@ class DownloadBot:
             for key, value in self.task_node.copy().items():
                 if value.is_running and value.is_finish():
                     # Send final status update before completing
-                    await report_bot_status(self.bot, value, immediate_reply=True)
+                    if not await report_bot_status(self.bot, value, immediate_reply=True):
+                        # Keep the final result available until the Bot cooldown expires.
+                        continue
                     # If stopped by user, move download progress to failed list and clear data
                     if value.is_stop_transmission:
                         _cleanup_stopped_task(value)
@@ -457,7 +460,7 @@ class DownloadBot:
                         from module.task_store import get_pending_tasks
                         if get_pending_tasks():
                             _bot.app.loop.create_task(_consume_one_pending())
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
 
     async def recover_tasks(self):
         """Recover incomplete bot tasks from previous run.
@@ -745,6 +748,7 @@ class DownloadBot:
         # Command list
         commands = [
             types.BotCommand("help", _t("Help")),
+            types.BotCommand("query", _t("Query download tasks")),
             types.BotCommand(
                 "get_info", _t("Get group and user info from message link")
             ),
@@ -849,6 +853,13 @@ class DownloadBot:
         Called from start() and _reconnect_bot() — stop() clears handlers,
         so they must be re-registered after every reconnect.
         """
+        self.bot.add_handler(
+            MessageHandler(
+                query_tasks,
+                filters=pyrogram.filters.command(["query"])
+                & pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
         self.bot.add_handler(
             MessageHandler(
                 download_from_bot,
@@ -1142,6 +1153,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
             f"{_t('Available commands:')}\n"
             f"/help - {_t('Show help')}\n"
             f"/start - {_t('Show help')}\n"
+            f"/query [all|active|pending|completed|failed] [page] - {_t('Query download tasks')}\n"
             f"/get_info <link> - {_t('Get group/channel info from a message link')}\n"
             f"/download <link> <start_id> <end_id> [filter] - {_t('Download messages in bulk')}\n"
             f"/forward <src_link> <dst_link> <start_id> <end_id> [filter] - {_t('Forward messages to the destination group')}\n"
@@ -2287,7 +2299,7 @@ async def _consume_one_pending():
                         f"Task stays pending (never fails on network)."
                     )
                 return  # Keep the task pending.
-            except pyrogram.errors.exceptions.flood_420.FloodWait as e:
+            except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as e:
                 # Don't move to failed list — keep pending, set unified cooldown
                 wait_val = getattr(e, "value", 60)
                 from module.pyrogram_extension import _unified_flood_wait
@@ -2306,7 +2318,8 @@ async def _consume_one_pending():
                                seconds=wait_val, task=extra.get('task_id_display', str(task_id))) + "\n" +
                             f"{_t('Reason')}: FloodWait (get_messages)"
                         )
-                        await _bot.bot.send_message(int(from_user_id), notify_text)
+                        from module.pyrogram_extension import send_bot_notification
+                        await send_bot_notification(_bot.bot, from_user_id, notify_text)
                     except Exception:
                         pass
                 return
@@ -2471,7 +2484,6 @@ async def _consume_one_pending():
                 )
                 node.reply_message_id = recovery_msg.id
                 node.last_edit_msg = ""       # Force first progress update to trigger
-                node.last_progress_pct = -1   # Force first 20% bucket to trigger
             except Exception as e:
                 logger.warning(f"Pending consumer notification failed: {e}")
 
@@ -2655,6 +2667,10 @@ async def on_query_handler(
     Returns:
         None
     """
+
+    if query.data and query.data.startswith("tasks:"):
+        await query_tasks_callback(client, query)
+        return
 
     for it in QueryHandler:
         queryHandler = QueryHandlerStr.get_str(it.value)

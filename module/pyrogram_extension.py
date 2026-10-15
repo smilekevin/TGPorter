@@ -34,7 +34,7 @@ from module.app import (
     UploadProgressStat,
     UploadStatus,
 )
-from module.download_stat import get_download_result
+from module.download_stat import get_download_result, is_task_paused
 from module.language import Language, _t
 from module.send_media_group_v2 import cache_media, send_media_group_v2
 from utils.format import (
@@ -1049,6 +1049,32 @@ _BOT_RECONNECT_THRESHOLD = 20
 # upload, and pending consumer. Any handler that catches FloodWait updates
 # this so all other components know to pause.
 _unified_flood_wait = {"until": 0.0, "reason": ""}
+_bot_flood_wait = {"until": 0.0, "seconds": 0}
+_BOT_REPORT_TIMEOUT = 10
+
+
+def _record_bot_flood_wait(seconds):
+    """Share Bot RPC cooldowns across tasks without shortening existing waits."""
+    until = time.time() + seconds
+    if until > _bot_flood_wait["until"]:
+        _bot_flood_wait.update(until=until, seconds=seconds)
+    _unified_flood_wait["until"] = max(_unified_flood_wait["until"], until)
+    _unified_flood_wait["reason"] = f"Bot notification FLOOD_WAIT {seconds}s"
+
+
+async def send_bot_notification(client, from_user_id, text):
+    """Send a best-effort notice without blocking downloads or bypassing Bot limits."""
+    if not client or not from_user_id or time.time() < _bot_flood_wait["until"]:
+        return False
+    try:
+        await asyncio.wait_for(
+            client.send_message(int(from_user_id), text), timeout=_BOT_REPORT_TIMEOUT)
+        return True
+    except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
+        _record_bot_flood_wait(error.value)
+    except Exception as error:
+        logger.debug("Bot notification failed: {}", error)
+    return False
 
 
 def is_flood_wait_active() -> bool:
@@ -1066,10 +1092,11 @@ async def report_bot_status(
     node: TaskNode,
     immediate_reply=False,
 ):
-    """see _report_bot_status"""
+    """Report within a bounded wait, including time queued behind other reports."""
     try:
-        async with _report_lock:
-            result = await _report_bot_status(client, node, immediate_reply)
+        async with asyncio.timeout(_BOT_REPORT_TIMEOUT):
+            async with _report_lock:
+                result = await _report_bot_status(client, node, immediate_reply)
         # Success — reset connection error counter
         _bot_conn_errors["count"] = 0
         return result
@@ -1080,6 +1107,7 @@ async def report_bot_status(
             logger.warning(f"bot connection error #{_bot_conn_errors['count']}: {e}")
         else:
             logger.debug(f"{e}")
+        return False
 
 
 async def _report_bot_status(
@@ -1096,12 +1124,15 @@ async def _report_bot_status(
         immediate_reply(bool): Immediate reply
 
     Returns:
-        None
+        bool: Whether the current status was delivered or needs no notification.
     """
     if not node.reply_message_id or not node.bot:
-        return
+        return True
 
-    if immediate_reply or node.can_reply():
+    if time.time() < _bot_flood_wait["until"]:
+        return False
+
+    if node.can_reply(immediate_reply):
         if node.upload_telegram_chat_id:
             node.forward_msg_detail_str = (
                 f"\n🔄 {_t('Forward')}\n"
@@ -1147,15 +1178,18 @@ async def _report_bot_status(
                     continue
 
                 temp_file_name = os.path.basename(value["file_name"])
-                progress = int(value["down_byte"] / value["total_size"] * 100)
+                total_size = value["total_size"]
+                progress = int(value["down_byte"] / total_size * 100) if total_size > 0 else 0
                 download_result_str += (
                     f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                     f" │   ├─ 📁 : {temp_file_name}\n"
-                    f" │   ├─ 📏 : {format_byte(value['total_size'])}\n"
+                    f" │   ├─ 📏 : {format_byte(value['down_byte'])} / {format_byte(value['total_size'])}\n"
                     f" │   ├─ ⏬ : {format_byte(value['download_speed'])}/s\n"
                     f" │   └─ 📊 : [{create_progress_bar(progress)}]"
                     f" ({progress}%)\n"
                 )
+                if is_task_paused(f"{node.chat_id}_{idx}") or is_task_paused(node.task_id):
+                    download_result_str += f" │      ⏸️ {_t('Task paused')}\n"
 
             if download_result_str:
                 download_result_str = (
@@ -1253,6 +1287,22 @@ async def _report_bot_status(
             f"`\n"
             f"🆔 {_t('Task')}: {node.task_id_display}\n"
         )
+        remaining = get_flood_wait_remaining()
+        if remaining > 0:
+            wait_key = ("FLOOD_WAIT: {seconds} seconds remaining"
+                        if "flood" in _unified_flood_wait["reason"].lower()
+                        else "Retry automatically after {seconds} seconds")
+            new_msg_str += (
+                f"⏳ {_t('Waiting for Telegram rate limit')}\n"
+                + _t(wait_key, seconds=int(remaining) + 1)
+                + "\n"
+            )
+        bot_flood_notice = _bot_flood_wait["until"]
+        if bot_flood_notice > node.last_bot_flood_notice:
+            new_msg_str += _t(
+                "Telegram notification FLOOD_WAIT ended after {seconds} seconds",
+                seconds=_bot_flood_wait["seconds"],
+            ) + "\n"
         if immediate_reply:
             # Single-file tasks (limit==1): show only the actual result
             # Batch tasks show all statistics, including the total.
@@ -1294,54 +1344,36 @@ async def _report_bot_status(
             f"{failed_files_str}\n`"
         )
         if new_msg_str != node.last_edit_msg:
-            # Compute current progress percentage
-            current_pct = 0
-            if not immediate_reply:
-                total = 0
-                weighted = 0
-                download_result = get_download_result()
-                if node.chat_id in download_result:
-                    for idx, value in download_result[node.chat_id].items():
-                        tid = str(value.get("task_id", ""))
-                        if tid == str(node.task_id) or tid == str(node.task_id_display):
-                            ts = value.get("total_size", 0)
-                            if ts > 0:
-                                total += ts
-                                weighted += value.get("down_byte", 0)
-                if total > 0:
-                    current_pct = int(weighted / total * 100)
-                bucket = (current_pct // 20) * 20
-                prev_bucket = (node.last_progress_pct // 20) * 20 if node.last_progress_pct >= 0 else -1
-                if bucket == prev_bucket and node.last_progress_pct >= 0:
-                    return
-                node.last_progress_pct = current_pct  # Update here BEFORE edit attempt, so even
-                                                      # if edit fails (FloodWait etc.) we don't
-                                                      # retry the same bucket on next poll
             try:
-                await client.edit_message_text(
+                await asyncio.wait_for(client.edit_message_text(
                     node.from_user_id,
                     node.reply_message_id,
                     new_msg_str,
                     parse_mode=pyrogram.enums.ParseMode.MARKDOWN,
-                )
+                ), timeout=_BOT_REPORT_TIMEOUT)
                 node.last_edit_msg = new_msg_str
-            except pyrogram.errors.exceptions.flood_420.FloodWait as e:
+                node.last_bot_flood_notice = bot_flood_notice
+            except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as e:
                 wait_seconds = e.value
                 wait_hours = wait_seconds / 3600
                 wait_minutes = (wait_seconds % 3600) / 60
                 node.flood_wait_until = time.time() + wait_seconds
-                _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + wait_seconds)
-                _unified_flood_wait["reason"] = f"edit_message FloodWait {wait_seconds}s"
+                _record_bot_flood_wait(wait_seconds)
                 logger.warning(
                     "FLOOD_WAIT in edit_message: need to wait {:.0f}h {:.0f}m ({} seconds)",
                     wait_hours, wait_minutes, wait_seconds,
                 )
+                return False
             except pyrogram.errors.exceptions.bad_request_400.MessageNotModified:
-                pass
+                node.last_edit_msg = new_msg_str
+                node.last_bot_flood_notice = bot_flood_notice
             except pyrogram.errors.exceptions.bad_request_400.MessageIdInvalid:
                 pass
             except Exception as e:
                 logger.debug(f"edit_message_text failed: {e}")
+                return False
+        return True
+    return False
 
 
 def set_max_concurrent_transmissions(

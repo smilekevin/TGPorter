@@ -344,6 +344,16 @@
     "Connection timeout, possibly rate limited (message {message})": "Délai de connexion dépassé, limitation possible (message {message})",
     "Resume FloodWait (message {message})": "FloodWait à la reprise (message {message})",
     "Cache files (partial downloads)": "Fichiers en cache (téléchargements partiels)",
-    "Local file": "Fichier local"
+    "Local file": "Fichier local",
+    "FLOOD_WAIT: {seconds} seconds remaining": "FLOOD_WAIT : {seconds} secondes restantes",
+    "Telegram notification FLOOD_WAIT ended after {seconds} seconds": "Le FLOOD_WAIT des notifications Telegram a pris fin après {seconds} secondes",
+    "Query download tasks": "Consulter les téléchargements",
+    "Download tasks": "Tâches de téléchargement",
+    "Page {page}/{pages} ({total} tasks)": "Page {page}/{pages} ({total} tâches)",
+    "No tasks": "Aucune tâche",
+    "Previous": "Précédent",
+    "Next": "Suivant",
+    "Refresh": "Actualiser",
+    "Usage: /query [all|active|pending|completed|failed] [page]": "Utilisation : /query [all|active|pending|completed|failed] [page]"
   }
 }
