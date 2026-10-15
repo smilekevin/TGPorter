@@ -143,7 +143,7 @@
 | `/forward_to_comments <src> <dst> <start> <end>` | 转发媒体到评论区 | `/forward_to_comments https://t.me/c/A https://t.me/c/B 1 10` |
 | `/listen_forward <src> <dst> [filter]` | 实时监听并自动转发 | `/listen_forward https://t.me/c/A https://t.me/c/B` |
 | `/get_info <link>` | 获取群组/频道/消息信息 | `/get_info https://t.me/c/123/456` |
-| `/add_filter <filter>` | 设置下载过滤器 | `/add_filter message_date >= 2024-01-01` |
+| `/add_filter <filter>` | 设置下载过滤器 | `/add_filter message_date >= 2024-01-01 00:00:00` |
 | `/add_ad <keyword>` | 添加广告关键词（转发时跳过） | `/add_ad 推广` |
 | `/remove_ad <keyword>` | 移除广告关键词 | `/remove_ad 推广` |
 | `/add_replace_ad <msg_link> <keyword>` | 添加替换规则（从 caption 删除） | `/add_replace_ad https://t.me/c/123/456 广告` |
@@ -162,7 +162,7 @@
 
 - `start_id = 1` → 从最早的消息开始
 - `end_id = 0` → 直到最新消息
-- `[filter]` 可选，支持日期/文件名等过滤
+- `[filter]` 可选，由 Lark 解析，支持日期、文件名、正则、大小单位、括号和逻辑运算；例如 `media_file_size > 100MB and media_duration < 60`。日期应包含时间，例如 `2024-01-01 00:00:00`。非法字符会明确报错。
 
 ---
 
@@ -532,7 +532,7 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 | `/forward_to_comments <src> <dst> <start> <end>` | Forward to comments | `/forward_to_comments https://t.me/c/A https://t.me/c/B 1 10` |
 | `/listen_forward <src> <dst> [filter]` | Listen and auto-forward | `/listen_forward https://t.me/c/A https://t.me/c/B` |
 | `/get_info <link>` | Get chat/message info | `/get_info https://t.me/c/123/456` |
-| `/add_filter <filter>` | Set download filter | `/add_filter message_date >= 2024-01-01` |
+| `/add_filter <filter>` | Set download filter | `/add_filter message_date >= 2024-01-01 00:00:00` |
 | `/add_ad <keyword>` | Add ad keyword (skip during forward) | `/add_ad 推广` |
 | `/remove_ad <keyword>` | Remove ad keyword | `/remove_ad 推广` |
 | `/add_replace_ad <msg_link> <keyword>` | Add replacement rule (remove from caption) | `/add_replace_ad https://t.me/c/123/456 广告` |
@@ -551,7 +551,7 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 
 - `start_id = 1` → from the earliest message
 - `end_id = 0` → up to the latest message
-- `[filter]` is optional
+- `[filter]` is optional and parsed by Lark. It supports dates, filenames, regexes, byte units, parentheses and logical operators, for example `media_file_size > 100MB and media_duration < 60`. Dates include a time, such as `2024-01-01 00:00:00`. Illegal characters are reported as errors.
 
 ---
 

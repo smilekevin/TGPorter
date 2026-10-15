@@ -1,342 +1,177 @@
-"""Filter for download"""
+"""Parse and evaluate the existing download-filter language with Lark."""
 
+import operator
 import re
 from datetime import datetime
 from typing import Any, Optional, Tuple
 
-from ply import lex, yacc
+from lark import Lark, Transformer_NonRecursive, UnexpectedInput, v_args
+from lark.exceptions import VisitError
 
 from utils.format import get_byte_from_str
 from utils.meta_data import MetaData, NoneObj, ReString
 
 
-# pylint: disable = R0904
+_GRAMMAR = r"""
+?start: NAME "=" expression -> legacy_equal
+      | expression
+?expression: disjunction
+?disjunction: conjunction
+            | disjunction OR conjunction -> binary
+?conjunction: equality
+            | conjunction AND equality -> binary
+?equality: comparison
+         | equality EQ comparison -> binary
+?comparison: sum
+           | sum COMP sum -> binary
+?sum: product
+    | sum (PLUS | MINUS) product -> binary
+?product: unary
+        | product MUL unary -> binary
+?unary: atom
+      | MINUS unary -> negative
+?atom: NUMBER -> number
+     | BYTE -> byte_size
+     | TIME -> timestamp
+     | STRING -> string
+     | RESTRING -> regex_string
+     | NAME -> name
+     | "(" expression ")"
+OR.2: "||" | /or(?![a-zA-Z0-9_])/
+AND.2: "&&" | /and(?![a-zA-Z0-9_])/
+EQ: "==" | "!="
+COMP: ">=" | "<=" | ">" | "<"
+PLUS: "+"
+MINUS: "-"
+MUL: "*" | "/"
+TIME.3: /\d{4}-\d{1,2}-\d{1,2}[ ]+\d{1,2}:\d{1,2}:\d{1,2}/
+BYTE.2: /\d+(B|KB|MB|GB|TB)/
+RESTRING.2: /r'[^'\n]*'/
+STRING: /'[^'\n]*'/
+NAME: /[a-zA-Z_][a-zA-Z0-9_]*/
+NUMBER: /\d+/
+%ignore /[ \t\r\n]+/
+"""
+
+# Parsing has no mutable symbol table and writes no generated parser files.
+# Each evaluation gets its own transformer and the calling filter's metadata.
+_PARSER = Lark(_GRAMMAR, parser="lalr", lexer="basic")
+_ARITHMETIC = {"+": operator.add, "-": operator.sub, "*": operator.mul, "/": operator.truediv}
+_COMPARISON = {">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le}
+
+
+@v_args(inline=True)
+class _Evaluator(Transformer_NonRecursive):
+    def __init__(self, names):
+        super().__init__()
+        self.names = names
+
+    def number(self, value):
+        return int(value)
+
+    def byte_size(self, value):
+        return get_byte_from_str(str(value))
+
+    def timestamp(self, value):
+        return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
+
+    def string(self, value):
+        return str(value)[1:-1]
+
+    def regex_string(self, value):
+        return ReString(str(value)[2:-1])
+
+    def name(self, value):
+        name = str(value)
+        try:
+            return self.names[name]
+        except KeyError as error:
+            raise ValueError(f"Undefined name {name}") from error
+
+    def negative(self, operation, value):
+        return -value
+
+    def legacy_equal(self, name, right):
+        # A single '=' historically compares the literal name, without assigning
+        # metadata. Retain this behavior for existing saved expressions.
+        return self.binary(str(name), "==", right)
+
+    def binary(self, left, operation, right):
+        operation = str(operation)
+        # Both operands have already been evaluated, as in the old parser.
+        if operation in ("or", "||"):
+            return left or right
+        if operation in ("and", "&&"):
+            return left and right
+        self.check_type(left, right)
+        if operation in _ARITHMETIC:
+            left = 0 if isinstance(left, NoneObj) else left
+            right = 0 if isinstance(right, NoneObj) else right
+            return _ARITHMETIC[operation](left, right)
+        # Keep missing-value and asymmetric type-check semantics unchanged.
+        if isinstance(left, NoneObj) or isinstance(right, NoneObj):
+            return True
+        if left is None or right is None:
+            return False
+        if operation in _COMPARISON:
+            return _COMPARISON[operation](left, right)
+        if isinstance(right, ReString):
+            if not isinstance(left, str):
+                return 0
+            matched = re.fullmatch(right.re_string, left, re.MULTILINE) is not None
+        elif isinstance(left, ReString):
+            if not isinstance(right, str):
+                return 0
+            matched = re.fullmatch(left.re_string, right, re.MULTILINE) is not None
+        else:
+            matched = left == right
+        return matched if operation == "==" else not matched
+
+    @staticmethod
+    def check_type(left, right):
+        if left is None or left is NoneObj or right is None or right is NoneObj:
+            return
+        if isinstance(left, str):
+            if not isinstance(right, (str, ReString)):
+                raise ValueError(f"{left} is str but {right} is not")
+        elif isinstance(left, int):
+            if not isinstance(right, int):
+                raise ValueError(f"{left} is int but {right} is not")
+        elif isinstance(left, bool):
+            if not isinstance(right, bool):
+                raise ValueError(f"{left} is bool but {right} is not")
+        elif isinstance(left, datetime):
+            if not isinstance(right, datetime):
+                raise ValueError(f"{left} is datetime but {right} is not")
+
+
 class BaseFilter:
-    """for normal filter"""
+    """Evaluate filter expressions against a caller-owned metadata map."""
 
     def __init__(self, debug: bool = False):
-        """
-         Parameters
-        ----------
-        debug: bool
-            If output debug info
-
-        """
         self.names: dict = {}
         self.debug = debug
-        # Build the lexer and parser
-        # lex.lex(module=self)
-        self.lexer = lex.lex(module=self)
-        self.yacc = yacc.yacc(module=self)
 
     def reset(self):
-        """Reset all symbol"""
+        """Clear the metadata before applying a different message."""
         self.names.clear()
 
     def exec(self, filter_str: str) -> Any:
-        """Exec filter str"""
-        # )  #
-        # return yacc.parse(filter_str, debug=self.debug)
-        return self.yacc.parse(filter_str, debug=self.debug)
-
-    def _output(self, output_str: str):
-        """For print debug info"""
-        if self.debug:
-            print(output_str)
-
-    reserved = {
-        "and": "AND",
-        "or": "OR",
-    }
-
-    tokens = (
-        "NAME",
-        "NUMBER",
-        "GE",
-        "LE",
-        "LOR",
-        "LAND",
-        "STRING",
-        "RESTRING",
-        "BYTE",
-        "EQ",
-        "NE",
-        "TIME",
-        "AND",
-        "OR",
-    )
-
-    literals = ["=", "+", "-", "*", "/", "(", ")", ">", "<"]
-
-    # t_NAME = r'[a-zA-Z_][a-zA-Z0-9_]*'
-    t_GE = r">="
-    t_LE = r"<="
-    t_LOR = r"\|\|"
-    t_LAND = r"&&"
-    t_EQ = r"=="
-    t_NE = r"!="
-
-    def t_BYTE(self, t):
-        r"\d{1,}(B|KB|MB|GB|TB)"
-        t.value = get_byte_from_str(t.value)
-        t.type = "NUMBER"
-        return t
-
-    def t_TIME(self, t):
-        r"\d{4}-\d{1,2}-\d{1,2}[ ]{1,}\d{1,2}:\d{1,2}:\d{1,2}"
-        t.value = datetime.strptime(t.value, "%Y-%m-%d %H:%M:%S")
-        return t
-
-    def t_STRING(self, t):
-        r"'.*?'"
-        # r"'([^\\']+|\\'|\\\\)*'"
-        t.value = t.value[1:-1]
-        return t
-
-    def t_RESTRING(self, t):
-        r"r'.*?'"
-        # r"r'([^\\']+|\\'|\\\\)*'"
-        t.value = t.value[2:-1]
-        return t
-
-    def t_NAME(self, t):
-        r"[a-zA-Z_][a-zA-Z0-9_]*"
-        t.type = BaseFilter.reserved.get(t.value, "NAME")
-        return t
-
-    def t_NUMBER(self, t):
-        r"\d+"
-        t.value = int(t.value)
-        return t
-
-    t_ignore = " \t"
-
-    def t_newline(self, t):
-        r"\n+"
-        t.lexer.lineno += t.value.count("\n")
-
-    def t_error(self, t):
-        """print error"""
-        print(f"Illegal character '{t.value[0]}'")
-        t.lexer.skip(1)
-
-    precedence = (
-        ("left", "LOR", "OR"),
-        ("left", "LAND", "AND"),
-        ("left", "EQ", "NE"),
-        ("nonassoc", ">", "<", "GE", "LE"),
-        ("left", "+", "-"),
-        ("left", "*", "/"),
-        ("right", "UMINUS"),
-    )
-
-    def p_statement_assign(self, p):
-        'statement : NAME "=" expression'
-        return self.p_expression_eq(p)
-        # self.names[p[1]] = p[3]
-
-    def p_statement_expr(self, p):
-        "statement : expression"
-        self._output(p[1])
-        p[0] = p[1]
-
-    def p_expression_binop(self, p):
-        """expression : expression '+' expression
-        | expression '-' expression
-        | expression '*' expression
-        | expression '/' expression"""
-        self.check_type(p)
-        if isinstance(p[1], NoneObj):
-            p[1] = 0
-        if isinstance(p[3], NoneObj):
-            p[3] = 0
-
-        if p[2] == "+":
-            p[0] = p[1] + p[3]
-        elif p[2] == "-":
-            p[0] = p[1] - p[3]
-        elif p[2] == "*":
-            p[0] = p[1] * p[3]
-        elif p[2] == "/":
-            p[0] = p[1] / p[3]
-
-        self._output(f"binop {p[1]} {p[2]} {p[3]} = {p[0]}")
-
-    def p_expression_comp(self, p):
-        """expression : expression '>' expression
-        | expression '<' expression"""
-        self.check_type(p)
-        if isinstance(p[1], NoneObj) or isinstance(p[3], NoneObj):
-            p[0] = True
-            return
-
-        if p[1] is None or p[3] is None:
-            p[0] = False
-            return
-        if p[2] == ">":
-            p[0] = p[1] > p[3]
-        elif p[2] == "<":
-            p[0] = p[1] < p[3]
-
-    def p_expression_uminus(self, p):
-        "expression : '-' expression %prec UMINUS"
-        p[0] = -p[2]
-
-    def p_expression_ge(self, p):
-        "expression : expression GE expression"
-        self.check_type(p)
-        if isinstance(p[1], NoneObj) or isinstance(p[3], NoneObj):
-            p[0] = True
-            return
-
-        if p[1] is None or p[3] is None:
-            p[0] = False
-            return
-
-        p[0] = p[1] >= p[3]
-        self._output(f"{p[1]} {p[2]} {p[3]} {p[0]}")
-
-    def p_expression_le(self, p):
-        "expression : expression LE expression"
-        self.check_type(p)
-        if isinstance(p[1], NoneObj) or isinstance(p[3], NoneObj):
-            p[0] = True
-            return
-
-        if p[1] is None or p[3] is None:
-            p[0] = False
-            return
-
-        p[0] = p[1] <= p[3]
-        self._output(f"{p[1]} {p[2]} {p[3]} = {p[0]}")
-
-    def p_expression_eq(self, p):
-        "expression : expression EQ expression"
-        self.check_type(p)
-        if isinstance(p[1], NoneObj) or isinstance(p[3], NoneObj):
-            p[0] = True
-            return
-
-        if p[1] is None or p[3] is None:
-            p[0] = False
-            return
-
-        if isinstance(p[3], ReString):
-            if not isinstance(p[1], str):
-                p[0] = 0
-                return
-            p[0] = re.fullmatch(p[3].re_string, p[1], re.MULTILINE) is not None
-            self._output(f"{p[1]} {p[2]} {p[3].re_string} {p[0]}")
-        elif isinstance(p[1], ReString):
-            if not isinstance(p[3], str):
-                p[0] = 0
-                return
-            p[0] = re.fullmatch(p[1].re_string, p[3], re.MULTILINE) is not None
-            self._output(f"{p[1]} {p[2]} {p[3].re_string} {p[0]}")
-        else:
-            p[0] = p[1] == p[3]
-            self._output(f"{p[1]} {p[2]} {p[3]} {p[0]}")
-
-    def p_expression_ne(self, p):
-        "expression : expression NE expression"
-        self.check_type(p)
-        if isinstance(p[1], NoneObj) or isinstance(p[3], NoneObj):
-            p[0] = True
-            return
-
-        if p[1] is None or p[3] is None:
-            p[0] = False
-            return
-        if isinstance(p[3], ReString):
-            if not isinstance(p[1], str):
-                p[0] = 0
-                return
-            p[0] = re.fullmatch(p[3].re_string, p[1], re.MULTILINE) is None
-            self._output(f"{p[1]} {p[2]} {p[3].re_string} {p[0]}")
-        elif isinstance(p[1], ReString):
-            if not isinstance(p[3], str):
-                p[0] = 0
-                return
-            p[0] = re.fullmatch(p[1].re_string, p[3], re.MULTILINE) is None
-            self._output(f"{p[1]} {p[2]} {p[3].re_string} {p[0]}")
-        else:
-            p[0] = p[1] != p[3]
-            self._output(f"{p[1]} {p[2]} {p[3]} = {p[0]}")
-
-    def p_expression_group(self, p):
-        "expression : '(' expression ')'"
-        p[0] = p[2]
-
-    def p_expression_number(self, p):
-        "expression : NUMBER"
-        p[0] = p[1]
-
-    def p_expression_time(self, p):
-        "expression : TIME"
-        p[0] = p[1]
-
-    def p_expression_byte(self, p):
-        "expression : BYTE"
-        p[0] = p[1]
-
-    def p_expression_name(self, p):
-        "expression : NAME"
+        """Evaluate only the filter grammar, without executing Python code."""
         try:
-            p[0] = self.names[p[1]]
-        except Exception as e:
-            self._output(f"Undefined name '{p[1]}'")
-            raise ValueError(f"Undefined name {p[1]}") from e
-            # FIXME: not support not exist name
-            # p[0] = NoneObj()
-
-    def p_expression_lor(self, p):
-        "expression : expression LOR expression"
-        p[0] = p[1] or p[3]
-
-    def p_expression_land(self, p):
-        "expression : expression LAND expression"
-        p[0] = p[1] and p[3]
-
-    def p_expression_or(self, p):
-        "expression : expression OR expression"
-        p[0] = p[1] or p[3]
-
-    def p_expression_and(self, p):
-        "expression : expression AND expression"
-        p[0] = p[1] and p[3]
-
-    def p_expression_string(self, p):
-        "expression : STRING"
-        p[0] = p[1]
-
-    def p_expression_restring(self, p):
-        "expression : RESTRING"
-        p[0] = ReString(p[1])
-        self._output("RESTRING : " + p[0].re_string)
-
-    # pylint: disable = C0116
-    def p_error(self, p):
-        if p:
-            raise ValueError(f"Syntax error at '{p.value}'")
-
-        raise ValueError("Syntax error at EOF")
-
-    def check_type(self, p):
-        """Check filter type if is right"""
-        if p[1] is None or p[1] is NoneObj or p[3] is None or p[3] is NoneObj:
-            return
-        if isinstance(p[1], str):
-            if not isinstance(p[3], str) and not isinstance(p[3], ReString):
-                raise ValueError(f"{p[1]} is str but {p[3]} is not")
-        elif isinstance(p[1], int):
-            if not isinstance(p[3], int):
-                raise ValueError(f"{p[1]} is int but {p[3]} is not")
-        elif isinstance(p[1], bool):
-            if not isinstance(p[3], bool):
-                raise ValueError(f"{p[1]} is bool but {p[3]} is not")
-        elif isinstance(p[1], datetime):
-            if not isinstance(p[3], datetime):
-                raise ValueError(f"{p[1]} is datetime but {p[3]} is not")
+            tree = _PARSER.parse(filter_str)
+            result = _Evaluator(self.names).transform(tree)
+        except UnexpectedInput as error:
+            token = getattr(error, "token", None)
+            if token is not None and token.type == "$END":
+                raise ValueError("Syntax error at EOF") from error
+            value = str(token) if token is not None else getattr(error, "char", "")
+            raise ValueError(f"Syntax error at '{value}'") from error
+        except VisitError as error:
+            raise error.orig_exc from error
+        if self.debug:
+            print(result)
+        return result
 
 
 class Filter:
