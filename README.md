@@ -112,7 +112,7 @@
 - **rclone 云盘上传** — 下载完成后可选上传到云盘
 - **Bot 授权** — `allowed_user_ids` 中的数字用户 ID 直接参与权限判断，无需预先解析联系人；用户名仍需解析。
 - **代理支持** — Kurigram 原生代理 + Docker 环境变量代理；`proxy: {}` 可禁用 Telegram 代理
-- **依赖管理** — Starlette、Uvicorn、Pydantic 在 `requirements.txt` 中固定版本；完整安装步骤见[部署指南](DEPLOY.md#手动安装)。
+- **依赖管理** — Python 依赖统一由 `requirements.txt` 管理，WebUI 无需 npm 安装或构建；Starlette、Uvicorn、Pydantic 固定版本；完整安装步骤见[部署指南](DEPLOY.md#手动安装)。
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
 - **日志分离** — `tdl.log`（主日志）+ `download.log`（下载日志），10MB 轮转，保留 30 天
 
@@ -501,7 +501,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **rclone cloud upload** — optional post-download cloud drive upload
 - **Bot authorization** — Numeric user IDs in `allowed_user_ids` authorize senders directly without resolving contacts first; usernames still require resolution.
 - **Proxy** — Kurigram native proxy + Docker environment variable proxy; `proxy: {}` disables the Telegram proxy
-- **Dependencies** — Starlette, Uvicorn and Pydantic are version-pinned in `requirements.txt`; see the [installation guide](DEPLOY.md#manual-install).
+- **Dependencies** — Python dependencies are managed in `requirements.txt`, and the WebUI needs no npm install or build. Starlette, Uvicorn and Pydantic are version-pinned; see the [installation guide](DEPLOY.md#manual-install).
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
 - **Log separation** — `tdl.log` + `download.log`, 10MB rotation, 30-day retention
 
