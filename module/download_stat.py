@@ -8,6 +8,7 @@ from enum import Enum
 from loguru import logger
 from pyrogram import Client
 
+from lang import _t
 from module.app import TaskNode
 from utils.format import format_byte
 
@@ -29,36 +30,34 @@ _cancelled_tasks: set = set()
 _discarded_tasks: set = set()
 _failed_downloads: list = []
 _chat_titles: dict = {}  # chat_id -> chat_title mapping
-_download_lock: asyncio.Lock = asyncio.Lock()  # 保护 _download_result / _total_download_speed / _failed_downloads 等全局变量的并发访问
+_download_lock: asyncio.Lock = asyncio.Lock()  # Protect concurrent access to _download_result, _total_download_speed and _failed_downloads.
 
-# 任务进度心跳 — 每次 Pyrogram 进度回调更新，worker watchdog 检测长时间无进度
-# 只杀"死任务"（连接断了，无任何数据回调），不杀"慢任务"（有回调但在慢下载）
+# Pyrogram callbacks update progress heartbeats. The worker watchdog distinguishes dead
+# connections without callbacks from slow transfers that still make progress.
 _task_heartbeat: dict = {}  # composite_key → last progress timestamp
-# 9-24 watchdog 降级：此常量现在是"告警阈值"而非"判死阈值"——
-# 超过只记日志（silent throttle S1），30min 僵尸兜底在 media_downloader.py
+# This is a warning threshold, not a cancellation deadline. media_downloader.py owns the
+# separate 30-minute zombie fallback.
 _TASK_HEARTBEAT_TIMEOUT = 300
 
-# 静默限速检测状态机
-# IDLE(since=0,notified=False) → 速度<阈值 → SLOW_PENDING(since=T,notified=False)
-# SLOW_PENDING → 持续120s → THROTTLED(发TG通知) | 速度恢复 → IDLE(静默)
-# THROTTLED → 速度恢复 → IDLE(发TG解除通知) | 下载完成 → 保持(基数保留给下个任务)
-# 新任务慢且notified=True → 沿用since，不重复发触发通知
-# 新任务速度正常 → 发解除通知，重置IDLE
+# Silent-throttle state machine: low speed enters SLOW_PENDING, sustained low speed notifies
+# THROTTLED, and recovery returns to IDLE. Completed downloads preserve the baseline for the
+# next task. Do not repeat notifications while notified; send a clear notification once normal
+# speed returns.
 _throttle_state: dict = {
-    "since": 0.0,             # 低速开始时间
-    "notified": False,        # 是否已发过限速触发通知
-    "last_active_time": 0.0,  # 最后一次进度回调时间
-    "recovery_since": 0.0,    # 速度恢复开始时间（用于解除判定）
+    "since": 0.0,             # Low-speed start time.
+    "notified": False,        # Whether a throttle notification was sent.
+    "last_active_time": 0.0,  # Latest progress callback time.
+    "recovery_since": 0.0,    # Start of sustained speed recovery.
 }
 _SLOW_THRESHOLD_BPS = 200 * 1024   # 200 KB/s
-_SLOW_SUSTAIN_SEC = 120            # 持续 120 秒触发
-_SLOW_CLEAR_SUSTAIN_SEC = 15       # 速度恢复持续 15 秒才解除
+_SLOW_SUSTAIN_SEC = 120            # Trigger after 120 seconds.
+_SLOW_CLEAR_SUSTAIN_SEC = 15       # Clear after 15 seconds of sustained recovery.
 
 # Helper: asyncio.Lock can't be used from sync contexts; provide a try-lock wrapper
 # for sync functions that are also called from async context.
 # Strategy: sync functions that read/write shared state use a reentrant-compatible
 # pattern via _sync_lock.
-_sync_lock = __import__('threading').Lock()  # 用于同步上下文的写入保护
+_sync_lock = __import__('threading').Lock()  # Protect writes in synchronous callers.
 
 
 def get_download_result() -> dict:
@@ -113,23 +112,22 @@ def is_task_paused(task_id) -> bool:
 
 
 def clear_task_heartbeat(composite_key: str):
-    """清除任务心跳记录（任务完成/失败/取消时调用）"""
+    """Clear a task heartbeat when the task completes, fails or is cancelled."""
     _task_heartbeat.pop(composite_key, None)
 
 
 def touch_task_heartbeat(composite_key: str):
-    """Touch a task's heartbeat timestamp without changing download progress.
+    """Touch a task heartbeat without changing progress.
 
-    9-23 批次3 引入（resume 退避期间防 watchdog 误杀）。
-    9-24 watchdog 降级后已无调用方——watchdog 不再因无心跳 cancel，
-    退避等待直接 sleep 即可。函数保留作为心跳工具（当前无人使用）。
-    """
+    Previously used to protect resume backoff from watchdog cancellation. Current
+    callers can sleep during backoff because ordinary inactivity no longer causes
+    cancellation. Retain this helper for compatibility; it is currently unused."""
     if composite_key:
         _task_heartbeat[composite_key] = time.time()
 
 
 def get_task_heartbeat_age(composite_key: str) -> float:
-    """返回任务距上次进度回调的秒数。无记录返回 -1。"""
+    """Return seconds since the last progress callback, or -1 if none exists."""
     ts = _task_heartbeat.get(composite_key)
     if ts is None:
         return -1
@@ -218,7 +216,7 @@ def add_failed_download(chat_id, msg_id, task_id, file_name, error_message, tota
             "from_user_id": from_user_id,
             "timestamp": time.time(),
         })
-    save_downloads()  # 失败时立即持久化
+    save_downloads()  # Persist failures immediately.
 
 
 def get_failed_downloads() -> list:
@@ -356,10 +354,10 @@ async def update_download_status(
     chat_id = node.chat_id
     composite_key = f"{chat_id}_{message_id}"
 
-    # 更新进度心跳 — worker watchdog 用这个检测死连接
+    # Update the progress heartbeat used by the worker watchdog.
     _task_heartbeat[composite_key] = cur_time
-    # 9-24 S1+ 重启器数据源：全局最近进度时间（watchdog 降级后心跳回归
-    # 纯"下载进度"语义，不再被 touch 污染）
+    # The silent-throttling monitor consumes the latest global progress time. Heartbeats
+    # represent actual progress and are no longer touched during backoff.
     try:
         import media_downloader as _md
         _md._throttle_state["last_progress"] = cur_time
@@ -379,7 +377,8 @@ async def update_download_status(
             ]
             end_time = _download_result[chat_id][message_id]["end_time"]
 
-            # 检测占位符 → 真实数据转换，标记需要立即刷新 bot 消息
+            # Detect when a placeholder resolves to real data so Bot status refreshes
+            # immediately.
             _prev_total = _download_result[chat_id][message_id].get("total_size", 0)
             _placeholder_resolved = _prev_total <= 1 and total_size > 1
 
@@ -425,7 +424,7 @@ async def update_download_status(
                         if not (is_task_paused(_ckey) or is_task_paused(_val.get("task_id", ""))):
                             _total += _val.get("download_speed", 0)
                 _total_download_speed = _total
-                # 下载完成时立即持久化
+                # Persist immediately when a download completes.
                 save_downloads()
         else:
             each_second_total_download = 0 if initial else down_byte
@@ -448,7 +447,7 @@ async def update_download_status(
             _total_download_size += down_byte
             _placeholder_resolved = False
 
-        # === 静默限速检测（锁内只设 flag，锁外发通知）===
+        # Detect silent throttling under the lock; send notifications after releasing it.
         _throttle_action = None  # None / "notify" / "clear"
         _throttle_state["last_active_time"] = cur_time
         dl_entry = _download_result.get(chat_id, {}).get(message_id)
@@ -456,10 +455,10 @@ async def update_download_status(
             cur_speed = dl_entry.get("download_speed", 0)
             dl_total = dl_entry.get("total_size", 0)
             dl_down = dl_entry.get("down_byte", 0)
-            # 只在实际下载中（有进度、未完成）才检测
+            # Check only incomplete downloads with actual progress.
             if dl_total > 0 and 0 < dl_down < dl_total:
                 if cur_speed < _SLOW_THRESHOLD_BPS:
-                    # 低速中 — 重置恢复计时
+                    # Reset the recovery timer while speed remains low.
                     _throttle_state["recovery_since"] = 0.0
                     if _throttle_state["since"] == 0:
                         _throttle_state["since"] = cur_time
@@ -468,7 +467,7 @@ async def update_download_status(
                         _throttle_state["notified"] = True
                         _throttle_action = "notify"
                 else:
-                    # 速度恢复 — 需持续 15 秒才解除
+                    # Require 15 seconds of sustained speed recovery before clearing throttling.
                     if _throttle_state["notified"]:
                         if _throttle_state["recovery_since"] == 0:
                             _throttle_state["recovery_since"] = cur_time
@@ -478,30 +477,31 @@ async def update_download_status(
                             _throttle_state["notified"] = False
                             _throttle_state["recovery_since"] = 0.0
                     else:
-                        # 未触发过限速，速度正常，静默重置
+                        # If no notification was sent and speed is normal, reset silently.
                         _throttle_state["since"] = 0
                         _throttle_state["notified"] = False
                         _throttle_state["recovery_since"] = 0.0
-            # 下载完成或未开始：不动状态（保留基数给下个任务）
+            # Keep the baseline for the next task while idle or complete.
 
-    # === 静默限速通知（锁外发送，避免 await 阻塞锁）===
+    # Send silent-throttle notifications outside the lock to avoid awaiting while locked.
     if _throttle_action == "notify" and node.bot and getattr(node, "from_user_id", ""):
-        # 静默限速检测到 — 打通重连机制：递增错误计数并触发 client 重连
-        # 不中断当前下载（让 Pyrogram 继续尝试），但如果连接确实死了，
-        # 后续 TimeoutError 会走 download_media 的 except handler 正常重试
+        # Increase connection error counts and schedule a reconnect without interrupting
+        # Pyrogram. A dead connection will subsequently reach download_media's TimeoutError
+        # retry handler.
         try:
             from media_downloader import _client_conn_errors, _maybe_reconnect_client
-            _client_conn_errors["count"] += 3  # 加速触发重连（阈值10，+3 比每次+1快）
+            _client_conn_errors["count"] += 3  # Add three toward the reconnect threshold of ten to accelerate recovery.
             asyncio.create_task(_maybe_reconnect_client())
         except Exception:
             pass
         try:
             await node.bot.send_message(
                 int(node.from_user_id),
-                "🐌 TG 下载疑似被限速\n"
-                f"任务: {getattr(node, 'task_id_display', str(node.task_id))}\n"
-                f"文件: {os.path.basename(file_name)}\n"
-                f"速度持续低于 {format_byte(_SLOW_THRESHOLD_BPS)}/s 达 {_SLOW_SUSTAIN_SEC} 秒"
+                f"🐌 {_t('Telegram download may be speed limited')}\n"
+                f"{_t('Task')}: {getattr(node, 'task_id_display', str(node.task_id))}\n"
+                f"{_t('File')}: {os.path.basename(file_name)}\n"
+                + _t("Speed below {speed}/s for {seconds} seconds",
+                     speed=format_byte(_SLOW_THRESHOLD_BPS), seconds=_SLOW_SUSTAIN_SEC)
             )
         except Exception:
             pass
@@ -509,16 +509,16 @@ async def update_download_status(
         try:
             await node.bot.send_message(
                 int(node.from_user_id),
-                "✅ TG 限速已解除\n"
-                f"任务: {getattr(node, 'task_id_display', str(node.task_id))}\n"
-                "下载速度恢复正常"
+                f"✅ {_t('Telegram rate limit cleared')}\n"
+                f"{_t('Task')}: {getattr(node, 'task_id_display', str(node.task_id))}\n" +
+                _t("Download speed is back to normal")
             )
         except Exception:
             pass
 
-    # 占位符→真实数据转换时强制刷新 bot 消息（避免卡在"获取文件信息中..."）
+    # Refresh Bot status as soon as a placeholder resolves to real data.
     if _placeholder_resolved and node.bot:
-        node.last_progress_pct = -1  # 重置进度桶，让 0~20% 也能触发更新
+        node.last_progress_pct = -1  # Reset progress buckets so the initial 0-20% range also triggers an update.
         from module.pyrogram_extension import report_bot_status
         await report_bot_status(node.bot, node, immediate_reply=True)
 
@@ -586,7 +586,7 @@ def save_downloads():
         }
 
         os.makedirs(os.path.dirname(_HISTORY_FILE), exist_ok=True)
-        # 原子写入：先写 .tmp 再 rename
+        # Write atomically through a temporary file and rename.
         tmp_file = _HISTORY_FILE + ".tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

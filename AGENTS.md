@@ -30,7 +30,8 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `module/web.py` | Flask pages/API, authentication/CSRF and the single-port ASGI listener |
 | `module/download_service.py` | Shared task queries and mutations for Web API and MCP, including async retry submission |
 | `module/templates/`, `module/static/` | WebUI templates, native HTML/CSS/JS, and static assets |
-| `module/filter.py`, `module/language.py`, `module/cloud_drive.py` | Message filtering, translations, and optional cloud uploads |
+| `module/filter.py`, `module/cloud_drive.py` | Message filtering and optional cloud uploads |
+| `lang/`, `module/language.py` | Shared per-language JSON catalogs, discovery and translation; compatibility imports |
 | `run_local.py` | Standalone Mock WebUI for UI development; does not perform real downloads |
 | `tests/` | unittest regression tests that require no Telegram account |
 | `tools/benchmark_download.py` | Real Telegram download benchmarks and interruption/resume acceptance checks |
@@ -76,6 +77,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 ## Implementation Conventions
 
 - Prefer minimal changes. Follow the surrounding module's style, four-space indentation, and existing names. Do not bundle unrelated formatting, dependency upgrades, or architectural rewrites.
+- Keep runtime Python, JS and HTML source in English, including comments and diagnostic text. Chinese UI text belongs in `lang/`; tests may retain language fixtures. Do not add historical-message aliases: unrecognized records stay literal. Persist canonical English error text and translate it at display time. Bot and WebUI share `lang/*.json` message keys. Keep one file per language: English lists canonical message keys once, while translated catalogs map English keys to values. Generate current-message matching rules from English templates; reuse shared vocabulary, preserve named placeholders, and use English fallback. `zh` aliases `zh-cn`; `zh-tw` is Traditional Chinese. New catalogs are discovered at startup; see `docs/languages.md`.
 - Use English identifiers and explain the intent of public functions and complex async flows. Comments should explain state, concurrency, or compatibility decisions rather than restate code.
 - CI and Docker use Python 3.11. Manage all downloader and integrated MCP dependencies through `requirements.txt`; the main image includes them even when MCP is disabled. Pyrogram comes from the fork specified in the downloader requirements; do not assume that its behavior matches the official release.
 - Use the existing Loguru logging setup for important lifecycle events. Preserve connection-open and connection-close logs used by download acceptance checks.

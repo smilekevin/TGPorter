@@ -108,7 +108,7 @@
 
 ### 其他
 
-- **多语言** — 网页支持中文 / 英文 / 俄语 / 乌克兰语，自动匹配浏览器语言并记住手动切换；Bot 默认语言由 `language` 独立配置
+- **多语言** — Bot 与网页共用 `lang/` JSON 词典，英语只保存词条列表，其他语言保存翻译映射，支持简体中文 / 繁体中文 / 英语 / 日语 / 西班牙语 / 法语 / 俄语 / 乌克兰语；网页自动匹配浏览器并记住选择，Bot 由 `language` 独立配置。新增语言见[语言包指南](docs/languages.md)，配置见[部署指南](DEPLOY.md)
 - **rclone 云盘上传** — 下载完成后可选上传到云盘
 - **代理支持** — Pyrogram 原生代理 + Docker 环境变量代理
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
@@ -147,7 +147,7 @@
 | `/add_replace_ad <msg_link> <keyword>` | 添加替换规则（从 caption 删除） | `/add_replace_ad https://t.me/c/123/456 广告` |
 | `/remove_replace_ad <msg_link> <keyword>` | 移除替换规则 | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | 设置群组追加广告（空文本删除） | `/set_ad https://t.me/c/123 关注我` |
-| `/set_language <lang>` | 设置语言（en/ru/zh/ua） | `/set_language zh` |
+| `/set_language <lang>` | 设置语言（en/zh-cn/zh-tw/ja/es/fr/ru/uk，兼容 zh/ua） | `/set_language zh-cn` |
 | `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
 | `/help` `/start` | 显示帮助 | — |
 
@@ -495,7 +495,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Other
 
-- **Multilingual** — WebUI matches browser language and remembers manual selection: Chinese / English / Russian / Ukrainian; configure the Bot independently with `language`
+- **Multilingual** — Bot and WebUI share JSON catalogs in `lang/`; English lists each key once and other languages map keys to translations: Simplified Chinese / Traditional Chinese / English / Japanese / Spanish / French / Russian / Ukrainian. WebUI matches browser preferences and remembers selection; configure the Bot independently with `language`. See the [catalog guide](docs/languages.md) and [deployment guide](DEPLOY.md)
 - **rclone cloud upload** — optional post-download cloud drive upload
 - **Proxy** — Pyrogram native proxy + Docker environment variable proxy
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
@@ -534,7 +534,7 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 | `/add_replace_ad <msg_link> <keyword>` | Add replacement rule (remove from caption) | `/add_replace_ad https://t.me/c/123/456 广告` |
 | `/remove_replace_ad <msg_link> <keyword>` | Remove replacement rule | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | Set group append ad (empty to delete) | `/set_ad https://t.me/c/123 关注我` |
-| `/set_language <lang>` | Set language (en/ru/zh/ua) | `/set_language zh` |
+| `/set_language <lang>` | Set language (en/zh-cn/zh-tw/ja/es/fr/ru/uk; zh/ua remain compatible) | `/set_language zh-cn` |
 | `/stop` | Stop download/forward/listen (interactive) | `/stop` |
 | `/help` `/start` | Show help | — |
 

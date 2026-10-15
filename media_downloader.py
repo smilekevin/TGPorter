@@ -64,42 +64,40 @@ _CLIENT_RECONNECT_THRESHOLD = 10
 _client_reconnecting = {"active": False}
 _client_last_reconnect = {"time": 0.0}
 _CLIENT_RECONNECT_COOLDOWN = 300  # 5 min between reconnect attempts
-_MAX_WATCHDOG_RETRIES = 2  # watchdog cancel 后最多重试次数
-_watchdog_retry_count = {}  # task_id → 已重试次数
+_MAX_WATCHDOG_RETRIES = 2  # Maximum retries after watchdog cancellation.
+_watchdog_retry_count = {}  # Retry counts by task_id.
 _main_client_ref = {"client": None}  # set in start_server()
 
-# --- 9-24 S1+ 静默限速超时重启器（用户方案）---
-# 静默限速持续超过阈值时，断开节点重连一次（等效手动重启节点/v2rayA
-# 切换），有时能重置 TG 侧限速状态。全局一个计时器：限速是账号/节点级
-# 的，避免多任务各自触发重连打架。
-_THROTTLE_RESTART_AFTER = 24 * 3600  # 24h 无任何下载进度
-_THROTTLE_RESTART_MAX = 3            # 连续 N 次重连无效后只告警不再自动重连
+# Reconnect once when silent throttling exceeds the threshold, similar to toggling a proxy node.
+# A shared timer avoids competing reconnects because throttling affects the account or node.
+_THROTTLE_RESTART_AFTER = 24 * 3600  # No download progress for 24 hours.
+_THROTTLE_RESTART_MAX = 3            # Warn only after N ineffective reconnects.
 _throttle_state = {
-    "last_progress": 0.0,   # 最近一次任何任务的进度心跳时间（0=未初始化）
-    "restarts": 0,          # 本轮连续重启次数（有进度即清零）
+    "last_progress": 0.0,   # Latest global progress heartbeat; zero means uninitialized.
+    "restarts": 0,          # Consecutive restarts reset when progress returns.
 }
 
-# --- 动态 worker 池（9-21）：WebUI 改 max_download_task 不重启即时生效 ---
+# Resize the worker pool immediately when WebUI changes max_download_task.
 import threading as _threading
 _worker_pool_lock = _threading.Lock()
-_live_workers = 0          # 当前存活的 worker 数（启动 +1，退出 -1）
-_worker_exit_signal = False  # 缩容信号：多余 worker 在取到任务前自检退出
+_live_workers = 0          # Live workers: increment at startup and decrement on exit.
+_worker_exit_signal = False  # Surplus workers exit before taking another task when shrinking the pool.
 
 
 async def _spawn_one_worker(client):
-    """在主 event loop 内创建一个 worker task（供 run_coroutine_threadsafe 调度）。"""
+    """Create one worker on the main event loop via run_coroutine_threadsafe."""
     import asyncio as _aio
     _aio.get_running_loop().create_task(worker(client))
 
 
 def _worker_pool_set_target(n: int):
-    """设置目标 worker 数并同步伸缩 worker 池（可能从 Flask 线程调用）。"""
+    """Set the target worker count and resize safely, including from Flask threads."""
     global _worker_exit_signal, _live_workers
     with _worker_pool_lock:
         cur = _live_workers
     if n > cur:
-        # 扩容：补足差额。注意：本函数可能从 Flask 线程调用（无 running loop），
-        # 必须把 create_task 调度到 pyrogram 主 event loop 上执行
+        # This may run in a Flask thread without an event loop. Schedule worker creation on the
+        # main Pyrogram loop.
         import asyncio as _aio
         added = 0
         client = _main_client_ref.get("client")
@@ -107,7 +105,7 @@ def _worker_pool_set_target(n: int):
         for _ in range(n - cur):
             try:
                 if loop and loop.is_running():
-                    # 线程安全提交：run_coroutine_threadsafe 包一层
+                    # Submit through run_coroutine_threadsafe to cross the thread boundary.
                     fut = _aio.run_coroutine_threadsafe(_spawn_one_worker(client), loop)
                     fut.result(timeout=10)
                 else:
@@ -122,12 +120,12 @@ def _worker_pool_set_target(n: int):
                 break
         logger.info(f"Worker pool: scaled up {cur} -> {cur + added} workers")
     elif n < cur:
-        # 缩容：置退出信号，用哨兵唤醒所有卡在 queue.get() 的 worker，
-        # 多余的 worker 醒来后自检退出；多放的哨兵会被正常 worker 忽略
+        # Wake queue.get() waiters with sentinels. Surplus workers exit; retained workers ignore
+        # extra sentinels.
         global queue
         _worker_exit_signal = True
         excess = cur - n
-        for _ in range(cur):  # 唤醒所有等待中的 worker
+        for _ in range(cur):  # Wake all waiting workers.
             try:
                 queue.put_nowait(None)
             except Exception:
@@ -142,11 +140,10 @@ logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
 
 def _check_download_finish(media_size: int, download_path: str, ui_file_name: str):
-    """Check download task if finish.
+    """Check whether a download is complete.
 
-    大小不匹配时不再删除部分文件——保留为 .temp，下一次重试由
-    _resume_download_from_temp 从断点续传（9-21 断点续传修复）。
-    """
+    Preserve size-mismatched partial files as .temp so the next attempt can resume
+    through _resume_download_from_temp."""
     download_size = os.path.getsize(download_path)
     if media_size == download_size:
         logger.success(f"{_t('Successfully downloaded')} - {ui_file_name}")
@@ -156,7 +153,7 @@ def _check_download_finish(media_size: int, download_path: str, ui_file_name: st
             f"{download_size}, {_t('actual')}: "
             f"{media_size}, {_t('file name')}: {ui_file_name}"
         )
-        # 保留部分文件 → 改名为 .temp 供断点续传（原逻辑: os.remove(download_path)）
+        # Preserve partial data as .temp so the next attempt can resume it.
         temp_path = download_path + ".temp"
         try:
             if os.path.exists(temp_path):
@@ -204,13 +201,11 @@ def _is_exist(file_path: str) -> bool:
 
 
 def _cleanup_temp_file(temp_file_name: str):
-    """Remove temp file only if it is empty (0 bytes).
+    """Remove a temporary file only when it is empty.
 
-    9-23 判死审计批次2：改为"只删 0 字节"（与 pyrogram 补丁同款语义）。
-    原版无条件 os.remove，会删掉 _resume_download_from_temp 归位后的
-    temp_file_name（不带 .temp 后缀的完整/部分数据）——判死路径上
-    销毁可续传资产。0 字节空壳仍清理，避免垃圾堆积。
-    """
+    Unconditional deletion could destroy resumable data restored to temp_file_name,
+    including files without a .temp suffix. Keep nonempty data, matching the
+    Pyrogram checkpoint-preservation patch; remove empty shells to avoid clutter."""
     if temp_file_name and os.path.exists(temp_file_name):
         try:
             if os.path.getsize(temp_file_name) == 0:
@@ -261,24 +256,22 @@ async def _resume_download_from_temp(
     ui_file_name: str,
     task_start_time: float,
 ) -> bool:
-    """断点续传：若 .temp 已有部分数据，从 1MB 对齐的边界继续下载并追加。
+    """Resume an existing .temp file from a 1 MB aligned boundary.
 
-    pyrogram 的 handle_download 用 open(path, "wb") 打开 temp 且 offset 固定 0，
-    每次调用都会从头下载。此函数绕过它：
-      1. 读取现有 .temp 大小，截断到 1MB 对齐边界（MTProto offset 要求）
-      2. 从 fresh message 提取 FileId（文件引用已刷新）
-      3. client.get_file(file_id, size, 0, offset_mb) 生成器逐块追加
-    返回 True 表示续传完成（调用方继续走 _check_download_finish）。
-    抛出异常表示续传失败（调用方按原有重试逻辑处理）。
-    """
+    Pyrogram handle_download opens with "wb" at offset zero on each call. Bypass it
+    by reading the checkpoint size, truncating to the MTProto 1 MB alignment,
+    extracting FileId from a freshly fetched message, and appending chunks from
+    client.get_file(file_id, size, 0, offset_mb).
+    Return True on completion so the caller can validate the file; propagate
+    exceptions through the caller's existing retry flow."""
     from pyrogram.file_id import FileId
     from pyrogram import utils as pyrogram_utils
     import functools
 
     if not temp_file_name:
         return False
-    # pyrogram 实际写盘路径是 <temp_file_name>.temp（handle_download 内部拼接），
-    # temp_file_name 本身不带 .temp 后缀 —— 断点文件必须查 .temp 路径
+    # Pyrogram writes to <temp_file_name>.temp; temp_file_name itself has no suffix. Check the
+    # actual checkpoint path.
     real_temp = temp_file_name if temp_file_name.endswith(".temp") else temp_file_name + ".temp"
     if not os.path.exists(real_temp):
         return False
@@ -287,13 +280,13 @@ async def _resume_download_from_temp(
     if existing <= 0:
         return False
     if media_size > 0 and existing >= media_size:
-        # temp 已是完整大小，交回调用方校验
+        # The temporary file is complete; let the caller validate it.
         return False
 
     aligned = (existing // _MB) * _MB
     offset_mb = aligned // _MB
     if aligned != existing:
-        # 截断到 1MB 边界（1MB 内的残余数据丢弃）
+        # Truncate to a 1 MB boundary, discarding the trailing partial block.
         try:
             os.truncate(real_temp, aligned)
         except OSError as e:
@@ -308,7 +301,7 @@ async def _resume_download_from_temp(
         f"(had {existing} bytes, aligned to {aligned})"
     )
 
-    # 从 fresh message 提取 FileId（fetch_message 后 file_reference 已刷新）
+    # Extract FileId from the message after fetch_message refreshes its file_reference.
     media = getattr(message, "video", None) or getattr(message, "document", None) \
         or getattr(message, "audio", None) or getattr(message, "photo", None) \
         or getattr(message, "voice", None) or getattr(message, "video_note", None) \
@@ -333,10 +326,8 @@ async def _resume_download_from_temp(
             f.write(chunk)
 
     final_size = os.path.getsize(real_temp)
-    # 9-22 修复（0913-183 进度归零）：get_file 提前断流时 async for
-    # 会"正常"结束而不抛异常，若把断流当成功就会归位 rename 并让外层
-    # 误判完成 → 后续 client.download_media open("wb") 截断断点。
-    # 断流必须显式抛错，保留 .temp 等下一轮续传。
+    # A truncated get_file stream can end normally without raising. Explicitly reject it so
+    # callers do not rename it as complete and later truncate its checkpoint with open("wb").
     if media_size > 0 and final_size < media_size:
         raise ConnectionError(
             f"resume stream ended early: {final_size}/{media_size} bytes"
@@ -345,8 +336,8 @@ async def _resume_download_from_temp(
         f"Resume download finished: {ui_file_name} now {final_size} bytes "
         f"(expected {media_size})"
     )
-    # 续传完成后把 <name>.temp 归位为 temp_file_name（模拟 pyrogram 成功路径），
-    # 调用方的 _check_download_finish/_move_to_download_path 依赖该路径
+    # Restore <name>.temp to temp_file_name after completion, matching Pyrogram's success path
+    # expected by finish validation and file moves.
     if real_temp != temp_file_name and os.path.exists(temp_file_name):
         os.remove(temp_file_name)
     os.rename(real_temp, temp_file_name)
@@ -487,7 +478,7 @@ async def _get_media_meta(
 
 
 def _move_task_to_failed(node, message, error_message):
-    """移任务到失败列表 + 清理 placeholder + 从 bot_tasks.json 删除。"""
+    """Move a task to failures, clear its placeholder and remove its stored task."""
     try:
         from module.download_stat import add_failed_download, delete_download_result_entry as _ddre
         from module.task_store import complete_task as _ct
@@ -516,16 +507,16 @@ def _move_task_to_failed(node, message, error_message):
 
 
 async def _reset_task_for_retry(node, message):
-    """重置 node 状态，准备重新入队下载。"""
+    """Reset node state before requeueing a download."""
     from module.pyrogram_extension import remove_download_cache
     from module.download_stat import delete_download_result_entry as _ddre
     import time as _time
-    # 清理 download_cache，防止 record_download_status 装饰器短路返回 Downloading
-    # Cache 对象没有 .pop()，用 remove_download_cache 操作 .store 内部 dict
+    # Clear download_cache so record_download_status cannot short-circuit as Downloading. Cache
+    # has no pop(); use remove_download_cache to update its internal store.
     remove_download_cache(node.chat_id, message.id)
-    # 清理 _download_result placeholder
+    # Clear the _download_result placeholder.
     _ddre(node.chat_id, message.id)
-    # 重置 node 状态
+    # Reset the node state.
     node.total_task = 0
     node.total_download_task = 0
     node.success_download_task = 0
@@ -620,7 +611,7 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
             task_id=task_id_display,
             file_name=file_name or "",
             temp_file_name=temp_file_name,
-            error_message=error_message or "下载失败",
+            error_message=error_message or 'Download failed',
             total_size=file_size,
             source_link=source_link,
             from_user_id=getattr(node, "from_user_id", "") or "",
@@ -710,7 +701,8 @@ async def download_media(
                         )
                         return DownloadStatus.SkipDownload, None, ""
                     elif file_size > 0:
-                        # 先重命名原文件为 .bak，下载成功后再删除备份
+                        # Back up the existing file as .bak; remove the backup only after
+                        # success.
                         backup_path = file_name + ".bak"
                         os.replace(file_name, backup_path)
                         logger.info(
@@ -755,18 +747,16 @@ async def download_media(
 
     message_id = message.id
     total_wait = 0
-    # 9-23 重构（Jayinne 2小时下载被3秒抖动判死）：for→while，
-    # retry 显式管理——stream ended early 断流走独立退避（不消耗
-    # 3 次下载重试），其他异常照旧推进 retry。
+    # Manage retry explicitly: early stream termination uses independent backoff without
+    # consuming the three download attempts. Other exceptions still advance retry.
     retry = -1
     while retry < 2:
         retry += 1
-        # 断点续传（9-21 修复）：每次尝试前，若 pyrogram 断点文件存在且有数据，先续传。
-        # pyrogram 实际写盘为 temp_file_name + ".temp"，检查必须带后缀。
+        # Resume existing Pyrogram checkpoint data before each attempt. The on-disk path
+        # includes the .temp suffix.
         _pyrogram_temp = (temp_file_name + ".temp") if temp_file_name else None
-        # 9-22 修复（0913-183 进度归零）：.temp 有数据但本轮未续传成功时，
-        # 绝不能掉进 client.download_media —— handle_download 的
-        # open("wb") 会把断点文件截断为 0（606MB→0 元凶）。
+        # Never enter client.download_media after a failed resume while .temp holds data:
+        # handle_download opens with "wb" and would erase all saved progress.
         _resume_attempted = False
         if not use_parallel and _pyrogram_temp and os.path.exists(_pyrogram_temp) \
                 and os.path.getsize(_pyrogram_temp) > 0 \
@@ -775,13 +765,13 @@ async def download_media(
             _pre_size = os.path.getsize(_pyrogram_temp) if os.path.exists(_pyrogram_temp) else 0
             if _pre_size > 0:
                 try:
-                    # 无条件刷新消息引用：上一轮的 message 对象引用可能已过期
-                    # （FILE_REFERENCE_EXPIRED 正是这么发生的），fetch 幂等且便宜
+                    # Always refresh message references before resuming. Previous references may
+                    # have expired; fetching is idempotent and inexpensive.
                     try:
                         message = await fetch_message(client, message)
                         if message is None:
-                            logger.error(f"Message[{message_id}] {ui_file_name}: 消息已被删除，终止续传")
-                            error_message = "消息不存在或当前身份无法读取"
+                            logger.error(f"Message[{message_id}] {ui_file_name}: Message deleted; stopping resume")
+                            error_message = 'Message missing or inaccessible to this account'
                             break
                     except Exception as fetch_err:
                         logger.warning(f"Message[{message_id}] {ui_file_name}: fetch_message failed: {fetch_err}")
@@ -794,7 +784,7 @@ async def download_media(
                         await asyncio.sleep(0.5)
                         _move_to_download_path(temp_file_name, file_name)
                         _client_conn_errors["count"] = 0
-                        logger.info(f"Message[{message.id}] {ui_file_name}: 断点续传完成（pre-loop）")
+                        logger.info(f"Message[{message.id}] {ui_file_name}: Checkpoint resume complete (pre-loop)")
                         return DownloadStatus.SuccessDownload, file_name, ""
                 except pyrogram.StopTransmission:
                     from module.download_stat import is_download_discarded
@@ -802,21 +792,21 @@ async def download_media(
                         discard_partial_download(temp_file_name)
                     return DownloadStatus.SkipDownload, None, ""
                 except pyrogram.errors.exceptions.bad_request_400.BadRequest:
-                    # 续传后大小仍不符 → 保留 temp 继续重试循环
+                    # Preserve the temporary file and retry if its resumed size is still
+                    # incorrect.
                     logger.warning(f"Message[{message.id}]: resume pre-loop size mismatch, will retry")
-                    error_message = "续传后大小不符"
+                    error_message = 'Size mismatch after resume'
                 except Exception as resume_err:
-                    # 关键：绝不回落到 client.download_media —— 它 open("wb")
-                    # 会把断点文件截断为 0，销毁全部进度（16:36 事故根因）。
-                    # 保留 .temp，跳到下一轮 retry，用新引用继续续传。
+                    # Do not fall back to client.download_media: open("wb") would erase the
+                    # checkpoint. Keep .temp and retry with a fresh reference.
                     logger.warning(
                         f"Message[{message.id}] {ui_file_name}: pre-loop resume failed: "
                         f"{type(resume_err).__name__}: {str(resume_err)[:100]}, "
                         f"retry with fresh reference (temp preserved)"
                     )
-                    # 9-23 修复（判死审计批次1）：网络类异常与逻辑错误同权，
-                    # 3×3s 对网络抖动基本必死。识别网络类异常走独立退避，
-                    # 不消耗 3 次下载重试（与 stream ended early 同策略）。
+                    # Network failures use independent backoff rather than the three-attempt
+                    # download budget, matching early stream termination. Brief network
+                    # instability must not exhaust the task.
                     _err_str = str(resume_err)
                     _is_network_err = (
                         isinstance(resume_err, (ConnectionError, TimeoutError, OSError))
@@ -826,14 +816,13 @@ async def download_media(
                         or "flood" in _err_str.lower()
                     )
                     if _is_network_err:
-                        # 9-24 用户确认：网络类续传错误无限重试，永不判死
-                        # （诉求3：保持任务持续，直到消息不存在类才失败）。
-                        # 退避封顶 600s 防刷请求；30min 僵尸兜底会周期性
-                        # requeue 让任务换 worker，不存在永久占坑。
+                        # Retry network resume errors indefinitely; only missing-message errors
+                        # fail the task. Cap backoff at 600 seconds to limit requests; zombie
+                        # recovery can periodically requeue a stalled worker.
                         _net_retry = getattr(node, "_resume_net_retries", 0) + 1
                         node._resume_net_retries = _net_retry
-                        # FloodWait/FloodPremiumWait：按服务器要求 sleep，
-                        # 不计任何计数（9-24 个案：13 秒 flood 攒 8 次被判死）
+                        # Honor the server's FloodWait/FloodPremiumWait duration without
+                        # consuming retry counters.
                         import re as _re
                         _fw_m = _re.search(
                             r"FLOOD_(?:PREMIUM_)?WAIT_(\d+).*?wait of (\d+) seconds?",
@@ -848,7 +837,7 @@ async def download_media(
                             )
                             _unified_flood_wait["until"] = time.time() + _fw + 5
                             _unified_flood_wait["reason"] = (
-                                f"续传 FloodWait (msg {message.id})"
+                                f'Resume FloodWait (message {message.id})'
                             )
                             await asyncio.sleep(_fw)
                             retry -= 1
@@ -859,28 +848,28 @@ async def download_media(
                             f"resume network error (retry {_net_retry}), "
                             f"backoff {_backoff}s (does NOT consume download retries)"
                         )
-                        error_message = f"续传网络错误，退避{_backoff}秒"
-                        # 9-24 watchdog 降级后：退避等待不再需要 touch 心跳
-                        # 防误杀（watchdog 不再因无心跳 cancel），心跳回归
-                        # 纯"下载进度"语义
+                        error_message = f'Resume network error; retry in {_backoff} seconds'
+                        # Backoff no longer touches heartbeats: the watchdog does not cancel for
+                        # ordinary inactivity, so heartbeats represent actual download progress
+                        # only.
                         await asyncio.sleep(_backoff)
-                        retry -= 1  # while 循环：本轮不消耗下载重试
+                        retry -= 1  # This while-loop iteration does not consume a download attempt.
                         continue
-                    error_message = f"续传失败: {str(resume_err)[:60]}"
+                    error_message = f'Resume failed: {str(resume_err)[:60]}'
                     await asyncio.sleep(RETRY_TIME_OUT)
                     continue
             elif _resume_attempted:
-                # 续传前置检查通过但 _resume_download_from_temp 返回 False
-                # （media 提取失败等）——同样绝不走 download_media，防止
-                # open("wb") 截断 .temp。等下一轮重新提取引用再试。
+                # Even when resume returns False after passing prechecks, do not call
+                # download_media and truncate .temp. Refresh the media reference on the next
+                # attempt.
                 logger.warning(
                     f"Message[{message_id}] {ui_file_name}: "
                     f"resume skipped (no media in refreshed message), "
                     f"temp preserved, retrying"
                 )
-                error_message = "续传跳过：刷新消息中无媒体"
-                # 9-23 判死审计批次1：与网络类异常同策略——单独计数防死循环，
-                # 不空耗 3 次配额（每次 sleep 3s 后 retry 前进）
+                error_message = 'Resume skipped: refreshed message has no media'
+                # Use a separate counter to prevent a loop without consuming the three download
+                # attempts, matching network backoff.
                 _skip_retry = getattr(node, "_resume_skip_retries", 0) + 1
                 node._resume_skip_retries = _skip_retry
                 if _skip_retry > 6:
@@ -888,23 +877,23 @@ async def download_media(
                         f"Message[{message_id}] {ui_file_name}: "
                         f"resume skipped x{_skip_retry}, giving up (temp preserved)"
                     )
-                    error_message = "续传跳过超限（刷新消息中持续无媒体）"
+                    error_message = 'Resume skipped too often: refreshed message still has no media'
                     break
                 await asyncio.sleep(RETRY_TIME_OUT)
-                retry -= 1  # 本轮不消耗下载重试
+                retry -= 1  # This iteration does not consume a download attempt.
                 continue
         if _resume_attempted and _pyrogram_temp and os.path.exists(_pyrogram_temp) \
                 and os.path.getsize(_pyrogram_temp) > 0:
-            # 走到这里说明本轮续传没成功也没 continue 掉——保险拦截：
-            # .temp 仍有数据时永远不进入 client.download_media（截断风险）
+            # Safety guard: while .temp contains data, never enter client.download_media because
+            # it can truncate the checkpoint.
             logger.warning(
                 f"Message[{message_id}] {ui_file_name}: "
                 f"skip download_media to protect .temp "
                 f"({os.path.getsize(_pyrogram_temp)} bytes), retrying"
             )
-            error_message = "保护断点，等待续传"
-            # 9-23 判死审计批次1：与 resume skipped 同策略——独立计数，
-            # 不空耗 3 次配额
+            error_message = 'Checkpoint preserved; waiting to resume'
+            # Use a separate guard counter instead of consuming download attempts, matching
+            # skipped resumes.
             _prot_retry = getattr(node, "_protect_retries", 0) + 1
             node._protect_retries = _prot_retry
             if _prot_retry > 6:
@@ -912,10 +901,10 @@ async def download_media(
                     f"Message[{message_id}] {ui_file_name}: "
                     f"protect-block x{_prot_retry}, giving up (temp preserved)"
                 )
-                error_message = "保护断点拦截超限（续传持续未完成）"
+                error_message = 'Checkpoint guard exhausted: resume remains incomplete'
                 break
             await asyncio.sleep(RETRY_TIME_OUT)
-            retry -= 1  # 本轮不消耗下载重试
+            retry -= 1  # This iteration does not consume a download attempt.
             continue
         temp_download_path = None
         try:
@@ -937,7 +926,7 @@ async def download_media(
                 await asyncio.sleep(0.5)
                 await wait_download_ready(message_id, node, client)
                 _move_to_download_path(temp_download_path, file_name)
-                # 清除 .bak 备份（下载成功）
+                # Remove the .bak backup after a successful download.
                 bak_path = file_name + ".bak"
                 if os.path.exists(bak_path):
                     try:
@@ -949,7 +938,7 @@ async def download_media(
             else:
                 # download_media returned None or non-str — Pyrogram couldn't fetch
                 # without raising. Log details and set error_message for user.
-                reason = "下载返回为空" if temp_download_path is None else f"下载返回类型异常: {type(temp_download_path).__name__}"
+                reason = 'Download returned no file' if temp_download_path is None else f'Download returned unexpected type: {type(temp_download_path).__name__}'
                 logger.warning(
                     f"Message[{message.id}] {ui_file_name}: "
                     f"client.download_media returned {repr(temp_download_path)}, "
@@ -960,7 +949,7 @@ async def download_media(
                 message = await fetch_message(client, message)
                 if message is None:
                     logger.error(f"Message[{message_id}] {ui_file_name}: fetch_message returned None, message may be deleted")
-                    error_message = "消息不存在或已被删除"
+                    error_message = 'Message not found or deleted'
                     break
                 if _check_timeout(retry, message.id):
                     logger.error(
@@ -968,28 +957,28 @@ async def download_media(
                         f"download_media returned None/empty after 3 retries."
                     )
                     if error_message:
-                        error_message = f"{error_message}（重试3次后失败）"
+                        error_message = f'{error_message} (failed after 3 retries)'
         except pyrogram.StopTransmission:
             from module.download_stat import is_download_discarded
             if is_download_discarded(message_id, node) and (not use_parallel or temp_download_path):
                 discard_partial_download(temp_file_name)
             return DownloadStatus.SkipDownload, None, ""
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
-            # 断点续传（9-21 修复）：保留 .temp，刷新消息引用后从断点续传
+            # Preserve .temp, refresh the message reference and resume the checkpoint.
             logger.warning(
                 f"Message[{message.id}]: {_t('file reference expired, refetching')}..."
             )
-            error_message = "文件引用过期"
+            error_message = 'File reference expired'
             _client_conn_errors["count"] += 1
             if await _maybe_reconnect_client():
-                error_message = "文件引用过期（触发客户端重连）"
+                error_message = 'File reference expired (reconnecting client)'
             await asyncio.sleep(RETRY_TIME_OUT)
             message = await fetch_message(client, message)
             if message is None:
                 logger.error(f"Message[{message_id}] {ui_file_name}: fetch_message returned None (file ref expired), message may be deleted")
-                error_message = "消息不存在或已被删除（文件引用过期）"
+                error_message = 'Message missing or deleted (file reference expired)'
                 break
-            # 尝试从 pyrogram 断点文件（temp_file_name + ".temp"）续传
+            # Try resuming Pyrogram's checkpoint at temp_file_name + ".temp".
             if not use_parallel and temp_file_name and os.path.exists(temp_file_name + ".temp"):
                 try:
                     resumed = await _resume_download_from_temp(
@@ -1001,11 +990,11 @@ async def download_media(
                         await asyncio.sleep(0.5)
                         _move_to_download_path(temp_file_name, file_name)
                         _client_conn_errors["count"] = 0
-                        logger.info(f"Message[{message.id}] {ui_file_name}: 断点续传完成")
+                        logger.info(f"Message[{message.id}] {ui_file_name}: Checkpoint resume complete")
                         return DownloadStatus.SuccessDownload, file_name, ""
                 except pyrogram.errors.exceptions.bad_request_400.BadRequest:
-                    # 续传后大小仍不符 → 下一轮 retry；temp 已保留
-                    error_message = "文件引用过期（续传后大小仍不符）"
+                    # Keep the checkpoint and retry if its resumed size still differs.
+                    error_message = 'File reference expired (size still incorrect after resume)'
                     continue
                 except Exception as resume_err:
                     logger.warning(
@@ -1013,27 +1002,27 @@ async def download_media(
                         f"{type(resume_err).__name__}: {str(resume_err)[:100]}, "
                         f"retry with fresh reference (temp preserved)"
                     )
-                    error_message = f"续传失败: {str(resume_err)[:60]}"
-                    # 不删除 temp，不回落到 download_media（会截断 .temp）
+                    error_message = f'Resume failed: {str(resume_err)[:60]}'
+                    # Do not remove temp or fall back to download_media, which would truncate
+                    # it.
                     await asyncio.sleep(RETRY_TIME_OUT)
             if _check_timeout(retry, message.id):
                 logger.error(
-                    f"Message[{message.id}]: {_t('file reference expired for 3 retries, download skipped.')}"
+                    f"Message[{message.id}]: {_t('file reference expired for 3 retries, download skipped')}"
                 )
-                error_message = "文件引用过期（重试3次后失败）"
+                error_message = 'File reference expired (failed after 3 retries)'
         except (pyrogram.errors.exceptions.flood_420.FloodWait,
                 pyrogram.errors.FloodPremiumWait) as wait_err:
-            # FLOOD_PREMIUM_WAIT_X 与 FloodWait 是兄弟类（都继承 Flood），
-            # 必须一并捕获，否则 premium 限速直接穿透到 except Exception
-            # 把任务判死（9-22 修复）。两者都有 .value 等待秒数。
-            # 注意：不删除 temp——断点文件是续传资产
-            # 累计 FloodWait 超过600 秒则不再等待
+            # Catch both FloodWait and FloodPremiumWait, sibling Flood exceptions with .value
+            # wait durations, so premium throttling cannot fail the task through the generic
+            # handler. Preserve checkpoints; stop waiting once cumulative FloodWait exceeds 600
+            # seconds.
             total_wait += wait_err.value
             if total_wait > 600:
                 logger.error(
                     f"Message[{message.id}]: {_t('FloodWait total timeout exceeded, download skipped.')}"
                 )
-                error_message = f"频率限制总超时，累计等待{total_wait}秒"
+                error_message = f'Rate limit timeout; waited {total_wait} seconds in total'
                 break
             # Set unified cooldown so edit_message and pending consumer pause too
             from module.pyrogram_extension import _unified_flood_wait
@@ -1043,25 +1032,25 @@ async def download_media(
             if total_wait == wait_err.value and node and node.bot and getattr(node, "from_user_id", ""):
                 try:
                     notify_text = (
-                        "⏳ 下载遇到 TG 限速\n"
-                        f"任务: {getattr(node, 'task_id_display', str(node.task_id))}\n"
-                        f"文件: {ui_file_name}\n"
-                        f"需等待 {wait_err.value} 秒后自动重试"
+                        f"⏳ {_t('Telegram rate limit pause')}\n"
+                        f"{_t('Task')}: {getattr(node, 'task_id_display', str(node.task_id))}\n"
+                        f"{_t('File')}: {ui_file_name}\n"
+                        + _t("Retry automatically after {seconds} seconds", seconds=wait_err.value)
                     )
                     await node.bot.send_message(int(node.from_user_id), notify_text)
                 except Exception:
                     pass
             await asyncio.sleep(wait_err.value)
             logger.info("Message[{}]: FlowWait {}s, waiting (total={}s)", message.id, wait_err.value, total_wait)
-            error_message = f"频率限制，等待{wait_err.value}秒"
+            error_message = f'Rate limited; waiting {wait_err.value} seconds'
             _check_timeout(retry, message.id)
             # Notify user that download has resumed after FloodWait
             if node and node.bot and getattr(node, "from_user_id", ""):
                 try:
                     resume_text = (
-                        "✅ 限速恢复，继续下载\n"
-                        f"任务: {getattr(node, 'task_id_display', str(node.task_id))}\n"
-                        f"文件: {ui_file_name}"
+                        f"✅ {_t('Telegram rate limit cleared; resuming download')}\n"
+                        f"{_t('Task')}: {getattr(node, 'task_id_display', str(node.task_id))}\n"
+                        f"{_t('File')}: {ui_file_name}"
                     )
                     await node.bot.send_message(int(node.from_user_id), resume_text)
                 except Exception:
@@ -1072,65 +1061,63 @@ async def download_media(
                 f"{_t('Timeout Error occurred when downloading Message')}[{message.id}], "
                 f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
             )
-            error_message = "下载超时"
+            error_message = 'Download timed out'
             await asyncio.sleep(RETRY_TIME_OUT)
             if _check_timeout(retry, message.id):
                 logger.error(
-                    f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped.')}"
+                    f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped')}"
                 )
-                error_message = "下载超时（重试3次后失败）"
+                error_message = 'Download timed out (failed after 3 retries)'
         except TimeoutError as e:
-            # TG 静默限速：连接超时，没有显式 FloodWait 错误码
-            # 注意：TimeoutError 是 OSError 子类，必须放在 except OSError 之前
+            # A connection timeout may indicate silent Telegram throttling without FloodWait.
+            # Catch TimeoutError before OSError, its superclass.
             _cleanup_temp_file(temp_file_name)
-            # 递增退避：第1次60s，第2次120s，第3次300s
+            # Increase backoff to 60, 120 and 300 seconds.
             backoff = [60, 120, 300][min(retry, 2)]
             from module.pyrogram_extension import _unified_flood_wait
             _unified_flood_wait["until"] = time.time() + backoff + 5
-            _unified_flood_wait["reason"] = f"连接超时疑似限速 (msg {message.id})"
+            _unified_flood_wait["reason"] = f'Connection timeout, possibly rate limited (message {message.id})'
             _client_conn_errors["count"] += 1
             if await _maybe_reconnect_client():
                 backoff = 5  # Short backoff after reconnect
-            # 第一次超时就通知用户
+            # Notify the user on the first timeout.
             if retry == 0 and node and node.bot and getattr(node, "from_user_id", ""):
                 try:
                     notify_text = (
-                        "⏸️ TG 连接超时，疑似限速\n"
-                        f"任务: {getattr(node, 'task_id_display', str(node.task_id))}\n"
-                        f"文件: {ui_file_name}\n"
-                        f"暂停 {backoff} 秒后自动重试\n"
-                        f"原因: Request timed out (非FloodWait)"
+                        f"⏸️ {_t('Telegram connection timed out, possibly rate limited')}\n"
+                        f"{_t('Task')}: {getattr(node, 'task_id_display', str(node.task_id))}\n"
+                        f"{_t('File')}: {ui_file_name}\n"
+                        + _t("Pause {seconds} seconds before retrying automatically", seconds=backoff) + "\n" +
+                        f"{_t('Reason')}: {_t('Request timed out (not FloodWait)')}"
                     )
                     await node.bot.send_message(int(node.from_user_id), notify_text)
                 except Exception:
                     pass
             await asyncio.sleep(backoff)
-            # 刷新消息引用（可能已过期），用 try-except 防止二次超时
+            # Refresh a possibly expired message reference; guard against another timeout.
             try:
                 message = await fetch_message(client, message)
                 if message is None:
-                    error_message = "连接超时后消息不存在或当前身份无法读取"
+                    error_message = 'Message missing or inaccessible after connection timeout'
                     break
             except Exception as fetch_err:
-                logger.warning(f"Message[{message.id}]: fetch_message 也超时: {fetch_err}")
-            error_message = f"连接超时疑似限速（等待{backoff}秒后重试）"
+                logger.warning(f"Message[{message.id}]: fetch_message also timed out: {fetch_err}")
+            error_message = f'Connection timed out, possibly rate limited; retry in {backoff} seconds'
         except OSError as e:
-            # 连接级错误（网络断连、代理断开等）
-            # TimeoutError 已被上面的 handler 拦截，这里处理非超时类连接错误
-            # 但如果异常信息包含 timeout 关键字，也按限速处理（防御性）
+            # Handle non-timeout connection failures such as network or proxy disconnection.
+            # Exceptions mentioning timeout also enter the cooldown path defensively.
             _cleanup_temp_file(temp_file_name)
             err_str = str(e).lower()
             if "timed out" in err_str or "timeout" in err_str:
-                # 看起来像超时，用长退避 + 设 cooldown
+                # Treat apparent timeouts with a longer backoff and shared cooldown.
                 backoff = [60, 120, 300][min(retry, 2)]
                 _unified_flood_wait["until"] = time.time() + backoff + 5
-                _unified_flood_wait["reason"] = f"连接超时疑似限速 (msg {message.id})"
+                _unified_flood_wait["reason"] = f'Connection timeout, possibly rate limited (message {message.id})'
             else:
-                # 普通连接错误，指数退避：10s, 60s, 300s
-                # 9-23 判死审计批次2：上限从 40s 提到 300s——代理故障恢复
-                # 常需数分钟，40s 上限对连续故障基本必死。
-                # 9-24 watchdog 降级后：退避期间任务挂着等即可，
-                # 无 watchdog cancel 兜底（僵尸兜底 30min 才触发）
+                # Use exponential backoff of 10, 60 and 300 seconds for ordinary connection
+                # errors. Proxy recovery can take minutes; the previous 40-second cap was too
+                # short. Let tasks wait during backoff; zombie recovery applies only after 30
+                # minutes.
                 backoff = [10, 60, 300][min(retry, 2)]
             _client_conn_errors["count"] += 1
             if await _maybe_reconnect_client():
@@ -1139,18 +1126,18 @@ async def download_media(
                 f"Message[{message.id}] {ui_file_name}: connection error ({type(e).__name__}), "
                 f"retry {retry + 1}/3 after {backoff}s backoff"
             )
-            error_message = f"连接错误: {str(e)[:80]}"
+            error_message = f'Connection error: {str(e)[:80]}'
             await asyncio.sleep(backoff)
             message = await fetch_message(client, message)
             if message is None:
                 logger.error(f"Message[{message_id}] {ui_file_name}: fetch_message returned None after connection error")
-                error_message = "连接错误后消息不可用"
+                error_message = 'Message unavailable after connection error'
                 break
             if _check_timeout(retry, message.id):
                 logger.error(
                     f"Message[{message.id}] {ui_file_name}: connection failed after 3 retries"
                 )
-                error_message = f"连接错误（重试3次后失败）"
+                error_message = "Connection error (failed after 3 retries)"
         except Exception as e:
             _cleanup_temp_file(temp_file_name)
             error_str = str(e)
@@ -1162,28 +1149,28 @@ async def download_media(
                     f"Message[{message.id}] {ui_file_name}: stale file reference "
                     f"(no downloadable media), refreshing message (retry {retry + 1}/3)"
                 )
-                error_message = "文件引用过期，正在刷新消息"
+                error_message = 'File reference expired; refreshing message'
                 await asyncio.sleep(RETRY_TIME_OUT)
                 message = await fetch_message(client, message)
                 if message is None:
                     logger.error(f"Message[{message_id}] {ui_file_name}: fetch_message returned None (stale file ref)")
-                    error_message = "文件引用过期且消息不可用"
+                    error_message = 'File reference expired and message unavailable'
                     break
                 if _check_timeout(retry, message.id):
                     logger.error(
                         f"Message[{message.id}] {ui_file_name}: "
                         f"still no downloadable media after 3 retries with message refresh"
                     )
-                    error_message = "文件引用过期（刷新消息后重试3次仍失败）"
+                    error_message = 'File reference expired (failed after 3 message refreshes)'
                 continue
             logger.error(
                 f"Message[{message.id}]: "
                 f"{_t('could not be downloaded due to following exception')}:\n[{e}].",
                 exc_info=True,
             )
-            # 9-23 判死审计批次2：未知瞬时异常不再一次判死，先重试 1 次。
-            # 计数器与重试配额双重防死循环：retry 循环本身最多 3 轮，
-            # 且每轮重试消耗 1 次配额，最多多 1 次机会。
+            # Retry an unknown transient error once before failing. The outer loop allows at
+            # most three attempts and each iteration consumes one retry slot, bounding extra
+            # attempts.
             _unknown_retries = getattr(node, "_unknown_err_retries", 0) + 1
             node._unknown_err_retries = _unknown_retries
             if _unknown_retries <= 1 and retry < 2:
@@ -1192,38 +1179,38 @@ async def download_media(
                     f"unknown exception, retrying once before giving up "
                     f"(temp preserved, {_unknown_retries}/1)"
                 )
-                error_message = f"下载异常（重试{_unknown_retries}/1）: {error_str[:80]}"
+                error_message = f'Download error (retry {_unknown_retries}/1): {error_str[:80]}'
                 await asyncio.sleep(RETRY_TIME_OUT)
                 try:
                     message = await fetch_message(client, message)
                     if message is None:
-                        error_message = "消息不存在或当前身份无法读取"
+                        error_message = 'Message missing or inaccessible to this account'
                         break
                 except Exception:
-                    pass  # 刷新失败不影响重试本身
+                    pass  # A failed refresh does not prevent the retry itself.
                 continue
-            error_message = f"下载异常: {error_str[:100]}"
+            error_message = f'Download error: {error_str[:100]}'
             break
-    # 修复：失败前检查文件是否已落盘
-    # 场景1: pyrogram 已将文件写入 temp 但在返回前抛了异常
+    # Before reporting failure, check whether Pyrogram finished writing the temporary file
+    # before raising.
     if temp_file_name and os.path.exists(temp_file_name):
         temp_size = os.path.getsize(temp_file_name)
         if media_size > 0 and temp_size >= media_size:
             try:
                 _move_to_download_path(temp_file_name, file_name)
-                logger.info(f"Message[{message_id}] {ui_file_name}: 下载实际已完成(temp {temp_size}字节)")
+                logger.info(f"Message[{message_id}] {ui_file_name}: Download already complete (temp {temp_size} bytes)")
                 return DownloadStatus.SkipDownload, file_name, ""
             except Exception as e:
-                logger.warning(f"Message[{message_id}]: 移动已完成文件失败: {e}")
+                logger.warning(f"Message[{message_id}]: Failed to move completed file: {e}")
     _cleanup_temp_file(temp_file_name)
-    # 场景2: 目标文件已存在（可能被并发任务或之前的成功下载写入）
+    # The destination may already exist from another task or an earlier successful attempt.
     if file_name and _is_exist(file_name):
         file_size = os.path.getsize(file_name)
         if media_size > 0 and file_size >= media_size:
-            logger.info(f"Message[{message_id}] {ui_file_name}: 文件已存在({file_size}字节)，标记为跳过")
+            logger.info(f"Message[{message_id}] {ui_file_name}: File already exists ({file_size} bytes); marking skipped")
             return DownloadStatus.SkipDownload, None, ""
     # Log the specific failure reason before returning
-    final_reason = error_message or "下载失败（未知原因）"
+    final_reason = error_message or 'Download failed (unknown reason)'
     logger.warning(f"Message[{message_id}] {ui_file_name}: download failed after retries, reason: {final_reason}")
     return DownloadStatus.FailedDownload, None, final_reason
 
@@ -1262,14 +1249,12 @@ def _check_config() -> bool:
 
 
 async def worker(client: pyrogram.client.Client):
-    """Work for download task
+    """Process queued downloads with a progress watchdog.
 
-    9-24 watchdog 降级版：download_task 在独立 Task 中执行，worker 每 30s
-    检查 _task_heartbeat。静默限速(S1)/断流退避(S2)造成的长时间无进度
-    只记告警日志（5min 限频），不 cancel——保持任务持续挂起下载。
-    仅当 30 分钟(_ZOMBIE_TIMEOUT) 无任何进度时才认定协程僵尸挂死
-    （无异常抛出的真死 TCP），cancel 后走重连+requeue 续传。
-    """
+    Run download_task separately and check heartbeats every 30 seconds. Silent
+    throttling and stream backoff only produce warnings, limited to once per five
+    minutes. Cancel only after 30 minutes without progress, then reconnect and
+    requeue for checkpoint recovery."""
     from module.download_stat import (
         _TASK_HEARTBEAT_TIMEOUT, get_task_heartbeat_age, clear_task_heartbeat,
     )
@@ -1285,21 +1270,21 @@ async def worker(client: pyrogram.client.Client):
             try:
                 logger.info(f"Worker waiting for queue item...")
                 item = await queue.get()
-                # 动态缩容：哨兵 None 唤醒 → 若自己是多余的 worker 则退出
+                # A None sentinel wakes workers during shrinking; surplus workers exit.
                 if item is None:
                     with _worker_pool_lock:
                         target = max(1, getattr(app, "max_download_task", 2))
                         if _worker_exit_signal and _live_workers > target:
                             logger.info(f"Worker exiting (pool scale-down, live={_live_workers - 1})")
                             return
-                        # 非多余 worker：忽略哨兵，继续工作
+                        # Retained workers ignore the sentinel and continue.
                     continue
                 message = item[0]
                 node: TaskNode = item[1]
                 _bot._active_downloads += 1
                 counted_active = True
                 logger.info(f"Worker picked up message {message.id} from chat {node.chat_id} for task {node.task_id_display} (active={_bot._active_downloads})")
-                _requeued = False  # 保留变量供 requeue 分支标记（不再影响计数，见 finally）
+                _requeued = False  # Track requeue branches without changing counter cleanup in finally.
                 # Mark task as actively downloading (no longer pending/in-queue)
                 if node.task_id:
                     _bot._in_queue.discard(node.task_id)
@@ -1310,19 +1295,16 @@ async def worker(client: pyrogram.client.Client):
                 target_client = node.client if node.client else client
                 composite_key = f"{node.chat_id}_{message.id}"
 
-                # 用 Task 包裹 download_task，配合心跳 watchdog（9-24 降级版）
+                # Run download_task separately so the heartbeat watchdog can observe it.
                 dl_task = asyncio.create_task(
                     download_task(target_client, message, node)
                 )
                 dl_task_start = time.time()
-                # 9-24 watchdog 重构（方案 v1，用户批准）：
-                # 静默限速(S1)与死TCP在应用层都表现为"无心跳"，原 300s cancel
-                # 是持续误杀——S1 场景任务本该挂着等。降级为两层：
-                #   1) 300s 无心跳 → 只记告警（5min 限频），绝不 cancel
-                #   2) 30min 无心跳且无退避标记 → 僵尸兜底 cancel（唯一覆盖
-                #      "socket 挂死且不抛异常"的残余场景；正常死 TCP 会先被
-                #      pyrogram TCP.TIMEOUT=900s 抛异常走异常分支）
-                _ZOMBIE_TIMEOUT = 1800  # 30min：僵尸协程兜底（远超 TCP.TIMEOUT 900s）
+                # Silent throttling and dead TCP both lack heartbeats. Warn after 300 seconds,
+                # at most once per five minutes; cancel only after 30 minutes without progress
+                # or backoff. Ordinary dead TCP should raise via Pyrogram's 900-second timeout
+                # first.
+                _ZOMBIE_TIMEOUT = 1800  # Zombie fallback after 30 minutes, well beyond TCP.TIMEOUT=900 seconds.
                 _last_warn = 0.0
                 watchdog_triggered = False
                 try:
@@ -1331,12 +1313,14 @@ async def worker(client: pyrogram.client.Client):
                         if dl_task.done():
                             break
                         age = get_task_heartbeat_age(composite_key)
-                        # 心跳不存在(age=-1) = 任务还在启动/退避前段，不算异常
+                        # No heartbeat (age=-1) can mean startup or early backoff, not a
+                        # failure.
                         if age < 0:
                             continue
                         if age > _TASK_HEARTBEAT_TIMEOUT:
                             now = time.time()
-                            # 告警限频 5 分钟一条，S1 静默限速期间持续可见
+                            # Keep silent throttling visible with at most one warning per five
+                            # minutes.
                             if now - _last_warn >= 300:
                                 logger.warning(
                                     f"Worker: task {node.task_id_display} (msg {message.id}) "
@@ -1344,7 +1328,8 @@ async def worker(client: pyrogram.client.Client):
                                     f"(S1), keep waiting (no cancel)"
                                 )
                                 _last_warn = now
-                            # 30min 僵尸兜底：超过即认定协程挂死（无异常抛出的真死）
+                            # Only treat 30 minutes without progress as a coroutine stuck
+                            # without an exception.
                             if age > _ZOMBIE_TIMEOUT:
                                 logger.error(
                                     f"Worker: task {node.task_id_display} (msg {message.id}) "
@@ -1354,27 +1339,28 @@ async def worker(client: pyrogram.client.Client):
                                 dl_task.cancel()
                                 watchdog_triggered = True
                                 break
-                    # 等待 dl_task 完成（正常结束或 cancel）
+                    # Await normal completion or cancellation of dl_task.
                     await dl_task
-                    # 正常完成 → 清理重试计数
+                    # Clear retry counts after normal completion.
                     _watchdog_retry_count.pop(node.task_id, None)
                 except asyncio.CancelledError:
-                    # dl_task 被 cancel 时 await 会抛 CancelledError
+                    # Awaiting a cancelled dl_task raises CancelledError.
                     if watchdog_triggered:
                         logger.warning(
                             f"Worker: task {node.task_id_display} cancelled by zombie watchdog"
                         )
-                        # 僵尸判定 = 协程挂死（大概率死 TCP），递增错误计数
+                        # A zombie coroutine likely has dead TCP; increment the connection error
+                        # counter.
                         _client_conn_errors["count"] += 3
-                        # 同步等待重连结果（不是 fire-and-forget）
-                        # 9-23 修复：重连进行中时 bounded-wait 等结果，
-                        # 不再立即 False 判死（0916-29 误判根因）
+                        # Wait for the reconnect result. If another task is reconnecting, use a
+                        # bounded wait rather than failing immediately while recovery is still
+                        # in progress.
                         reconnect_ok = await _maybe_reconnect_client(force=True)
                         if not reconnect_ok:
                             reconnect_ok = await _wait_for_reconnect_result(timeout=45)
                         retry_count = _watchdog_retry_count.get(node.task_id, 0)
                         if reconnect_ok and retry_count < _MAX_WATCHDOG_RETRIES:
-                            # 重连成功 + 还有重试次数 → 重新入队
+                            # Requeue after reconnect succeeds if retries remain.
                             _watchdog_retry_count[node.task_id] = retry_count + 1
                             logger.info(
                                 f"Worker: requeue task {node.task_id_display} "
@@ -1389,11 +1375,12 @@ async def worker(client: pyrogram.client.Client):
                             _requeued = True
                             continue
                         else:
-                            # 重连失败或重试次数用完 → 移到失败列表
+                            # Move to the failed list when reconnect fails or retries are
+                            # exhausted.
                             if not reconnect_ok:
-                                err_msg = "任务僵死被watchdog取消（重连失败）"
+                                err_msg = 'Watchdog cancelled stalled task (reconnect failed)'
                             else:
-                                err_msg = f"任务僵死被watchdog取消（重试{_MAX_WATCHDOG_RETRIES}次后仍失败）"
+                                err_msg = f'Watchdog cancelled stalled task (failed after {_MAX_WATCHDOG_RETRIES} retries)'
                             logger.warning(
                                 f"Worker: moving task {node.task_id_display} to failed: {err_msg}"
                             )
@@ -1406,10 +1393,9 @@ async def worker(client: pyrogram.client.Client):
                     clear_task_heartbeat(composite_key)
             except Exception as e:
                 logger.exception(f"Worker exception for task {getattr(node, 'task_id_display', '?')}: {e}")
-                # 9-24 扩展网络识别：Connection lost(OSError)/TimeoutError/
-                # CancelledError(get_messages 超时被 wait_for 取消)/Client
-                # 未启动——全是断网期恢复路径外逃的典型。此前只认两个字符串，
-                # TimeoutError/OSError 直接漏到判死（0916-1122/1123 根因）
+                # Recognize network errors escaping recovery, including OSError, TimeoutError,
+                # cancellation from wait_for(get_messages), and an unstarted client. Matching
+                # only two strings previously failed recoverable tasks.
                 error_str = str(e)
                 _worker_is_net = (
                     "Client has not been started" in error_str
@@ -1423,9 +1409,9 @@ async def worker(client: pyrogram.client.Client):
                 if _worker_is_net:
                     _client_conn_errors["count"] += 3
                     reconnect_ok = await _maybe_reconnect_client(force=True)
-                    # 9-24 用户确认：网络类 Worker 异常不设重试预算——
-                    # 重连成功即 requeue（断点 .temp 保留），失败则 sleep
-                    # 后原地重入队，永不判死（对齐"网络类只退避不预算"）
+                    # Network worker errors have no retry budget. Requeue after successful
+                    # reconnect; otherwise sleep and retry locally while preserving .temp
+                    # checkpoints.
                     if reconnect_ok:
                         _watchdog_retry_count.pop(node.task_id, None)
                         logger.info(
@@ -1441,7 +1427,8 @@ async def worker(client: pyrogram.client.Client):
                             await queue.put((message, node))
                         _requeued = True
                         continue
-                    # 重连失败：退避后原地重试（任务不离开 worker，不判死）
+                    # After reconnect failure, back off and retry within the same worker without
+                    # failing the task.
                     logger.warning(
                         f"Worker: reconnect failed for {node.task_id_display}, "
                         f"backoff 60s then requeue (temp preserved, NOT failing)"
@@ -1456,15 +1443,13 @@ async def worker(client: pyrogram.client.Client):
                         await queue.put((message, node))
                     _requeued = True
                     continue
-                # 非网络异常（真逻辑错误）→ 判死进失败列表
-                _move_task_to_failed(node, message, f"Worker异常: {error_str[:80]}")
+                # Only non-network logic errors move the task to the failed list.
+                _move_task_to_failed(node, message, f'Worker error: {error_str[:80]}')
             finally:
-                # 并发计数 -1。9-23 批次3：requeue 分支也必须 -1。
-                # 旧逻辑"_requeued 不减，新 worker 会 +1"是错的——同一个
-                # worker 会立刻 queue.get() 捡回同一任务再 +1，一个任务
-                # 占 2 个计数（22:53 事故 active=4 > max=3 的铁证），
-                # watchdog 每循环一轮泄漏 +1，最终守卫被泄漏值误拦。
-                # 任务在队列中的占用由守卫公式的 in_queue 项计入。
+                # Always decrement active concurrency, including requeues. The same worker can
+                # immediately reclaim the task and increment again; skipping cleanup leaks one
+                # reservation per watchdog cycle. Queued occupancy is already included in the
+                # guard's in_queue term.
                 if counted_active:
                     _bot._active_downloads -= 1
     finally:
@@ -1486,7 +1471,7 @@ async def download_chat_task(client: pyrogram.Client, chat_download_config: Chat
                 client.get_messages(
                     chat_id=node.chat_id, message_ids=chat_download_config.ids_to_retry
                 ),
-                timeout=120,  # 批量获取加 120s 超时，防止半死 TCP 上 hang 15分钟
+                timeout=120,  # Bound batch fetching to 120 seconds so half-dead TCP cannot hang for 15 minutes.
             )
         except asyncio.TimeoutError:
             logger.error(
@@ -1497,9 +1482,9 @@ async def download_chat_task(client: pyrogram.Client, chat_download_config: Chat
         for message in skipped_messages:
             await add_download_task(message, node)
     async for message in messages_iter:
-        # 让出控制权，避免阻塞 handler
+        # Yield control to avoid blocking handlers.
         await asyncio.sleep(0)
-        
+
         # Cache chat title from message
         if message and message.chat:
             chat_title = getattr(message.chat, 'title', None) or getattr(message.chat, 'first_name', None)
@@ -1525,14 +1510,14 @@ async def download_chat_task(client: pyrogram.Client, chat_download_config: Chat
                 await upload_telegram_chat(client, node.upload_user, app, node, message, DownloadStatus.SkipDownload)
         # Update task progress for crash recovery
         update_task_progress(node.task_id, message.id)
-        # 降低 last_read_message_id 更新频率：每 200 条消息持久化一次
-        # 这样崩溃时最多重复扫描 200 条，而不是每条都更新
+        # Persist last_read_message_id every 200 messages; a crash then rescans at most 200
+        # messages instead of writing after every message.
         chat_download_config.last_read_message_id = max(
             chat_download_config.last_read_message_id, message.id
         )
         if message.id % 200 == 0:
             app.update_config(immediate=True)
-    # 扫描结束后保存最终位置，确保重启时从正确位置继续
+    # Persist the final scan position for correct restart recovery.
     chat_download_config.need_check = True
     chat_download_config.total_task = node.total_task
     node.is_running = True
@@ -1585,19 +1570,12 @@ async def start_server(client: pyrogram.Client):
 
 
 async def _reconnect_client():
-    """Force-reconnect the main Pyrogram client to recover from half-dead TCP sessions.
+    """Reconnect the main Pyrogram client after a half-dead TCP session.
 
-    Mirrors the manual fix of toggling the v2rayA node: client.stop() kills
-    the stale TCP connection, client.start() builds a fresh one using the
-    existing session file (no re-auth needed).
-
-    所有操作都加 asyncio.wait_for 超时，防止 stop()/start() 在半死 TCP 上 hang
-    15分钟（TCP.TIMEOUT=900s）导致 _client_reconnecting["active"] 永久锁死。
-
-    SQLite 锁处理：stop() 超时后 Pyrogram 的 session DB 可能持有 EXCLUSIVE 锁
-    未释放，导致 start() 报 "database is locked"。需要在 stop 超时后手动
-    清理 SQLite journal 文件 + 重置 Pyrogram 内部 session 引用。
-    """
+    Stopping and starting reuses the existing session file without authentication.
+    Bound all operations so a 900-second TCP timeout cannot permanently hold the
+    reconnect guard. If stop times out while SQLite retains an exclusive lock,
+    clean up journal files and internal session references before restarting."""
     client = _main_client_ref["client"]
     if client is None:
         logger.error("Cannot reconnect: no client reference")
@@ -1605,13 +1583,10 @@ async def _reconnect_client():
 
     _client_reconnecting["active"] = True
     try:
-        # stop() 加 30s 硬超时（9-23 批次3）：不再 await wait_for(client.stop())——
-        # Pyrogram stop() 内部同步阻塞时会卡住 event loop，wait_for 的超时回调
-        # 不触发，worker 协程静默冻死（23:00 事故：3 worker 全冻结在 stop()）。
-        # 改为 create_task + Event 监听：超时后放弃等待，直接返回 False，
-        # 让 watchdog 走"重连失败→任务进失败列表"路径，worker 继续活着。
-        # 绝不在 stop() 未确认完成时执行 start()——迟到的 stop() 完成时会
-        # 把 start() 建立的新连接杀掉（memory: stop() 等所有进行中操作结束）。
+        # Use a 30-second hard timeout with create_task plus Event: synchronous Pyrogram stop()
+        # work can block the loop and prevent wait_for callbacks. If stop does not finish,
+        # return False and keep workers alive. Never start before stop finishes: a late stop
+        # could close the new connection.
         logger.warning("Client auto-reconnect: stop()...")
         stop_done = asyncio.Event()
         stop_task = asyncio.create_task(client.stop())
@@ -1622,7 +1597,7 @@ async def _reconnect_client():
         stop_task.add_done_callback(_stop_finished)
         try:
             await asyncio.wait_for(stop_done.wait(), timeout=30)
-            # stop() 在 30s 内正常结束（可能含异常，在 task 里捕获）
+            # stop() finished within 30 seconds; the task captures any exception.
             try:
                 stop_task.result()
             except Exception as e:
@@ -1634,20 +1609,20 @@ async def _reconnect_client():
                 "client.stop() not finished within 30s (hard timeout) — "
                 "abandoning reconnect, returning False (workers stay alive)"
             )
-            # 不 cancel stop_task（Pyrogram 会吞 CancelledError，cancel 不掉还
-            # 会污染日志）。让它留在后台，is_connected 强制置 False。
+            # Leave stop_task running in the background because Pyrogram may swallow
+            # cancellation and add noisy logs. Force is_connected to False.
             client.is_connected = False
             _force_release_session_lock(client)
-            return False  # 关键：不执行 start()，避免迟到 stop() 杀新连接
+            return False  # Do not call start(): a late stop could close the new connection.
         except Exception as e:
-            # Event.wait 被取消等意外情况——同样放弃，不碰 start()
+            # If Event.wait is cancelled or otherwise fails, leave start() untouched.
             logger.error(f"reconnect stop-phase interrupted: {e}, abandoning")
             client.is_connected = False
             _force_release_session_lock(client)
             return False
 
-        # start() 加 30s 超时 — 防止 start() 在未清理干净的 session 上 hang
-        # 9-23 批次3：start() 同样用 Event 硬超时（与 stop() 同款防护）
+        # Use the same 30-second Event-based hard timeout for start(), which can hang on an
+        # unclean session.
         logger.warning("Client auto-reconnect: start()...")
         start_done = asyncio.Event()
         start_task = asyncio.create_task(client.start())
@@ -1665,7 +1640,7 @@ async def _reconnect_client():
             except Exception as e:
                 error_str = str(e)
                 if "database is locked" in error_str:
-                    # 二次锁清理后重试一次
+                    # Retry once after a second lock cleanup.
                     logger.warning("client.start() failed with database is locked, forcing release and retrying...")
                     _force_release_session_lock(client)
                     retry_done = asyncio.Event()
@@ -1696,18 +1671,14 @@ async def _reconnect_client():
 
 
 def _force_release_session_lock(client):
-    """强制释放 Pyrogram session SQLite 锁。
+    """Release locks held by the Pyrogram SQLite session.
 
-    stop() 超时被 cancel 时，Pyrogram 内部的 SQLite transaction 不会被回滚，
-    EXCLUSIVE 锁残留在 SQLite 连接上。清理方法：
-    1. 关闭 storage 的 SQLite 连接（client.storage.conn）
-    2. 关闭 MTProto session 的 TCP 连接（client.session）
-    3. 删除 -journal 文件（SQLite WAL/journal 残留）
-    4. 重置 client 内部状态，强制 start() 重新打开 DB
-    """
+    An interrupted stop may leave a transaction and exclusive lock behind. Close
+    the storage SQLite connection, disconnect the MTProto session, remove journal
+    files and reset client state so start() opens the database again."""
     import os
     try:
-        # 1. 关闭 storage 的 SQLite 连接 — 这才是持有锁的对象
+        # 1. Close the storage SQLite connection that owns the lock.
         storage = getattr(client, "storage", None)
         if storage and getattr(storage, "conn", None):
             try:
@@ -1716,11 +1687,11 @@ def _force_release_session_lock(client):
             except Exception:
                 pass
             storage.conn = None
-        # 2. 关闭 MTProto session 的 TCP 连接
+        # 2. Close the MTProto session's TCP connection.
         session = getattr(client, "session", None)
         if session:
             try:
-                # Session.stop() 会关 connection，但可能 hang，用 disconnect
+                # Session.stop() may hang while closing the connection; use disconnect instead.
                 conn = getattr(session, "connection", None)
                 if conn:
                     try:
@@ -1730,14 +1701,14 @@ def _force_release_session_lock(client):
             except Exception:
                 pass
             client.session = None
-        # 3. 删除 journal 文件
+        # 3. Remove journal files.
         session_path = os.path.join(app.session_file_path, "media_downloader.session")
         for suffix in ["-journal", "-wal", "-shm"]:
             f = session_path + suffix
             if os.path.exists(f):
                 os.remove(f)
                 logger.info(f"Removed stale SQLite file: {f}")
-        # 4. 重置 client 内部状态
+        # 4. Reset internal client state.
         client.is_initialized = False
         client.is_connected = False
         logger.info("Reset client session/storage/flags for clean restart")
@@ -1746,15 +1717,11 @@ def _force_release_session_lock(client):
 
 
 async def _wait_for_reconnect_result(timeout: float = 45.0) -> bool:
-    """Bounded-wait for an in-flight reconnect to finish and report its result.
+    """Wait within a bounded interval for an in-flight reconnect result.
 
-    9-23 fix (0916-29 误判): two tasks watchdog-cancelled in the same second —
-    the first starts the reconnect, the second gets "already in progress,
-    skipping" → immediate False → task moved to failed while the reconnect
-    actually SUCCEEDED 260ms later. Returning False immediately permanently
-    discards recoverable tasks. This helper polls the in-flight reconnect
-    (and client connection state) for up to `timeout` seconds before giving up.
-    """
+    Two watchdog cancellations can arrive together. Returning False immediately
+    to the second task would discard it even if the first reconnect succeeds a
+    moment later. Poll reconnect state and client connectivity until timeout."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if not _client_reconnecting["active"]:
@@ -1815,21 +1782,22 @@ async def _maybe_reconnect_client(force=False):
 
 
 async def _throttle_restart_loop(client):
-    """9-24 S1+ 静默限速超时重启器（用户方案第 2 条）。
+    """Reconnect after prolonged silent throttling.
 
-    每 10 分钟检查一次全局下载进度：
-    - 有下载中任务 且 全局无进度 ≥ 24h → 断开重连一次（等效手动重启节点）
-    - 重连后仍有进度 → 计数清零；连续 3 次无效 → 停止自动重启，仅告警
-    """
+    Every ten minutes, check whether active downloads have made no global progress
+    for 24 hours. Reconnect once, reset the counter when progress returns, and stop
+    automatic reconnects after three ineffective attempts while retaining warnings."""
     from module.download_stat import get_download_result
 
-    # 启动时初始化基线（避免容器重启后立即误判"无进度 24h"）
+    # Initialize the baseline at startup to avoid falsely detecting 24 hours of inactivity after
+    # restart.
     while _throttle_state["last_progress"] == 0.0:
         await asyncio.sleep(60)
     while True:
         try:
-            await asyncio.sleep(600)  # 10 分钟检查周期
-            # 只在有活跃下载任务时计时（队列空了不算限速）
+            await asyncio.sleep(600)  # Check once every ten minutes.
+            # Count inactivity only while downloads are active; an empty queue is not
+            # throttling.
             dr = get_download_result()
             active = 0
             for _chat, msgs in dr.items():
@@ -1840,7 +1808,8 @@ async def _throttle_restart_loop(client):
                 if active:
                     break
             if not active:
-                # 无活跃任务：重置计时基线，防止"下完了挂一整天"误触发
+                # Reset the baseline when idle so completed downloads cannot trigger a reconnect
+                # a day later.
                 _throttle_state["last_progress"] = time.time()
                 continue
             silent = time.time() - _throttle_state["last_progress"]
@@ -1859,7 +1828,8 @@ async def _throttle_restart_loop(client):
                 f"(attempt {_throttle_state['restarts'] + 1}/{_THROTTLE_RESTART_MAX})"
             )
             _throttle_state["restarts"] += 1
-            # 重连前把基线推到现在，防止重连失败后立即再触发
+            # Advance the baseline before reconnecting to avoid immediately retriggering after
+            # failure.
             _throttle_state["last_progress"] = time.time()
             ok = await _reconnect_client()
             if ok:
@@ -1971,16 +1941,16 @@ def main():
         queue = asyncio.Queue()
         logger.success(_t("Successfully started (Press Ctrl+C to stop)"))
         app.loop.create_task(download_all_chat(client))
-        # Worker 数量 = max_download_task，物理上限制并发
-        # 之前硬编码 6 个 worker，并发守卫有竞态时直接放行超量任务
+        # Create max_download_task workers to enforce physical concurrency. The previous fixed
+        # pool of six could exceed the limit during scheduling races.
         _MAX_WORKERS = max(1, getattr(app, 'max_download_task', 2))
         logger.info(f"Starting {_MAX_WORKERS} workers (max_download_task={_MAX_WORKERS})")
         with _worker_pool_lock:
             global _live_workers
-            _live_workers = 0  # 重置计数（main 只在启动时跑一次）
+            _live_workers = 0  # Reset the count; main runs once at startup.
         for _ in range(_MAX_WORKERS):
             tasks.append(app.loop.create_task(worker(client)))
-        # 9-24 S1+ 静默限速重启器（方案改动 3）
+        # Start the shared silent-throttling recovery monitor.
         tasks.append(app.loop.create_task(_throttle_restart_loop(client)))
         if app.bot_token:
             app.loop.run_until_complete(start_download_bot(app, client, add_download_task, download_chat_task))
@@ -1998,7 +1968,7 @@ def main():
         app.loop.run_until_complete(stop_server(client))
         for task in tasks:
             task.cancel()
-        logger.info(_t("Stopped!"))
+        logger.info(_t("Stopped"))
         logger.info(f"{_t('update config')}......")
         app.update_config()
         logger.success(

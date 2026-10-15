@@ -8,6 +8,8 @@ import threading
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
+from lang import template_context
+
 from module.download_service import DownloadService, _async_retry_download
 from module.app import Application
 
@@ -16,6 +18,7 @@ log.setLevel(logging.ERROR)
 logger = logging.getLogger("web")
 
 _flask_app = Flask(__name__, static_folder='static', static_url_path='/static')
+_flask_app.context_processor(template_context)
 _flask_app.secret_key = secrets.token_bytes(32)
 _flask_app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -129,7 +132,7 @@ def require_web_login():
         ):
             if request.endpoint == "login":
                 return render_template(
-                    "login.html", error="页面已过期，请重新输入密码。", csrf_token=_csrf_token()
+                    "login.html", error='Page expired. Please enter your password again.', csrf_token=_csrf_token()
                 ), 400
             return jsonify(error="invalid_csrf_token"), 400
     return None
@@ -156,7 +159,7 @@ def login():
             session.permanent = request.form.get("remember") == "on"
             _csrf_token()
             return redirect(url_for("index"))
-        error = "密码错误，请重试。"
+        error = 'Incorrect password. Please try again.'
         status = 401
     return render_template("login.html", error=error, csrf_token=_csrf_token()), status
 

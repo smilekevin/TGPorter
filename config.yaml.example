@@ -60,7 +60,9 @@ allowed_user_ids:
 - 'me'
 date_format: ''
 enable_download_txt: false
-language: ZH
+# Bot/log language; WebUI uses its own browser preference.
+# en / zh-cn / zh-tw / ja / es / fr / ru / uk (legacy ZH and UA still work).
+language: zh-cn
 proxy:
   scheme: http
   hostname: 172.17.0.1

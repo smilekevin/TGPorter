@@ -266,7 +266,7 @@ allowed_user_ids:
   - 'me'  # 'me' = 当前登录账号
 
 # 其他
-language: ZH
+language: zh-cn
 date_format: '%Y_%m'
 enable_download_txt: false
 log_level: DEBUG
@@ -300,14 +300,16 @@ proxy:
 | `mcp_read_only` | MCP 仅暴露查询工具，不影响独立的网页登录会话 | `false` |
 | `mcp_allowed_hosts` | 额外允许的 Host，域名或 IP，可带端口；默认已允许 localhost / loopback | `[]` |
 | `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
-| `language` | Bot 默认语言及已翻译日志（`ZH` / `EN` / `RU` / `UA`），独立于网页语言 | `EN` |
+| `language` | Bot 默认语言及已翻译日志（`en` / `zh-cn` / `zh-tw` / `ja` / `es` / `fr` / `ru` / `uk`，兼容旧 `ZH` / `UA`），独立于网页语言 | `EN` |
 | `proxy` | 代理配置（scheme / hostname / port） | `{}` |
 | `log_level` | 日志级别 | `INFO` |
 | `hide_file_name` | 隐藏文件名（UI 显示 `****.mp4`） | `false` |
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `date_format` | 日期目录格式 | `%Y_%m` |
 
-网页（含登录页）支持中文、英语、俄语和乌克兰语，可在语言选择框中随时切换。首次访问按浏览器语言偏好（如 `zh-CN`、`en-US`、`ru-RU`、`uk-UA`）依次匹配，不支持的语言回退英语；手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页语言互不影响。
+网页（含登录页）和 Bot 共用 `lang/*.json` 词典，支持简体中文（`zh-cn`）、繁体中文（`zh-tw`）、英语（`en`）、日语（`ja`）、西班牙语（`es`）、法语（`fr`）、俄语（`ru`）和乌克兰语（`uk`）。每种语言一个文件，共用词汇只翻译一次；英语 `messages` 只列出英文词条，其他语言使用英文词条到翻译的映射。网页可随时切换，首次访问按浏览器偏好依次匹配；`zh` 回退 `zh-cn`，`zh-TW` / `zh-HK` / `zh-Hant` 使用繁体中文，不支持的语言回退英语。手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页互不影响，例如 `language: zh-tw` 或 `/set_language ja`；旧配置 `ZH` 和命令 `zh` 仍代表简体中文，`UA` / `ua` 仍代表乌克兰语。保存配置时使用规范语言代码。运行代码（含注释）使用英语，失败记录保存英文词条，在 Bot/网页显示时才翻译，无法识别的历史记录保留原文。缺失词条回退英语，再回退原文；原有俄语和乌克兰语保留已有翻译，新增且未翻译的词条使用英语。
+
+添加语言只需复制 `lang/fr.json` 等翻译文件为新语言文件，修改 `code`、`name`、`aliases` 和 `messages`，重启后网页和 Bot 自动识别，无需新增依赖或构建前端。完整步骤及占位符规则见[语言包指南](docs/languages.md)。
 
 文件按 `download_part_size_mb` 切成固定大小的切片，最后一片为剩余大小。
 例如每片 64 MiB 时，40 MiB 文件为 1 片，100 MiB 为 2 片，500 MiB 为 8 片。
@@ -751,7 +753,7 @@ allowed_user_ids:
   - 'me'  # 'me' = currently logged-in account
 
 # Other
-language: ZH
+language: zh-cn
 date_format: '%Y_%m'
 enable_download_txt: false
 log_level: DEBUG
@@ -785,14 +787,16 @@ Defaults apply when an option is omitted and may differ from the example configu
 | `mcp_read_only` | Expose only MCP query tools without restricting separate browser sessions | `false` |
 | `mcp_allowed_hosts` | Additional allowed Host values: domain/IP with optional port; localhost/loopback already allowed | `[]` |
 | `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
-| `language` | Default Bot language and translated logs (`ZH` / `EN` / `RU` / `UA`), independent of WebUI | `EN` |
+| `language` | Default Bot language and translated logs (`en` / `zh-cn` / `zh-tw` / `ja` / `es` / `fr` / `ru` / `uk`; legacy `ZH` / `UA` remain valid), independent of WebUI | `EN` |
 | `proxy` | Proxy config (scheme / hostname / port) | `{}` |
 | `log_level` | Log level | `INFO` |
 | `hide_file_name` | Hide filenames in UI | `false` |
 | `enable_download_txt` | Save text-only messages as .txt | `false` |
 | `date_format` | Date directory format | `%Y_%m` |
 
-The WebUI, including sign-in, supports Chinese, English, Russian and Ukrainian through its language selector. On first visit it matches browser language preferences (such as `zh-CN`, `en-US`, `ru-RU`, `uk-UA`) in order, falling back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. The Bot’s `language` setting is independent of the WebUI language.
+The WebUI (including sign-in) and Bot share `lang/*.json` catalogs: Simplified Chinese (`zh-cn`), Traditional Chinese (`zh-tw`), English (`en`), Japanese (`ja`), Spanish (`es`), French (`fr`), Russian (`ru`) and Ukrainian (`uk`). Each language has one file and shared vocabulary is translated once. English `messages` lists canonical keys; other languages map those keys to translations. The browser matches language preferences in order; `zh` falls back to `zh-cn`, while `zh-TW` / `zh-HK` / `zh-Hant` select Traditional Chinese. Unsupported languages fall back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. Configure the Bot independently, for example `language: zh-tw` or `/set_language ja`. Legacy `ZH` / `zh` still mean Simplified Chinese and `UA` / `ua` still mean Ukrainian. Saved configuration uses canonical language codes. Runtime code, including comments, uses English. Failure records store English keys and translate when displayed by the Bot or browser; unrecognized historical records retain their original text. Missing messages fall back to English, then the original text; existing Russian and Ukrainian translations are preserved, with English fallback for untranslated additions.
+
+To add a language, copy a translated catalog such as `lang/fr.json` to a new language file, edit `code`, `name`, `aliases` and `messages`, then restart. Both Bot and browser discover it automatically; no extra dependency or frontend build is required. See the [catalog guide](docs/languages.md) for steps and placeholder rules.
 
 Files are split into fixed-size parts using `download_part_size_mb`; the final part contains the remaining bytes.
 At 64 MiB per part, a 40 MiB file has one part, a 100 MiB file has two and a 500 MiB file has eight.

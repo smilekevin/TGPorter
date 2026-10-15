@@ -16,7 +16,7 @@ from ruamel import yaml
 
 from module.cloud_drive import CloudDrive, CloudDriveConfig
 from module.filter import Filter
-from module.language import Language, set_language
+from module.language import Language, parse_language, set_language
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
 
@@ -553,8 +553,8 @@ class Application:
         language = _config.get("language", "EN")
 
         try:
-            self.language = Language[language.upper()]
-        except KeyError:
+            self.language = parse_language(language)
+        except ValueError:
             pass
 
         self.after_upload_telegram_delete = _config.get(
@@ -921,8 +921,8 @@ class Application:
             if idx >= len(self.app_data["chat"]):
                 self.app_data["chat"].append({})
 
-            # 无论是否有下载完成的任务，都保存 last_read_message_id
-            # 这样即使只扫描了文本消息或被 filter 跳过的内容，进度也不会丢失
+            # Persist last_read_message_id even if nothing downloaded, so text-only or filtered
+            # scans retain their progress.
             self.config["chat"][idx]["last_read_message_id"] = (
                 value.last_read_message_id + 1
             )
@@ -952,7 +952,7 @@ class Application:
         self.config.pop("download_min_part_size_mb", None)
         self.config["download_part_size_mb"] = self.download_part_size_mb
 
-        self.config["language"] = self.language.name
+        self.config["language"] = self.language.value
         # for it in self.downloaded_ids:
         #    self.already_download_ids_set.add(it)
 

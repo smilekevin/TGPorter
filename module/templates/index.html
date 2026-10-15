@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,11 +7,12 @@
     <meta name="theme-color" content="#2563eb">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="TG下载">
+    <meta name="apple-mobile-web-app-title" content="Telegram Media Downloader">
     <link rel="apple-touch-icon" href="/static/icons/icon-180.png">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%231e293b'/><path d='M50 22 L50 58 M36 48 L50 62 L64 48 M28 70 L72 70' stroke='white' stroke-width='7' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+    {% include 'language_catalogs.html' %}
     <script src="{{ url_for('static', filename='web_i18n.js') }}"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -49,7 +50,7 @@
         /* Mobile safe area & bottom nav */
         @media (max-width: 639px) {
             main { padding-bottom: calc(4rem + env(safe-area-inset-bottom)) !important; }
-            /* iOS Safari/PWA: header 顶部留出刘海/灵动岛空间 */
+            /* Reserve top safe-area space for iOS Safari and PWA headers. */
             .sticky-header-top { top: env(safe-area-inset-top); }
         }
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
@@ -82,7 +83,7 @@
                 <!-- Speed & Controls -->
                 <div class="flex items-center gap-2 sm:gap-4">
                     <select data-language-switch aria-label="Language" class="language-switch" style="max-width: 110px; padding: 6px; border: 1px solid #d1d5db; border-radius: 8px; background: white; color: #374151; font-size: 13px;" @change="locale = WebI18n.setLanguage($event.target.value)">
-                        <option value="zh">中文</option><option value="en">English</option><option value="ru">Русский</option><option value="uk">Українська</option>
+                        {% include 'language_options.html' %}
                     </select>
                     <!-- Download Speed (desktop) -->
                     <div class="hidden sm:flex items-center gap-2 text-sm text-gray-600">
@@ -101,7 +102,7 @@
                     {% if web_login_required %}
                     <form action="{{ url_for('logout') }}" method="post">
                         <input type="hidden" name="csrf_token" value="{{ web_csrf_token }}">
-                        <button type="submit" class="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200"><span data-i18n="退出" x-text="t('退出')">退出</span></button>
+                        <button type="submit" class="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200"><span data-i18n="Sign out" x-text="t('Sign out')">Sign out</span></button>
                     </form>
                     {% endif %}
                 </div>
@@ -110,13 +111,13 @@
     </header>
 
     <form @submit.prevent="submitDownload()" class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap gap-2">
-        <label for="download-url" class="sr-only" x-text="t('Telegram 消息链接')"></label>
+        <label for="download-url" class="sr-only" x-text="t('Telegram post link')"></label>
         <input id="download-url" type="url" required maxlength="2048" x-model="downloadUrl"
                placeholder="https://t.me/channel/123" :disabled="submitting"
                class="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm">
         <button type="submit" :disabled="submitting" class="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm disabled:opacity-50"
-                x-text="submitting ? t('正在提交...') : t('提交下载')"></button>
-        <p class="w-full text-xs text-gray-500" x-text="t('提交单条 Telegram 消息链接，使用服务端已登录的账号下载。')"></p>
+                x-text="submitting ? t('Submitting...') : t('Submit download')"></button>
+        <p class="w-full text-xs text-gray-500" x-text="t('Submit one Telegram post link using the account already logged in on the server.')"></p>
     </form>
 
     <!-- Tab Navigation (Desktop Only) -->
@@ -130,7 +131,7 @@
                                     role="tab"
                                 >
                                     <span class="flex items-center gap-2">
-                                        <span data-i18n="下载中" x-text="t('下载中')">下载中</span>
+                                        <span data-i18n="Downloading" x-text="t('Downloading')">Downloading</span>
                                         <span x-show="activeTasks.length > 0"
                                               class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-blue-500 text-white min-w-[1.5rem] justify-center"
                                               x-text="activeTasks.length"></span>
@@ -146,7 +147,7 @@
                                         <svg class="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                         </svg>
-                                        <span data-i18n="待下载" x-text="t('待下载')">待下载</span>
+                                        <span data-i18n="Pending" x-text="t('Pending')">Pending</span>
                                         <span x-show="pendingTotal > 0"
                                               class="pulse-badge inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-amber-500 text-white min-w-[1.5rem] justify-center"
                                               x-text="pendingTotal"></span>
@@ -159,7 +160,7 @@
                                     role="tab"
                                 >
                                     <span class="flex items-center gap-2">
-                                        <span data-i18n="已完成" x-text="t('已完成')">已完成</span>
+                                        <span data-i18n="Completed" x-text="t('Completed')">Completed</span>
                                         <span x-show="completedTotal > 0"
                                               class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-green-500 text-white min-w-[1.5rem] justify-center"
                                               x-text="completedTotal"></span>
@@ -172,7 +173,7 @@
                                     role="tab"
                                 >
                                     <span class="flex items-center gap-2">
-                                        <span data-i18n="失败" x-text="t('失败')">失败</span>
+                                        <span data-i18n="Failed" x-text="t('Failed')">Failed</span>
                                         <span x-show="failedTasks.length > 0"
                                               class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-red-500 text-white min-w-[1.5rem] justify-center"
                                               x-text="failedTasks.length"></span>
@@ -185,22 +186,22 @@
     <!-- Batch Action Bar -->
     <div x-show="selectedTasks.length > 0" x-transition class="batch-bar bg-blue-50 border-b border-blue-100">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between">
-            <span class="text-sm text-blue-700 font-medium" x-text="t('已选择 {count} 项', {count: selectedTasks.length})"></span>
+            <span class="text-sm text-blue-700 font-medium" x-text="t('Selected: {count}', {count: selectedTasks.length})"></span>
             <div class="flex items-center gap-2">
                 <button @click="batchRetry()" class="btn-action flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-500 text-white hover:bg-blue-600 shadow-sm">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                     </svg>
-                    <span data-i18n="重试选中" x-text="t('重试选中')">重试选中</span>
+                    <span data-i18n="Retry selected" x-text="t('Retry selected')">Retry selected</span>
                 </button>
                 <button @click="batchDelete()" class="btn-action flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-500 text-white hover:bg-red-600 shadow-sm">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                     </svg>
-                    <span data-i18n="删除选中" x-text="t('删除选中')">删除选中</span>
+                    <span data-i18n="Delete selected" x-text="t('Delete selected')">Delete selected</span>
                 </button>
                 <button @click="selectedTasks = []" class="btn-action px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200">
-                    <span data-i18n="取消选择" x-text="t('取消选择')">取消选择</span>
+                    <span data-i18n="Clear selection" x-text="t('Clear selection')">Clear selection</span>
                 </button>
             </div>
         </div>
@@ -214,7 +215,7 @@
 
         <!-- Active Downloads Tab -->
         <div x-show="activeTab === 'active'" x-transition:enter="fade-in">
-            <!-- Slow Throttle Banner (静默限速) -->
+            <!-- Silent throttle banner -->
             <div x-show="throttle.active" x-transition class="mb-4 rounded-xl border border-orange-300 bg-orange-50 px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
                 <div class="flex items-center gap-2 sm:gap-3">
                     <div class="relative shrink-0">
@@ -228,10 +229,10 @@
                     </div>
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="text-xs sm:text-sm font-semibold text-orange-800"><span data-i18n="TG 静默限速中" x-text="t('TG 静默限速中')">TG 静默限速中</span></span>
+                            <span class="text-xs sm:text-sm font-semibold text-orange-800"><span data-i18n="Telegram speed limited" x-text="t('Telegram speed limited')">Telegram speed limited</span></span>
                             <span class="text-lg sm:text-2xl font-bold text-orange-900 font-mono tabular-nums" x-text="throttleFormat(throttle.elapsed)"></span>
                         </div>
-                        <p class="text-xs text-orange-600 mt-0.5 truncate sm:whitespace-normal"><span data-i18n="下载速度持续低于 200 KB/s，已被 Telegram 限制" x-text="t('下载速度持续低于 200 KB/s，已被 Telegram 限制')">下载速度持续低于 200 KB/s，已被 Telegram 限制</span></p>
+                        <p class="text-xs text-orange-600 mt-0.5 truncate sm:whitespace-normal"><span data-i18n="Speed remains below 200 KB/s; limited by Telegram" x-text="t('Speed remains below 200 KB/s; limited by Telegram')">Speed remains below 200 KB/s; limited by Telegram</span></p>
                     </div>
                 </div>
             </div>
@@ -250,10 +251,10 @@
                     </div>
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="text-xs sm:text-sm font-semibold text-amber-800"><span data-i18n="TG 限速等待中" x-text="t('TG 限速等待中')">TG 限速等待中</span></span>
+                            <span class="text-xs sm:text-sm font-semibold text-amber-800"><span data-i18n="Waiting for Telegram rate limit" x-text="t('Waiting for Telegram rate limit')">Waiting for Telegram rate limit</span></span>
                             <span class="text-lg sm:text-2xl font-bold text-amber-900 font-mono tabular-nums" x-text="floodWaitFormat(floodWait.remaining)"></span>
                         </div>
-                        <p class="text-xs text-amber-600 mt-0.5 truncate" x-text="t(floodWait.reason) || t('Telegram API 频率限制，正在等待恢复')"></p>
+                        <p class="text-xs text-amber-600 mt-0.5 truncate" x-text="t(floodWait.reason) || t('Telegram API rate limit; waiting to resume')"></p>
                     </div>
                     <!-- Countdown progress bar -->
                     <div class="hidden sm:block shrink-0 w-32">
@@ -261,7 +262,7 @@
                             <div class="h-full bg-amber-500 rounded-full transition-all duration-1000 ease-linear"
                                  :style="'width: ' + Math.max(5, Math.min(100, (floodWait.remaining / Math.max(floodWait.remaining, 1)) * 100)) + '%'"></div>
                         </div>
-                        <p class="text-xs text-amber-500 mt-1 text-center"><span data-i18n="自动恢复" x-text="t('自动恢复')">自动恢复</span></p>
+                        <p class="text-xs text-amber-500 mt-1 text-center"><span data-i18n="Resumes automatically" x-text="t('Resumes automatically')">Resumes automatically</span></p>
                     </div>
                 </div>
             </div>
@@ -273,8 +274,8 @@
                         <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/>
                         </svg>
-                        <span class="hidden sm:inline"><span data-i18n="并发任务数" x-text="t('并发任务数')">并发任务数</span></span>
-                        <span class="sm:hidden"><span data-i18n="并发" x-text="t('并发')">并发</span></span>
+                        <span class="hidden sm:inline"><span data-i18n="Concurrent tasks" x-text="t('Concurrent tasks')">Concurrent tasks</span></span>
+                        <span class="sm:hidden"><span data-i18n="Concurrent" x-text="t('Concurrent')">Concurrent</span></span>
                     </label>
                     <select
                         x-model.number="maxWorkers"
@@ -289,7 +290,7 @@
                         <option value="5">5</option>
                         <option value="6">6</option>
                     </select>
-                    <span x-show="savingWorkers" class="text-xs text-blue-500"><span data-i18n="保存中..." x-text="t('保存中...')">保存中...</span></span>
+                    <span x-show="savingWorkers" class="text-xs text-blue-500"><span data-i18n="Saving..." x-text="t('Saving...')">Saving...</span></span>
                 </div>
             </div>
 
@@ -299,10 +300,10 @@
                     <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         :checked="selectedTasks.length === activeTasks.length && activeTasks.length > 0"
                         @change="toggleSelectAll('active')">
-                    <span data-i18n="全选" x-text="t('全选')">全选</span>
+                    <span data-i18n="Select all" x-text="t('Select all')">Select all</span>
                 </label>
                 <div class="flex items-center gap-3">
-                    <span class="text-xs text-gray-400" x-text="t('任务数：{count}', {count: activeTasks.length})"></span>
+                    <span class="text-xs text-gray-400" x-text="t('Tasks: {count}', {count: activeTasks.length})"></span>
                     <!-- Global Pause/Resume -->
                     <button
                         @click="toggleGlobalPause()"
@@ -316,7 +317,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
-                        <span x-text="isDownloading ? t('全部暂停') : t('全部继续')"></span>
+                        <span x-text="isDownloading ? t('Pause all') : t('Resume all')"></span>
                     </button>
                 </div>
             </div>
@@ -328,8 +329,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                     </svg>
                 </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="暂无下载任务" x-text="t('暂无下载任务')">暂无下载任务</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="任务开始后会在这里显示" x-text="t('任务开始后会在这里显示')">任务开始后会在这里显示</span></p>
+                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No active downloads" x-text="t('No active downloads')">No active downloads</span></h3>
+                <p class="text-gray-400 text-sm"><span data-i18n="Tasks will appear here when they start" x-text="t('Tasks will appear here when they start')">Tasks will appear here when they start</span></p>
             </div>
 
             <!-- Active Task Cards -->
@@ -360,9 +361,9 @@
                                               'bg-gray-100 text-gray-500': task.status === 'waiting'
                                           }"
                                           x-text="{
-                                              'paused': t('已暂停'),
-                                              'waiting': t('等待中'),
-                                              'active': task.phase === 'fetching' ? t('消息数据获取中') : t('下载中')
+                                              'paused': t('Paused'),
+                                              'waiting': t('Waiting'),
+                                              'active': task.phase === 'fetching' ? t('Fetching message') : t('Downloading')
                                           }[task.status] || task.status">
                                     </span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
@@ -371,11 +372,11 @@
                                     <template x-if="task.created_at">
                                         <span>
                                             <span class="text-xs text-gray-300">|</span>
-                                            <span class="text-xs text-gray-400" x-text="t('创建于 ') + task.created_at"></span>
+                                            <span class="text-xs text-gray-400" x-text="t('Created ') + task.created_at"></span>
                                         </span>
                                     </template>
                                 </div>
-                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
+                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.phase === 'fetching' ? t('Fetching file information...') : task.filename"></h4>
                                 <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
                                     <template x-if="task.phase !== 'fetching'">
                                         <span>
@@ -393,7 +394,7 @@
                                     <template x-if="task.eta && task.phase !== 'fetching'">
                                         <span>
                                             <span class="text-gray-300">|</span>
-                                            <span class="text-gray-400" x-text="t('剩余 ') + task.eta"></span>
+                                            <span class="text-gray-400" x-text="t('Remaining ') + task.eta"></span>
                                         </span>
                                     </template>
                                 </div>
@@ -405,7 +406,7 @@
                                     <button
                                         @click="pauseTask(task.task_id)"
                                         class="btn-action p-2.5 sm:p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 border border-amber-200"
-                                        :title="t(&quot;暂停&quot;)"
+                                        :title="t(&quot;Pause&quot;)"
                                     >
                                         <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6"/>
@@ -416,7 +417,7 @@
                                     <button
                                         @click="resumeTask(task.task_id)"
                                         class="btn-action p-2.5 sm:p-1.5 rounded-lg text-green-600 hover:bg-green-50 border border-green-200"
-                                        :title="t(&quot;继续&quot;)"
+                                        :title="t(&quot;Resume&quot;)"
                                     >
                                         <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
@@ -427,7 +428,7 @@
                                 <button
                                     @click="deleteTask(task.task_id)"
                                     class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;删除&quot;)"
+                                    :title="t(&quot;Delete&quot;)"
                                 >
                                     <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -444,13 +445,13 @@
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                                     </svg>
-                                    <span><span data-i18n="正在获取文件信息..." x-text="t('正在获取文件信息...')">正在获取文件信息...</span></span>
+                                    <span><span data-i18n="Fetching file information..." x-text="t('Fetching file information...')">Fetching file information...</span></span>
                                 </div>
                             </template>
                             <template x-if="task.phase !== 'fetching'">
                                 <div>
                                     <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
-                                        <span><span data-i18n="进度" x-text="t('进度')">进度</span></span>
+                                        <span><span data-i18n="Progress" x-text="t('Progress')">Progress</span></span>
                                         <span class="font-mono font-medium" x-text="task.download_progress + '%'"></span>
                                     </div>
                                     <div class="w-full h-3 sm:h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -480,10 +481,10 @@
                         <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             :checked="selectedTasks.length === pendingTasks.length && pendingTasks.length > 0"
                             @change="toggleSelectAll('pending')">
-                        <span data-i18n="全选" x-text="t('全选')">全选</span>
+                        <span data-i18n="Select all" x-text="t('Select all')">Select all</span>
                     </label>
                                     </div>
-                <span class="text-xs text-gray-400"><span data-i18n="按接收时间排序 · 最早优先" x-text="t('按接收时间排序 · 最早优先')">按接收时间排序 · 最早优先</span></span>
+                <span class="text-xs text-gray-400"><span data-i18n="By arrival time · oldest first" x-text="t('By arrival time · oldest first')">By arrival time · oldest first</span></span>
             </div>
 
             <!-- Empty State -->
@@ -493,8 +494,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
                 </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="暂无待下载任务" x-text="t('暂无待下载任务')">暂无待下载任务</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="通过 Telegram Bot 发送的链接会在这里排队等待下载" x-text="t('通过 Telegram Bot 发送的链接会在这里排队等待下载')">通过 Telegram Bot 发送的链接会在这里排队等待下载</span></p>
+                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No pending tasks" x-text="t('No pending tasks')">No pending tasks</span></h3>
+                <p class="text-gray-400 text-sm"><span data-i18n="Links sent to the Telegram Bot will queue here" x-text="t('Links sent to the Telegram Bot will queue here')">Links sent to the Telegram Bot will queue here</span></p>
             </div>
 
             <!-- Pending Task Cards -->
@@ -524,7 +525,7 @@
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                         </svg>
-                                        <span x-text="t(task.queue_label) || t('等待中')"></span>
+                                        <span x-text="t(task.queue_label) || t('Waiting')"></span>
                                     </span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
                                     <span class="text-xs text-gray-300">|</span>
@@ -532,7 +533,7 @@
                                     <template x-if="task.created_at">
                                         <span>
                                             <span class="text-xs text-gray-300">|</span>
-                                            <span class="text-xs text-gray-400" x-text="t('接收于 ') + task.created_at"></span>
+                                            <span class="text-xs text-gray-400" x-text="t('Received ') + task.created_at"></span>
                                         </span>
                                     </template>
                                 </div>
@@ -544,7 +545,7 @@
                                     <template x-if="task.wait_time">
                                         <span>
                                             <span class="text-gray-300">|</span>
-                                            <span class="text-amber-600 font-medium" x-text="t('已等待 ') + task.wait_time"></span>
+                                            <span class="text-amber-600 font-medium" x-text="t('Waiting ') + task.wait_time"></span>
                                         </span>
                                     </template>
                                 </div>
@@ -564,7 +565,7 @@
                                 <button
                                     @click="removePending(task.task_id)"
                                     class="btn-action p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;移除&quot;)"
+                                    :title="t(&quot;Remove&quot;)"
                                 >
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -589,7 +590,7 @@
                         type="text"
                         x-model="completedSearch"
                         @input.debounce.300ms="resetCompletedList()"
-                        :placeholder="t(&quot;搜索任务ID或文件名...&quot;)"
+                        :placeholder="t(&quot;Search task ID or filename...&quot;)"
                         class="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                     >
                     <button x-show="completedSearch" @click="completedSearch = ''" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1">
@@ -606,9 +607,9 @@
                     <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         :checked="selectedTasks.length === completedTasks.length && completedTasks.length > 0"
                         @change="toggleSelectAll('completed')">
-                    <span data-i18n="全选" x-text="t('全选')">全选</span>
+                    <span data-i18n="Select all" x-text="t('Select all')">Select all</span>
                 </label>
-                <span class="text-xs text-gray-400" x-text="t('任务数：{count}', {count: completedTasks.length + ' / ' + completedTotal})"></span>
+                <span class="text-xs text-gray-400" x-text="t('Tasks: {count}', {count: completedTasks.length + ' / ' + completedTotal})"></span>
             </div>
 
             <!-- Empty State -->
@@ -618,8 +619,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
                 </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="暂无已完成任务" x-text="t('暂无已完成任务')">暂无已完成任务</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="完成的下载会在这里显示" x-text="t('完成的下载会在这里显示')">完成的下载会在这里显示</span></p>
+                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No completed tasks" x-text="t('No completed tasks')">No completed tasks</span></h3>
+                <p class="text-gray-400 text-sm"><span data-i18n="Completed downloads will appear here" x-text="t('Completed downloads will appear here')">Completed downloads will appear here</span></p>
             </div>
 
             <!-- Search No Results -->
@@ -629,8 +630,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                     </svg>
                 </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="未找到匹配的任务" x-text="t('未找到匹配的任务')">未找到匹配的任务</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="尝试其他关键词" x-text="t('尝试其他关键词')">尝试其他关键词</span></p>
+                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No matching tasks" x-text="t('No matching tasks')">No matching tasks</span></h3>
+                <p class="text-gray-400 text-sm"><span data-i18n="Try other keywords" x-text="t('Try other keywords')">Try other keywords</span></p>
             </div>
 
             <!-- Completed Task Cards -->
@@ -648,7 +649,7 @@
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 mb-1 flex-wrap">
                                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
-                                        <span data-i18n="已完成" x-text="t('已完成')">已完成</span>
+                                        <span data-i18n="Completed" x-text="t('Completed')">Completed</span>
                                     </span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
                                     <span class="text-xs text-gray-300">•</span>
@@ -660,7 +661,7 @@
                                     <template x-if="task.completed_time">
                                         <span>
                                             <span class="text-gray-300">|</span>
-                                            <span class="text-gray-400" x-text="t('完成于 ') + task.completed_time"></span>
+                                            <span class="text-gray-400" x-text="t('Completed ') + task.completed_time"></span>
                                         </span>
                                     </template>
                                 </div>
@@ -677,7 +678,7 @@
                                 <button
                                     @click="deleteTask(task.task_id)"
                                     class="btn-action p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;删除&quot;)"
+                                    :title="t(&quot;Delete&quot;)"
                                 >
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -689,7 +690,7 @@
                         <!-- Progress Bar (100% green) -->
                         <div class="mt-3 ml-7">
                             <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
-                                <span><span data-i18n="进度" x-text="t('进度')">进度</span></span>
+                                <span><span data-i18n="Progress" x-text="t('Progress')">Progress</span></span>
                                 <span class="font-mono font-medium text-green-600" x-text="task.download_progress + '%'"></span>
                             </div>
                             <div class="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -705,12 +706,12 @@
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                     </svg>
-                    <p class="text-sm text-gray-400 mt-2"><span data-i18n="加载中..." x-text="t('加载中...')">加载中...</span></p>
+                    <p class="text-sm text-gray-400 mt-2"><span data-i18n="Loading..." x-text="t('Loading...')">Loading...</span></p>
                 </div>
 
                 <!-- Load more indicator -->
                 <div x-show="!completedHasMore && completedTasks.length > 0" class="text-center py-4">
-                    <p class="text-xs text-gray-400" x-text="t('已加载全部 {count} 条', {count: completedTotal})"></p>
+                    <p class="text-xs text-gray-400" x-text="t('All {count} items loaded', {count: completedTotal})"></p>
                 </div>
             </div>
         </div>
@@ -723,9 +724,9 @@
                     <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         :checked="selectedTasks.length === failedTasks.length && failedTasks.length > 0"
                         @change="toggleSelectAll('failed')">
-                    <span data-i18n="全选" x-text="t('全选')">全选</span>
+                    <span data-i18n="Select all" x-text="t('Select all')">Select all</span>
                 </label>
-                <span class="text-xs text-gray-400" x-text="t('任务数：{count}', {count: failedTasks.length})"></span>
+                <span class="text-xs text-gray-400" x-text="t('Tasks: {count}', {count: failedTasks.length})"></span>
             </div>
 
             <!-- Empty State -->
@@ -735,8 +736,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/>
                     </svg>
                 </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="暂无失败任务" x-text="t('暂无失败任务')">暂无失败任务</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="失败的下载会在这里显示" x-text="t('失败的下载会在这里显示')">失败的下载会在这里显示</span></p>
+                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No failed tasks" x-text="t('No failed tasks')">No failed tasks</span></h3>
+                <p class="text-gray-400 text-sm"><span data-i18n="Failed downloads will appear here" x-text="t('Failed downloads will appear here')">Failed downloads will appear here</span></p>
             </div>
 
             <!-- Failed Task Cards -->
@@ -754,7 +755,7 @@
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 mb-1 flex-wrap">
                                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">
-                                        <span data-i18n="失败" x-text="t('失败')">失败</span>
+                                        <span data-i18n="Failed" x-text="t('Failed')">Failed</span>
                                     </span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
                                     <span class="text-xs text-gray-300">•</span>
@@ -766,7 +767,7 @@
                                     <template x-if="task.failed_time">
                                         <span>
                                             <span class="text-gray-300">|</span>
-                                            <span class="text-gray-400" x-text="t('失败于 ') + task.failed_time"></span>
+                                            <span class="text-gray-400" x-text="t('Failed ') + task.failed_time"></span>
                                         </span>
                                     </template>
                                 </div>
@@ -775,7 +776,7 @@
                                     <svg class="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
-                                    <span class="text-xs text-red-600" x-text="task.error_message"></span>
+                                    <span class="text-xs text-red-600" x-text="t(task.error_message)"></span>
                                 </div>
                                 <!-- Source Link -->
                                 <template x-if="task.source_link">
@@ -793,17 +794,17 @@
                                 <button
                                     @click="retryTask(task.task_id)"
                                     class="btn-action flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 border border-blue-200"
-                                    :title="t(&quot;重试&quot;)"
+                                    :title="t(&quot;Retry&quot;)"
                                 >
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                                     </svg>
-                                    <span data-i18n="重试" x-text="t('重试')">重试</span>
+                                    <span data-i18n="Retry" x-text="t('Retry')">Retry</span>
                                 </button>
                                 <button
                                     @click="deleteTask(task.task_id)"
                                     class="btn-action p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;删除&quot;)"
+                                    :title="t(&quot;Delete&quot;)"
                                 >
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -837,19 +838,19 @@
                         </svg>
                     </template>
                 </div>
-                <h3 class="text-base font-semibold text-gray-900"><span data-i18n="确认删除任务" x-text="t('确认删除任务')">确认删除任务</span></h3>
+                <h3 class="text-base font-semibold text-gray-900"><span data-i18n="Confirm task deletion" x-text="t('Confirm task deletion')">Confirm task deletion</span></h3>
             </div>
 
             <!-- Single task info -->
             <template x-if="!deleteModal.isBatch">
                 <div class="space-y-3">
-                    <p class="text-sm text-gray-600"><span data-i18n="确定要删除此任务吗？删除后无法恢复。" x-text="t('确定要删除此任务吗？删除后无法恢复。')">确定要删除此任务吗？删除后无法恢复。</span></p>
+                    <p class="text-sm text-gray-600"><span data-i18n="Delete this task? This cannot be undone." x-text="t('Delete this task? This cannot be undone.')">Delete this task? This cannot be undone.</span></p>
                     <template x-if="deleteModal.loading">
                         <div class="flex items-center gap-2 text-sm text-gray-400">
                             <svg class="animate-spin w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                             </svg>
-                            <span data-i18n="正在检查文件..." x-text="t('正在检查文件...')">正在检查文件...</span>
+                            <span data-i18n="Checking files..." x-text="t('Checking files...')">Checking files...</span>
                         </div>
                     </template>
                     <template x-if="!deleteModal.loading">
@@ -873,7 +874,7 @@
                                     <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
-                                    <span class="text-sm text-gray-500" x-text="deleteModal.checkFailed ? t('文件状态检查失败（网络波动），可重试打开') : t('本地文件已不存在')"></span>
+                                    <span class="text-sm text-gray-500" x-text="deleteModal.checkFailed ? t('Could not check file status; reopen to retry') : t('Local file no longer exists')"></span>
                                 </div>
                             </template>
                         </div>
@@ -883,19 +884,19 @@
 
             <label x-show="!deleteModal.isBatch" class="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" x-model="deleteModal.deleteFile" class="w-4 h-4 rounded text-red-600">
-                <span class="text-sm" x-text="t('同时删除本地文件')"></span>
+                <span class="text-sm" x-text="t('Also delete local files')"></span>
             </label>
-            <p class="text-xs text-gray-500 mt-2" x-text="t('勾选后清理本地文件和下载临时数据；取消勾选则保留。')"></p>
+            <p class="text-xs text-gray-500 mt-2" x-text="t('Select to remove local files and partial downloads; deselect to keep them.')"></p>
 
             <!-- Batch info -->
             <template x-if="deleteModal.isBatch">
                 <div class="space-y-3">
                     <p class="text-sm text-gray-600">
-                        <span x-text="t('确定要删除选中的 {count} 个任务吗？删除后无法恢复。', {count: deleteModal.batchCount})"></span>
+                        <span x-text="t('Delete {count} selected tasks? This cannot be undone.', {count: deleteModal.batchCount})"></span>
                     </p>
                     <label class="flex items-center gap-2 cursor-pointer bg-amber-50 border border-amber-200 rounded-lg p-3">
                         <input type="checkbox" x-model="deleteModal.deleteFile" class="w-4 h-4 rounded border-amber-300 text-red-600 focus:ring-red-500">
-                        <span class="text-sm text-amber-800"><span data-i18n="同时删除本地文件" x-text="t('同时删除本地文件')">同时删除本地文件</span></span>
+                        <span class="text-sm text-amber-800"><span data-i18n="Also delete local files" x-text="t('Also delete local files')">Also delete local files</span></span>
                     </label>
                 </div>
             </template>
@@ -904,12 +905,12 @@
             <div class="flex items-center justify-end gap-3 mt-6">
                 <button @click="deleteModal.show = false"
                     class="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200">
-                    <span data-i18n="取消" x-text="t('取消')">取消</span>
+                    <span data-i18n="Cancel" x-text="t('Cancel')">Cancel</span>
                 </button>
                 <button @click="executeDelete()"
                     :disabled="deleteModal.loading"
                     class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <span data-i18n="确认删除" x-text="t('确认删除')">确认删除</span>
+                    <span data-i18n="Delete" x-text="t('Delete')">Delete</span>
                 </button>
             </div>
         </div>
@@ -935,7 +936,7 @@
         const response = await fetch(url, { ...options, headers });
         if (response.status === 401) {
             window.location.replace('/login');
-            throw new Error(WebI18n.t('需要重新登录'));
+            throw new Error(WebI18n.t('Please sign in again'));
         }
         return response;
     }
@@ -1016,8 +1017,8 @@
                 // ticker decrementing the same field makes the countdown
                 // jump 2s per second (double-writer bug). Local ticker removed.
                 // Pending list refreshes every 5 seconds
-                // 9-23 fix: 增量轮询（不带 reset）——reset 会清空已加载的
-                // 分页内容导致列表不停闪烁、永远只显示第一页
+                // Poll incrementally: resetting would discard loaded pages, cause flicker
+                // and keep returning the view to the first page.
                 this.pendingPollTimer = setInterval(() => {
                     this.pollPendingRefresh();
                     this.fetchFailed();
@@ -1041,7 +1042,7 @@
                         this.loadMoreCompleted();
                     }
                 } else if (this.activeTab === 'pending') {
-                    // 9-23: 待下载页无限加载（对齐已完成页）
+                    // Infinite loading for Pending, matching Completed.
                     if (this.pendingLoading || !this.pendingHasMore) return;
                     if (scrollTop + clientHeight >= scrollHeight - 300) {
                         this.loadMorePending();
@@ -1173,9 +1174,9 @@
                 this.savingWorkers = true;
                 try {
                     await authenticatedFetch(`/set_max_workers?n=${this.maxWorkers}`, { method: 'POST' });
-                    this.showToast(WebI18n.t('并发任务数已设置为 ') + this.maxWorkers, 'success');
+                    this.showToast(WebI18n.t('Concurrent tasks set to ') + this.maxWorkers, 'success');
                 } catch(e) {
-                    this.showToast(WebI18n.t('设置失败'), 'error');
+                    this.showToast(WebI18n.t('Could not save setting'), 'error');
                 } finally {
                     this.savingWorkers = false;
                 }
@@ -1258,32 +1259,31 @@
 
             loadMorePending() {
                 if (this.activeTab !== 'pending') return;
-                this.fetchPending();  // 追加下一页，不 reset
+                this.fetchPending();  // Append the next page without resetting.
             },
 
-            // 9-23: 轮询专用——只刷新已加载条目的状态（等待时间等），
-            // 不清空列表、不动 offset；新任务入库时通过 offset 差值检测
+            // Refresh loaded task state without clearing the list or changing offset.
+            // Detect new tasks from changes in the pending count.
             async pollPendingRefresh() {
                 if (this.pendingLoading) return;
                 try {
-                    // 已加载 N 条，重拉同区间 + 检查是否有新任务插队
+                    // Refresh the loaded range and check for newly queued tasks.
                     const res = await authenticatedFetch(`/get_pending_list?offset=0&limit=${Math.max(this.pendingOffset, this.pendingLimit)}`);
                     const data = await res.json();
                     const tasks = data.tasks || data || [];
                     const total = data.total ?? this.pendingTotal;
-                    // 前端持久字段（task_id → task）保序合并
+                    // Merge existing task objects by task_id while preserving order.
                     const byId = {};
                     tasks.forEach(t => { byId[t.task_id] = t; });
-                    // 更新已有 + 移除消失的（被消费/被删），保序
+                    // Update existing tasks and remove consumed or deleted entries in order.
                     this.pendingTasks = this.pendingTasks
                         .filter(t => byId[t.task_id])
                         .map(t => byId[t.task_id]);
-                    // 头部插入新任务（队列 FIFO，新任务在尾部？——按 created_ts 排序，
-                    // 已加载区间内的新条目直接补进映射）
+                    // Insert newly observed tasks into the loaded range in created_ts order.
                     const loadedIds = new Set(this.pendingTasks.map(t => t.task_id));
                     const freshInView = tasks.filter(t => !loadedIds.has(t.task_id));
                     if (freshInView.length) {
-                        // 新任务出现在已加载区间内（页尾追加，保持 created_ts 顺序）
+                        // Append a newly observed task in the loaded range, preserving created_ts order.
                         this.pendingTasks = [...this.pendingTasks, ...freshInView];
                         this.pendingOffset += freshInView.length;
                     }
@@ -1296,13 +1296,13 @@
                     const res = await authenticatedFetch('/remove_pending?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
-                        this.showToast(WebI18n.t('已移除待下载任务'), 'success');
+                        this.showToast(WebI18n.t('Pending task removed'), 'success');
                         this.fetchPending(true).catch(() => {});
                     } else {
-                        this.showToast(data.message || WebI18n.t('移除失败'), 'error');
+                        this.showToast(data.message || WebI18n.t('Removal failed'), 'error');
                     }
                 } catch(e) {
-                    this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                    this.showToast(WebI18n.t('Network error: ') + (e && e.message ? e.message : WebI18n.t('Unknown error')), 'error');
                 }
             },
 
@@ -1314,11 +1314,11 @@
                     const newState = await res.text();
                     this.isDownloading = (newState === 'pause');
                     this.showToast(
-                        wasDownloading ? WebI18n.t('已全部暂停') : WebI18n.t('已全部继续'),
+                        wasDownloading ? WebI18n.t('All tasks paused') : WebI18n.t('All tasks resumed'),
                         'info'
                     );
                 } catch(e) {
-                    this.showToast(WebI18n.t('操作失败'), 'error');
+                    this.showToast(WebI18n.t('Operation failed'), 'error');
                 }
             },
 
@@ -1356,17 +1356,17 @@
                     });
                     const data = await res.json();
                     if (data.code !== '1') {
-                        this.showToast(data.message || this.t('提交失败'), 'error');
+                        this.showToast(data.message || this.t('Submission failed'), 'error');
                         return;
                     }
                     this.downloadUrl = '';
-                    this.showToast(this.t(data.duplicate ? '任务已存在' : '已提交到下载队列'), 'success');
+                    this.showToast(this.t(data.duplicate ? 'Task already exists' : 'Added to download queue'), 'success');
                     this.activeTab = 'pending';
                     this.selectedTasks = [];
                     this.fetchPending(true).catch(() => {});
                     this.fetchActive().catch(() => {});
                 } catch (error) {
-                    this.showToast(this.t('提交失败'), 'error');
+                    this.showToast(this.t('Submission failed'), 'error');
                 } finally {
                     this.submitting = false;
                 }
@@ -1386,17 +1386,17 @@
                     });
                     const data = await res.json();
                     if (data.code === '1') {
-                        this.showToast(data.message || WebI18n.t('已加入重试队列'), 'success');
+                        this.showToast(data.message || WebI18n.t('Queued for retry'), 'success');
                         this.selectedTasks = [];
-                        // 刷新页面数据，静默失败不弹错误（重试已成功）
+                        // Refresh data quietly because retry submission already succeeded.
                         this.fetchActive().catch(() => {});
                         this.fetchCompleted().catch(() => {});
                         this.fetchPending(true).catch(() => {});
                     } else {
-                        this.showToast(data.message || WebI18n.t('批量重试失败'), 'error');
+                        this.showToast(data.message || WebI18n.t('Batch retry failed'), 'error');
                     }
                 } catch(e) {
-                    this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                    this.showToast(WebI18n.t('Network error: ') + (e && e.message ? e.message : WebI18n.t('Unknown error')), 'error');
                 }
             },
 
@@ -1405,12 +1405,12 @@
                     const res = await authenticatedFetch('/pause_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
-                        this.showToast(WebI18n.t('任务已暂停'), 'info');
+                        this.showToast(WebI18n.t('Task paused'), 'info');
                     } else {
-                        this.showToast(data.message || WebI18n.t('暂停失败'), 'error');
+                        this.showToast(data.message || WebI18n.t('Pause failed'), 'error');
                     }
                 } catch(e) {
-                    this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                    this.showToast(WebI18n.t('Network error: ') + (e && e.message ? e.message : WebI18n.t('Unknown error')), 'error');
                 }
             },
 
@@ -1419,12 +1419,12 @@
                     const res = await authenticatedFetch('/resume_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
-                        this.showToast(WebI18n.t('任务已继续'), 'success');
+                        this.showToast(WebI18n.t('Task resumed'), 'success');
                     } else {
-                        this.showToast(data.message || WebI18n.t('继续失败'), 'error');
+                        this.showToast(data.message || WebI18n.t('Resume failed'), 'error');
                     }
                 } catch(e) {
-                    this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                    this.showToast(WebI18n.t('Network error: ') + (e && e.message ? e.message : WebI18n.t('Unknown error')), 'error');
                 }
             },
 
@@ -1496,11 +1496,11 @@
                         });
                         const data = await res.json();
                         if (data.code === '1') {
-                            let msg = WebI18n.t('已删除 ') + data.deleted + WebI18n.t(' 个任务');
+                            let msg = WebI18n.t('Deleted ') + data.deleted + WebI18n.t(' tasks');
                             if (dm.deleteFile) {
-                                msg += WebI18n.t('（文件: 成功删除 ') + data.files_deleted + WebI18n.t(' 个');
+                                msg += WebI18n.t(' (files deleted: ') + data.files_deleted + WebI18n.t(' items');
                                 if (data.files_not_found > 0) {
-                                    msg += WebI18n.t(', 不存在 ') + data.files_not_found + WebI18n.t(' 个');
+                                    msg += WebI18n.t(', missing ') + data.files_not_found + WebI18n.t(' items');
                                 }
                                 msg += WebI18n.t('）');
                             }
@@ -1536,10 +1536,10 @@
                                 this.completedLastTotal = this.completedTotal;
                             }).catch(() => {});
                         } else {
-                            this.showToast(data.message || WebI18n.t('删除失败'), 'error');
+                            this.showToast(data.message || WebI18n.t('Deletion failed'), 'error');
                         }
                     } catch(e) {
-                        this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                        this.showToast(WebI18n.t('Network error: ') + (e && e.message ? e.message : WebI18n.t('Unknown error')), 'error');
                     }
                 } else {
                     // Single task delete
@@ -1549,11 +1549,11 @@
                         const res = await authenticatedFetch(url, { method: 'POST' });
                         const data = await res.json();
                         if (data.code === '1') {
-                            let msg = WebI18n.t('任务已删除');
+                            let msg = WebI18n.t('Task deleted');
                             if (dm.deleteFile && data.file_deleted) {
-                                msg = WebI18n.t('任务和本地文件已删除');
+                                msg = WebI18n.t('Task and local file deleted');
                             } else if (dm.deleteFile && data.file_error) {
-                                msg = WebI18n.t('任务已删除（文件: ') + data.file_error + WebI18n.t('）');
+                                msg = WebI18n.t('Task deleted (file: ') + data.file_error + WebI18n.t('）');
                             }
                             this.showToast(msg, 'success');
                             // Remove from local arrays and reload 1 item
@@ -1582,10 +1582,10 @@
                                 this.completedLastTotal = this.completedTotal;
                             }).catch(() => {});
                         } else {
-                            this.showToast(data.message || WebI18n.t('删除失败'), 'error');
+                            this.showToast(data.message || WebI18n.t('Deletion failed'), 'error');
                         }
                     } catch(e) {
-                        this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                        this.showToast(WebI18n.t('Network error: ') + (e && e.message ? e.message : WebI18n.t('Unknown error')), 'error');
                     }
                 }
                 dm.show = false;
@@ -1600,21 +1600,21 @@
                     const res = await authenticatedFetch('/retry_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
                     const data = await res.json();
                     if (data.code === '1') {
-                        this.showToast(WebI18n.t('已加入重试队列'), 'success');
-                        // 刷新页面数据，静默失败不弹错误（重试已成功）
+                        this.showToast(WebI18n.t('Queued for retry'), 'success');
+                        // Refresh data quietly because retry submission already succeeded.
                         this.fetchActive().catch(() => {});
                         this.fetchCompleted().catch(() => {});
                         this.fetchPending(true).catch(() => {});
                     } else {
-                        this.showToast(data.message || WebI18n.t('重试失败'), 'error');
+                        this.showToast(data.message || WebI18n.t('Retry failed'), 'error');
                     }
                 } catch(e) {
-                    this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                    this.showToast(WebI18n.t('Network error: ') + (e && e.message ? e.message : WebI18n.t('Unknown error')), 'error');
                 }
             },
 
             showToast(message, type = 'success') {
-                this.toast = { show: true, message, type };
+                this.toast = { show: true, message: this.t(message), type };
                 setTimeout(() => {
                     this.toast.show = false;
                 }, 2500);
@@ -1642,7 +1642,7 @@
     <!-- Mobile Bottom Navigation -->
     <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 sm:hidden safe-bottom">
         <div class="flex items-center justify-around h-14">
-            <!-- 下载中 -->
+            <!-- Downloading -->
             <button @click="activeTab = 'active'; selectedTasks = []"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
                     :class="activeTab === 'active' ? 'text-blue-600' : 'text-gray-400'">
@@ -1654,10 +1654,10 @@
                           class="absolute -top-1 -right-3 text-[10px] font-bold bg-blue-500 text-white rounded-full min-w-[16px] h-4 flex items-center justify-center px-1"
                           x-text="activeTasks.length"></span>
                 </span>
-                <span class="text-[10px] font-medium"><span data-i18n="下载中" x-text="t('下载中')">下载中</span></span>
+                <span class="text-[10px] font-medium"><span data-i18n="Downloading" x-text="t('Downloading')">Downloading</span></span>
             </button>
 
-            <!-- 待下载 -->
+            <!-- Pending -->
             <button @click="activeTab = 'pending'; selectedTasks = []"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
                     :class="activeTab === 'pending' ? 'text-amber-600' : 'text-gray-400'">
@@ -1669,10 +1669,10 @@
                           class="absolute -top-1 -right-3 pulse-badge text-[10px] font-bold bg-amber-500 text-white rounded-full min-w-[16px] h-4 flex items-center justify-center px-1"
                           x-text="pendingTasks.length"></span>
                 </span>
-                <span class="text-[10px] font-medium"><span data-i18n="待下载" x-text="t('待下载')">待下载</span></span>
+                <span class="text-[10px] font-medium"><span data-i18n="Pending" x-text="t('Pending')">Pending</span></span>
             </button>
 
-            <!-- 已完成 -->
+            <!-- Completed -->
             <button @click="activeTab = 'completed'; selectedTasks = []"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
                     :class="activeTab === 'completed' ? 'text-green-600' : 'text-gray-400'">
@@ -1684,10 +1684,10 @@
                           class="absolute -top-1 -right-3 text-[10px] font-bold bg-green-500 text-white rounded-full min-w-[16px] h-4 flex items-center justify-center px-1"
                           x-text="completedTotal"></span>
                 </span>
-                <span class="text-[10px] font-medium"><span data-i18n="已完成" x-text="t('已完成')">已完成</span></span>
+                <span class="text-[10px] font-medium"><span data-i18n="Completed" x-text="t('Completed')">Completed</span></span>
             </button>
 
-            <!-- 失败 -->
+            <!-- Failed -->
             <button @click="activeTab = 'failed'; selectedTasks = []"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
                     :class="activeTab === 'failed' ? 'text-red-600' : 'text-gray-400'">
@@ -1699,7 +1699,7 @@
                           class="absolute -top-1 -right-3 text-[10px] font-bold bg-red-500 text-white rounded-full min-w-[16px] h-4 flex items-center justify-center px-1"
                           x-text="failedTasks.length"></span>
                 </span>
-                <span class="text-[10px] font-medium"><span data-i18n="失败" x-text="t('失败')">失败</span></span>
+                <span class="text-[10px] font-medium"><span data-i18n="Failed" x-text="t('Failed')">Failed</span></span>
             </button>
         </div>
     </nav>
