@@ -291,6 +291,25 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.path.read_bytes(), self.data)
         self.assert_closed()
 
+    async def test_failed_attempt_closes_sessions_before_checkpoint_retry(self):
+        async def fail_after_progress(current, total):
+            if current:
+                raise ConnectionError("Offline interrupted transfer")
+
+        self.progress = fail_after_progress
+        with self.assertRaises(ConnectionError):
+            await self.download()
+        self.assert_closed()
+        previous = list(self.sessions)
+        self.assertTrue(previous)
+        self.assertTrue(parts_path(str(self.path)).exists())
+        self.progress = AsyncMock()
+        await self.download()
+        self.assertGreater(len(self.sessions), len(previous))
+        self.assertTrue(all(session not in previous for session in self.sessions[len(previous):]))
+        self.assertEqual(self.path.read_bytes(), self.data)
+        self.assert_closed()
+
     async def test_hook_terminate_closes_downloads_before_account_shutdown(self):
         self.request_gate = asyncio.Event()
         task = asyncio.create_task(self.download())
