@@ -344,6 +344,8 @@ proxy:
 
 ## WebUI 登录
 
+列表上方的搜索框按任务 ID 或文件名筛选当前标签，切换标签时保留关键词；清空搜索恢复完整列表。下载中/失败筛选当前完整数据，Pending/已完成由服务端先搜索再分页，不受已加载页数限制。搜索后全选仅选择匹配任务。Downloading 内暂停文件仍保留在原标签，可按状态筛选，并快捷选择全部、下载中或已暂停的匹配任务；显示匹配数和该分类总数。独立的全局暂停按钮已移除，暂停/恢复通过所选任务操作；仅选下载中可批量暂停，仅选已暂停可批量恢复，混选时暂停和恢复均禁用；Pending 的“取消任务”终止尚未开始的队列项，不会启动下载，重新下载需再次提交链接。已完成只能批量删除，失败支持批量重试和删除。首屏请求并行加载；可见页面按轮次刷新，上一轮结束后才安排下一轮。隐藏页面暂停轮询，返回后立即刷新；已发出的请求允许结束。状态/活动任务每轮刷新，Pending/失败至少间隔 5 秒，完成计数至少间隔 10 秒。只读请求最多等待 15 秒，修改操作保持原有等待方式；慢连接可能延长刷新间隔。系统开启“减少动态效果”时关闭装饰动画。
+
 浏览器打开 `http://你的服务器IP:5000`
 
 配置了非空的 `web_login_secret` 时，会先显示登录页，输入配置的密码后进入控制面板。首页和所有下载接口都会校验访问凭据；右上角可退出。登录页可选勾选“记住我（7 天）”，默认不勾选。勾选后通过持久化 Cookie 保持登录，关闭并重新打开浏览器无需再次输入密码；不勾选时使用浏览器会话 Cookie（浏览器恢复会话时可能保留）。两者最长有效期均为 7 天；重启服务或修改密码后需要重新登录。
@@ -847,6 +849,8 @@ with its file and worker number; the matching `Closed independent download conne
 ---
 
 ## WebUI Login
+
+The search field above the list filters the current tab by task ID or filename and retains the query across tabs. Clear search to restore the full list. Active/Failed filter their complete data; Pending/Completed search on the server before pagination, including unloaded pages. Select all applies only to matching tasks. Paused files remain in Downloading, with a status filter and shortcuts to select all, running or paused matches. The list shows matching and total counts. The standalone global pause button is removed; pause/resume acts on the selection. Pause is available for running selections and resume for paused selections; both are disabled for mixed states. Cancel task in Pending cancels an unstarted queued task; submit its link again to download it later. Completed offers batch deletion only, while Failed offers batch retry and deletion. Initial requests load in parallel. Visible pages refresh in cycles, scheduling the next cycle only after the previous one finishes. Polling pauses while hidden and refreshes immediately on return; requests already in flight may finish. Status/active tasks refresh each cycle, Pending/failures at least five seconds apart, and completed counts at least ten seconds apart. Read requests time out after 15 seconds; mutations retain their existing waiting behavior. Slow connections can lengthen refresh intervals. The system reduced-motion preference disables decorative animations.
 
 Open `http://SERVER_IP:5000`. A non-empty `web_login_secret` protects the dashboard and download APIs. Enter that password on the login page; use the top-right action to log out. The login page offers an unchecked “Remember me (7 days)” option. Selecting it stores a persistent cookie so reopening the browser does not require another password; otherwise it uses a browser-session cookie (browser session restore may retain it). Both expire after at most seven days and require login again after a service restart or password change. State-changing requests using browser sessions also require the session's CSRF token; the WebUI supplies it automatically. The Web API accepts only browser login sessions, not bearer tokens. Agents use `/mcp` with a separate MCP token.
 
