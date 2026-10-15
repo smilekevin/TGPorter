@@ -19,6 +19,9 @@ from module.pyrogram_extension import HookClient
 
 class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        retry_wait = patch("module.parallel_download._wait_network_retry", AsyncMock())
+        self.retry_wait = retry_wait.start()
+        self.addCleanup(retry_wait.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "download.bin"
@@ -90,6 +93,10 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                     return raw.types.upload.FileCdnRedirect(
                         dc_id=4, file_token=b"file", encryption_key=b"k" * 32,
                         encryption_iv=b"i" * 16, file_hashes=[])
+                if getattr(owner, "network_failure", False):
+                    if getattr(owner, "fail_once", False):
+                        owner.network_failure = False
+                    raise ConnectionError("Offline interrupted transfer")
                 chunk = owner.data[query.offset:query.offset + MB]
                 if isinstance(query, raw.functions.upload.GetCdnFile):
                     return raw.types.upload.CdnFile(bytes=chunk)
@@ -291,19 +298,24 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.path.read_bytes(), self.data)
         self.assert_closed()
 
-    async def test_failed_attempt_closes_sessions_before_checkpoint_retry(self):
-        async def fail_after_progress(current, total):
-            if current:
-                raise ConnectionError("Offline interrupted transfer")
+    async def test_transient_part_error_uses_fresh_session_without_file_retry(self):
+        self.network_failure = True
+        self.fail_once = True
+        await self.download()
+        self.assertEqual(self.retry_wait.await_count, 1)
+        self.assertEqual(len(self.sessions), 5)
+        self.assertEqual(self.path.read_bytes(), self.data)
+        self.assert_closed()
 
-        self.progress = fail_after_progress
+    async def test_failed_attempt_closes_sessions_before_checkpoint_retry(self):
+        self.network_failure = True
         with self.assertRaises(ConnectionError):
             await self.download()
         self.assert_closed()
         previous = list(self.sessions)
         self.assertTrue(previous)
         self.assertTrue(parts_path(str(self.path)).exists())
-        self.progress = AsyncMock()
+        self.network_failure = False
         await self.download()
         self.assertGreater(len(self.sessions), len(previous))
         self.assertTrue(all(session not in previous for session in self.sessions[len(previous):]))

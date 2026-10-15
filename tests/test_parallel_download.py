@@ -7,10 +7,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 from module.parallel_download import CHUNK_SIZE as MB
-from module.parallel_download import download_file, parts_path, part_count
+from module.parallel_download import download_file, parts_path, part_count, _wait_network_retry
 
 
 class Stopped(Exception):
@@ -49,6 +50,9 @@ class FakeClient:
 
 class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        retry_wait = patch("module.parallel_download._wait_network_retry", AsyncMock())
+        self.retry_wait = retry_wait.start()
+        self.addCleanup(retry_wait.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "download.bin"
@@ -84,6 +88,62 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
     def assert_file(self):
         self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(),
                          hashlib.sha256(self.data).digest())
+
+    async def test_part_backoff_checks_controls_each_second(self):
+        ready = AsyncMock(side_effect=[None, Stopped()])
+        with patch("module.parallel_download.asyncio.sleep", AsyncMock()) as sleep:
+            with self.assertRaises(Stopped):
+                await _wait_network_retry(30, ready)
+        sleep.assert_awaited_once_with(1)
+
+    async def test_each_part_retries_without_exhausting_file_attempt(self):
+        failed = set()
+        async def before(index):
+            if index not in failed:
+                failed.add(index)
+                raise ConnectionError("Transient connection failure")
+        self.client.before_chunk = before
+        # Each part has its own budget, so more than three errors across the
+        # file do not exhaust the file attempt. Parts resume completed chunks.
+        await self.download(count=1, part_size=MB)
+        self.assert_file()
+        self.assertGreater(self.retry_wait.await_count, 3)
+        self.assertEqual(self.client.tracker["active"], 0)
+
+    async def test_part_retry_does_not_cancel_healthy_worker(self):
+        blocked = asyncio.Event()
+        release = asyncio.Event()
+        failed = False
+        async def before(index):
+            nonlocal failed
+            if index == 0 and not failed:
+                failed = True
+                raise ConnectionError("Transient connection failure")
+        async def wait(*args):
+            blocked.set()
+            await release.wait()
+        self.client.before_chunk = before
+        self.retry_wait.side_effect = wait
+        task = asyncio.create_task(self.download(count=2, part_size=MB))
+        try:
+            await asyncio.wait_for(blocked.wait(), 2)
+            await self.until(lambda: len(self.client.calls) >= 9)
+            self.assertFalse(task.done())
+            release.set()
+            await task
+            self.assert_file()
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_persistent_part_failure_has_bounded_attempts(self):
+        self.client.early_end = 0
+        with self.assertRaises(ConnectionError):
+            await self.download(count=1, part_size=MB)
+        self.assertEqual(len(self.client.calls), 3)
+        self.assertEqual(self.retry_wait.await_count, 2)
+        self.assertTrue(parts_path(str(self.path)).exists())
 
     async def test_out_of_order_ranges_merge_to_identical_file_and_aggregate_progress(self):
         release_first = asyncio.Event()

@@ -37,7 +37,7 @@
 - **转发媒体下载** — 转发一条媒体消息给 Bot，自动从源频道下载
 - **断点续传** — 文件大小 ≥ 已下载大小即判定为已完成，跳过重复下载
 - **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
-- **3 次重试** — 每个文件最多尝试 3 次，连接错误采用随机递增退避（10–15s / 30s / 30s）；FLOOD_WAIT 等待不消耗尝试次数
+- **3 次重试** — 每个文件最多尝试 3 次，连接错误采用随机递增退避（10–15s / 30s / 30s）；分片网络错误先在该分片内最多尝试 3 次，失败后才消耗文件级次数；FLOOD_WAIT 等待不消耗尝试次数
 - **文件引用过期处理** — BadRequest 时自动 fetch_message 刷新引用
 - **临时文件清理** — 删除或取消正在下载的任务时清理其临时文件和分片目录；暂停、断网和程序退出保留断点
 
@@ -426,7 +426,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Forwarded media** — forward a media message to the Bot, downloads from source channel
 - **Skip detection** — file size ≥ downloaded size = already complete, skip
 - **Size mismatch** — backs up existing file (.bak), re-downloads, deletes backup on success
-- **Download retries** — up to 3 attempts, with randomized connection backoff (10–15s / 30s / 30s); FLOOD_WAIT waits without consuming attempts
+- **Download retries** — up to 3 attempts, with randomized connection backoff (10–15s / 30s / 30s); part network errors get up to 3 local attempts before consuming a file attempt; FLOOD_WAIT waits without consuming attempts
 - **File reference refresh** — auto fetch_message on BadRequest
 - **Temp file cleanup** — deleting or cancelling an active download removes its staging files and part directory; pauses, network interruptions and process exit retain checkpoints
 
