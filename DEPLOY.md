@@ -435,20 +435,6 @@ docker start telegam-media-downloader
 
 更新镜像时需使用新镜像重新创建容器，并保留原来的配置、端口和数据挂载；仅重启旧容器不会切换镜像。镜像选择见 [前置条件](#前置条件)。
 
-## 运行版本
-
-`utils.__version__` 是 WebUI 的 `/get_app_version`、Bot 帮助、MCP 和启动日志的共同来源，保留 tag 原文（例如 `v0.1.2`），界面不再额外添加 `v`。版本在进程启动时读取，切换源码或环境变量后需要重启。
-
-该机制只适用于包含此改动的源码和新构建的镜像；旧 tag 的源码或历史镜像仍沿用其原有版本逻辑。
-
-版本优先级与回退规则：
-
-1. 非空的 `APP_VERSION` 环境变量优先。Release 工作流将 Git tag 通过 Docker build arg 写入镜像的 `APP_VERSION` 和 OCI version 标签；CI 验证镜像写入 `sha-完整提交号`。Compose 无需设置版本环境变量，使用 `latest`、版本标签或 digest 拉取同一镜像时，页面都显示镜像内置的版本。不要用 `APP_VERSION=latest` 覆盖它。
-2. 没有该变量时，从项目自己的 Git 元数据运行 `git describe --tags --always --dirty`：位于 tag 上的干净源码显示该 tag；后续提交显示如 `v0.1.2-3-gabc1234`；修改过已跟踪文件时追加 `-dirty`；没有可达 tag 时显示短提交号。它不会联网查询 GitHub Release；同一提交有多个 tag 时由 Git 选择。
-3. 没有 `.git`（例如下载源码 ZIP）、未安装 Git、元数据损坏或查询超时（2 秒）时显示 `unknown`，不再回退到硬编码的 `1.0.0`。手动构建 Docker 时没有传入 build arg 也显示 `unknown`，因为镜像不包含 `.git`。
-
-源码部署可先运行 `git fetch --tags`、`git checkout v0.1.2`，再运行 `python media_downloader.py`；示例 tag 请替换为实际版本。浅克隆需包含目标 tag 和相应历史，否则只能显示已有的提交信息。无 Git 的源码副本可显式运行 `APP_VERSION=v0.1.2 python media_downloader.py`，版本应与所用源码匹配。`python run_local.py` 也使用同一版本来源，下载数据仍为 Mock。
-
 ## 旧镜像迁移与本地构建
 
 旧 package `ghcr.io/smilekevin/hermes-telegram-downloader` 保留历史镜像。迁移时将 Compose 的 `image` 改为新地址，使用新构建的版本或 digest；历史 digest 仍需搭配旧地址。
@@ -456,7 +442,7 @@ docker start telegam-media-downloader
 如需从当前本地源码构建，先克隆仓库并完成配置，将 Compose 服务的 `image` 改为 `telegram-media-downloader:local` 并添加 `build: .`，然后执行：
 
 ```bash
-docker-compose build --build-arg APP_VERSION="$(git describe --tags --always --dirty)"
+docker-compose build
 # 首次登录前停止已有后台服务
 docker-compose stop telegam-media-downloader
 docker-compose run --rm telegam-media-downloader
@@ -464,7 +450,7 @@ docker-compose run --rm telegam-media-downloader
 docker-compose up -d
 ```
 
-更新本地源码后重新执行上述带版本参数的构建命令，再执行 `docker-compose up -d`。首次登录说明见 [Docker Compose 部署](#docker-compose-部署)。
+更新本地源码后执行 `docker-compose up -d --build`。首次登录说明见 [Docker Compose 部署](#docker-compose-部署)。
 
 ## Docker 数据持久化
 
@@ -926,20 +912,6 @@ docker start telegam-media-downloader
 
 To update an image, recreate the container with the new image while preserving configuration, ports and mounts. Restarting the existing container does not change its image.
 
-## Running Version
-
-`utils.__version__` supplies WebUI's `/get_app_version`, Bot help, MCP and startup logs. Tags are preserved verbatim (for example, `v0.1.2`), without an extra `v` added by the UI. The version is read at process startup; restart after changing source or environment variables.
-
-This mechanism applies to source containing this change and newly built images. Older tagged source and historical images retain their original version behavior.
-
-Version precedence and fallbacks:
-
-1. A non-empty `APP_VERSION` environment variable takes priority. The Release workflow passes the Git tag as a Docker build arg, storing it in the image's `APP_VERSION` and OCI version label; CI verification images store `sha-<full-commit-sha>`. Compose needs no version environment variable. Pulling the same image by `latest`, version tag or digest displays its baked version. Do not override it with `APP_VERSION=latest`.
-2. Without that variable, the project's own Git metadata supplies `git describe --tags --always --dirty`: a clean tagged checkout displays the tag; later commits display, for example, `v0.1.2-3-gabc1234`; tracked edits append `-dirty`; no reachable tag yields a short commit ID. This does not query GitHub Releases. Git chooses between multiple tags on the same commit.
-3. Missing `.git` (such as a source ZIP), unavailable Git, broken metadata or a query timeout (2 seconds) yields `unknown`, replacing the hardcoded `1.0.0` fallback. Manual Docker builds without the build arg also display `unknown`, because images exclude `.git`.
-
-For source deployment, run `git fetch --tags`, `git checkout v0.1.2`, then `python media_downloader.py`, replacing the example tag with the desired version. Shallow clones need the target tag and its history; otherwise only available commit information can be displayed. For a source copy without Git, explicitly run `APP_VERSION=v0.1.2 python media_downloader.py`, matching the version to the source. `python run_local.py` uses the same version source while retaining Mock download data.
-
 ## Image Migration and Local Builds
 
 The old `ghcr.io/smilekevin/hermes-telegram-downloader` package retains historical images. For migration, change Compose's `image` to the new package and select a newly built version or digest. Historical digests still require the old package address.
@@ -947,7 +919,7 @@ The old `ghcr.io/smilekevin/hermes-telegram-downloader` package retains historic
 To build local source, clone the repository and prepare configuration, set `image: telegram-media-downloader:local` and add `build: .` to the Compose service, then run:
 
 ```bash
-docker-compose build --build-arg APP_VERSION="$(git describe --tags --always --dirty)"
+docker-compose build
 # Stop any background service before first login.
 docker-compose stop telegam-media-downloader
 docker-compose run --rm telegam-media-downloader
@@ -955,7 +927,7 @@ docker-compose run --rm telegam-media-downloader
 docker-compose up -d
 ```
 
-After updating local source, rerun the build command above with the version argument, then run `docker-compose up -d`. See [Docker Compose Deployment](#docker-compose-deployment) for first-login details.
+After updating local source, run `docker-compose up -d --build`. See [Docker Compose Deployment](#docker-compose-deployment) for first-login details.
 
 ## Docker Data Persistence
 
