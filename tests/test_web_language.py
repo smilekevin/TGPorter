@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from module import web
+from lang import CATALOGS, ALIASES, SOURCE_KEYS, MESSAGE_PATTERNS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,11 +24,12 @@ class WebLanguageTests(unittest.TestCase):
         script = r"""
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-function boot(languages, saved, blocked = false, title = '登录 - Telegram Media Downloader') {
+function boot(languages, saved, blocked = false, title = 'Sign in - Telegram Media Downloader') {
     const label = { dataset: { i18n: '下载中' }, textContent: '' };
     const select = { value: '', addEventListener() {} };
     const document = {
         documentElement: {}, title,
+        getElementById: () => ({textContent: JSON.stringify(PAYLOAD)}),
         querySelectorAll: selector => selector === '[data-i18n]' ? [label] : [select],
         addEventListener: (event, callback) => callback(),
     };
@@ -43,12 +45,12 @@ function boot(languages, saved, blocked = false, title = '登录 - Telegram Medi
     return { api: context.window.WebI18n, document, label, select, storage };
 }
 for (const [languages, expected] of [
-    [['zh-TW'], 'zh'], [['en-US'], 'en'], [['ru-RU'], 'ru'], [['uk-UA'], 'uk'],
-    [['de-DE', 'ru-RU'], 'ru'], [['fr-FR'], 'en'], [[], 'en'],
+    [['zh-TW'], 'zh-tw'], [['zh-Hans-CN'], 'zh-cn'], [['zh-Hant-TW'], 'zh-tw'], [['zh'], 'zh-cn'], [['en-US'], 'en'], [['ru-RU'], 'ru'], [['uk-UA'], 'uk'],
+    [['de-DE', 'ru-RU'], 'ru'], [['fr-FR'], 'fr'], [['ja-JP'], 'ja'], [['es-ES'], 'es'], [[], 'en'],
 ]) {
     const { api, document } = boot(languages);
     assert.equal(api.language, expected);
-    assert.equal(document.documentElement.lang, expected === 'zh' ? 'zh-CN' : expected);
+    assert.equal(document.documentElement.lang, expected);
 }
 const { api, document, label, select, storage } = boot(['zh-CN'], 'ru');
 assert.equal(api.language, 'ru');
@@ -59,10 +61,18 @@ assert.equal(storage.get('web_language'), 'uk');
 assert.equal(label.textContent, 'Завантаження');
 assert.equal(document.title, 'Вхід - Telegram Media Downloader');
 assert.equal(api.t('任务数：{count}', 'en', {count: 12}), 'Tasks: 12');
-assert.equal(api.t('已加入重试队列 3 个任务，1 个失败', 'en'), 'Queued for retry: 3 (Failed: 1)');
+assert.equal(api.t('已加入重试队列 3 个任务，1 个失败', 'en'), 'Queued 3 tasks for retry; 1 failed');
 assert.equal(api.t('<user filename>.mp4'), '<user filename>.mp4');
+assert.equal(api.t('任务已暂停', 'ja'), 'タスクを一時停止しました');
+assert.equal(api.t('Pause', 'es'), 'Pausar');
+assert.equal(api.t('Pause', 'fr'), 'Mettre en pause');
+assert.equal(api.t('下载中', 'zh-tw'), '下載中');
+assert.equal(api.t('重试失败: <bad>{count}', 'fr'), 'Échec de la nouvelle tentative : <bad>{count}');
+assert.equal(boot(['en'], 'zh').api.language, 'zh-cn');
+assert.equal(boot(['en'], 'zh_Hant').api.language, 'zh-tw');
+assert.equal(api.t('任务数：{count}', 'invalid', {count: 4}), 'Tasks: 4');
 assert.equal(api.setLanguage('invalid'), 'uk');
-assert.equal(boot(['zh-CN'], 'invalid').api.language, 'zh');
+assert.equal(boot(['zh-CN'], 'invalid').api.language, 'zh-cn');
 const denied = boot(['ru-RU'], null, true);
 assert.equal(denied.api.language, 'ru');
 assert.equal(denied.api.setLanguage('en'), 'en');
@@ -70,8 +80,8 @@ assert.equal(boot(['uk-UA'], 'ua').api.language, 'uk');
 const dashboard = boot(['en-US'], null, false, 'Telegram Media Downloader');
 dashboard.api.setLanguage('uk');
 assert.equal(dashboard.document.title, 'Telegram Media Downloader');
-""".replace("SOURCE", json.dumps(source))
-        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=10)
+""".replace("SOURCE", json.dumps(source)).replace("PAYLOAD", json.dumps({"catalogs": CATALOGS, "aliases": ALIASES, "sourceKeys": SOURCE_KEYS, "patterns": MESSAGE_PATTERNS}))
+        result = subprocess.run(["node"], input=script, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_real_pages_load_shared_catalog_and_dashboard_expressions_compile(self):
@@ -88,7 +98,13 @@ assert.equal(dashboard.document.title, 'Telegram Media Downloader');
         for page in (dashboard, login):
             self.assertIn('/static/web_i18n.js', page)
             self.assertIn('data-language-switch', page)
-            self.assertIn('value="uk"', page)
+            for code in CATALOGS:
+                self.assertIn(f'value="{code}"', page)
+            payload = json.loads(re.search(r'<script id="language-catalogs" type="application/json">(.*?)</script>', page, re.DOTALL)[1])
+            self.assertEqual(payload['catalogs'], {code: {'name': data['name'], 'messages': data['messages']}
+                                                  for code, data in CATALOGS.items()})
+            self.assertIn('简体中文', page)
+            self.assertIn('繁體中文', page)
 
         class Expressions(HTMLParser):
             def __init__(self):

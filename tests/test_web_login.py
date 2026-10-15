@@ -44,7 +44,7 @@ class WebLoginTests(unittest.TestCase):
         self.assertEqual(response.headers["Location"], "/login")
         response = self.client.get("/", follow_redirects=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn("登录控制面板", response.get_data(as_text=True))
+        self.assertIn("Sign in to dashboard", response.get_data(as_text=True))
         self.assertIn('type="password"', response.get_data(as_text=True))
         self.assertNotIn("test-password", response.get_data(as_text=True))
         self.assertEqual(response.headers["Cache-Control"], "no-store")
@@ -80,7 +80,7 @@ class WebLoginTests(unittest.TestCase):
     def test_wrong_password_does_not_authorize_dashboard_or_apis(self):
         response = self.login("wrong-password")
         self.assertEqual(response.status_code, 401)
-        self.assertIn("密码错误", response.get_data(as_text=True))
+        self.assertIn("Incorrect password. Please try again.", response.get_data(as_text=True))
         self.assertNotIn("wrong-password", response.get_data(as_text=True))
         self.assertEqual(self.client.get("/").status_code, 302)
         self.assertEqual(self.client.get("/get_download_state").status_code, 401)
@@ -150,7 +150,7 @@ class WebLoginTests(unittest.TestCase):
         response = self.client.post("/logout", data={"csrf_token": self.csrf_token()},
                                     follow_redirects=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn("登录控制面板", response.get_data(as_text=True))
+        self.assertIn("Sign in to dashboard", response.get_data(as_text=True))
         self.assertEqual(self.client.get("/").headers["Location"], "/login")
         self.assertEqual(self.client.get("/get_download_state").status_code, 401)
 

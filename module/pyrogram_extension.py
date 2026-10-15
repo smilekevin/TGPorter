@@ -1206,12 +1206,12 @@ async def _report_bot_status(
                         fname = os.path.basename(f.get("file_name", ""))
                         if not fname:
                             fname = f"(msg_id: {f.get('msg_id', '?')})"
-                        err = f.get("error_message", "未知错误")
+                        err = _t(f.get("error_message", "Unknown error"))
                         src_link = f.get("source_link", "")
                         if src_link:
-                            failed_files_str += f"  • {fname}\n    原因: {err}\n    链接: {src_link}\n"
+                            failed_files_str += f"  • {fname}\n    {_t('Reason')}: {err}\n    {_t('Link')}: {src_link}\n"
                         else:
-                            failed_files_str += f"  • {fname}\n    原因: {err}\n"
+                            failed_files_str += f"  • {fname}\n    {_t('Reason')}: {err}\n"
             except Exception as e:
                 logger.warning(f"Failed to read failed download data for status report: {e}")
             if failed_files_str:
@@ -1229,7 +1229,8 @@ async def _report_bot_status(
                     actual_total += 1
                     if val["down_byte"] == val["total_size"] and val["total_size"] > 0:
                         actual_success += 1
-                    # 未完成的不算 skipped — 可能是正在下载或恢复中
+                    # Incomplete files may be downloading or recovering; do not count them as
+                    # skipped.
         if node.failed_download_task > 0:
             try:
                 for f in get_failed_downloads():
@@ -1245,7 +1246,7 @@ async def _report_bot_status(
             display_total = max(actual_total, actual_failed)
             display_success = actual_success
             display_failed = actual_failed
-            display_skipped = node.skip_download_task  # 用 node 计数器，不从 _download_result 推断
+            display_skipped = node.skip_download_task  # Use the node counter rather than inferring skips from _download_result.
         else:
             display_total = node.total_download_task
             display_success = node.success_download_task
@@ -1254,11 +1255,11 @@ async def _report_bot_status(
 
         new_msg_str = (
             f"`\n"
-            f"🆔 task: {node.task_id_display}\n"
+            f"🆔 {_t('Task')}: {node.task_id_display}\n"
         )
         if immediate_reply:
             # Single-file tasks (limit==1): show only the actual result
-            # Batch tasks: show full stats including 总数
+            # Batch tasks show all statistics, including the total.
             is_single = (node.limit == 1 and not node.upload_telegram_chat_id)
             if is_single:
                 # For single tasks, show only the final result
@@ -1269,13 +1270,13 @@ async def _report_bot_status(
                         f"└─ ❌ {_t('Failed')}: {display_failed}\n"
                     )
                 elif display_skipped > 0:
-                    # 文件已存在，跳过下载
+                    # The file already exists; skip downloading.
                     new_msg_str += (
                         f"📥 {_t('Downloading')}\n"
                         f"└─ ⏩ {_t('Skipped')}: {display_skipped}\n"
                     )
                 elif display_success > 0:
-                    # 新下载成功
+                    # The new download succeeded.
                     new_msg_str += (
                         f"📥 {_t('Downloading')}\n"
                         f"└─ ✅ {_t('Success')}: {display_success}\n"
@@ -1362,18 +1363,11 @@ def set_max_concurrent_transmissions(
 
 
 async def fetch_message(client: pyrogram.Client, message: pyrogram.types.Message):
-    """
-    This function retrieves a message from a specified chat using the Pyrogram library.
-     Args:
-        client (pyrogram.Client): A client instance created using Pyrogram.
-        message (pyrogram.types.Message): A message instance returned from Pyrogram.
-     Returns:
-        pyrogram.types.Message: A message object retrieved from the specified chat.
+    """Fetch a message from its chat with the Pyrogram client.
 
-    加 60s 超时保护 — 半死 TCP 上 get_messages 会 hang TCP.TIMEOUT(900s)，
-    导致 download_media 重试循环永久阻塞、worker 被永久占用。
-    正常 get_messages 1-2 秒返回，60s 超时极其宽松。
-    """
+    Bound get_messages to 60 seconds. A half-dead TCP connection could otherwise
+    block the download retry loop and retain a worker for TCP.TIMEOUT=900 seconds.
+    Normal requests return within one or two seconds."""
     if message is None or message.empty or message.chat is None:
         return None
     # Message IDs are scoped to the account that retrieved the message.
@@ -1768,10 +1762,9 @@ async def forward_messages(
 
 
 # ============================================================
-# pyrogram handle_download 断点保留补丁（2026-09-22）
-# 原版在 except BaseException 里 os.remove(temp_file_path)：
-# watchdog cancel / 网络异常 / 引用过期都会把已下载的 .temp 删掉，
-# 394MB+408MB 进度就是这么蒸发的。改为保留 .temp 供断点续传。
+# Preserve Pyrogram checkpoints after BaseException. The original handler removed partial data
+# on watchdog cancellation, network failure or expired references, losing hundreds of megabytes
+# of progress.
 # ============================================================
 def _patch_pyrogram_handle_download():
     import os as _os
@@ -1783,7 +1776,7 @@ def _patch_pyrogram_handle_download():
     from pyrogram.errors import FloodWait as _FloodWait, FloodPremiumWait as _FloodPremiumWait
 
     if getattr(_Client.handle_download, "_tgdown_resume_patch", False):
-        return  # 已打补丁
+        return  # Already patched.
 
     async def handle_download_keep_temp(self, packet):
         file_id, directory, file_name, in_memory, file_size, progress, progress_args = packet
@@ -1792,9 +1785,8 @@ def _patch_pyrogram_handle_download():
         temp_file_path = _os.path.abspath(
             _re.sub("\\\\", "/", _os.path.join(directory, file_name))
         ) + ".temp"
-        # 9-22 修复：.temp 已有数据时用 "r+b"（从位置 0 覆盖写，语义等价
-        # 但不截断尾部）—— get_file 异常时至少保住已下载的字节。
-        # "wb" 是 606MB 断点被清零的元凶。
+        # Open existing .temp data with "r+b" to overwrite from offset zero without truncating
+        # the tail. Unlike "wb", this preserves checkpoint bytes when get_file raises.
         if not in_memory and _os.path.exists(temp_file_path) and _os.path.getsize(temp_file_path) > 0:
             file = open(temp_file_path, "r+b")
         else:
@@ -1809,8 +1801,7 @@ def _patch_pyrogram_handle_download():
                     file.close()
                 except Exception:
                     pass
-                # ★ 核心差异：保留 .temp 断点文件，不再 os.remove
-                # （仅当文件是 0 字节空壳时清理，避免垃圾堆积）
+                # Preserve nonempty .temp checkpoints; remove only zero-byte shells.
                 try:
                     if _os.path.getsize(temp_file_path) == 0:
                         _os.remove(temp_file_path)

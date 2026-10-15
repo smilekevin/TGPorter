@@ -16,7 +16,7 @@ _lock = threading.Lock()
 
 def _get_next_seq(date_str: str) -> int:
     """Get next sequential number for today, auto-increment.
-    
+
     Date changes → seq resets to 1. Otherwise increments from last value.
     Thread-safe via _lock; caller must hold _lock.
     """
@@ -97,12 +97,11 @@ def _save_all(tasks: list):
 def save_task(task_id, chat_id, url, start_offset_id, end_offset_id,
               limit, download_filter, from_user_id, task_type="download",
               extra_data=None):
-    """Save a new bot task to the store.
+    """Save a new Bot task atomically.
 
-    防覆盖保险：同 task_id 已有任务且消息不同 → 拒绝写入；
-    同 (chat, message_id) 已有 pending/downloading 任务 → 拒绝写入。
-    Returns True only after an atomic write; False on conflicts or write failures.
-    """
+    Reject an existing task_id owned by another message, or a duplicate pending or
+    downloading task for the same chat and message_id. Return True only after the
+    atomic write succeeds; return False for conflicts or write failures."""
     with _lock:
         tasks = _load_all()
         new_mid = (extra_data or {}).get("message_id")
@@ -186,7 +185,7 @@ def get_running_tasks() -> list:
 
 def get_pending_tasks() -> list:
     """Get all tasks with download_state='pending' (not yet started downloading).
-    
+
     'queued' state has been removed — consumer uses _in_queue set (in-memory)
     to track tasks already in asyncio Queue. Only 'pending' tasks need consuming.
     """

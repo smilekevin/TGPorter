@@ -8,6 +8,8 @@ import re
 from concurrent.futures import TimeoutError as FutureTimeout
 from urllib.parse import urlsplit
 
+from lang import _t
+
 import utils
 from module.task_store import get_pending_tasks, remove_task
 from module.download_stat import (
@@ -90,7 +92,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
             )
         except Exception:
             pass
-        # 清理 placeholder 和 task node，避免残留在 bot_tasks.json
+        # Remove placeholders and task nodes so bot_tasks.json does not retain stale entries.
         try:
             if placeholder_task_id:
                 from module.task_store import remove_task
@@ -109,7 +111,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
         client = _bot.client
         if not client:
             logger.error("Retry failed: _bot.client is not available")
-            _restore_failed("重试失败: client不可用")
+            _restore_failed('Retry failed: client unavailable')
             return
 
         msg = None
@@ -144,13 +146,13 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
         if not msg:
             message_client = _bot.get_message_client(cid, from_user_id)
             if message_client is None:
-                _restore_failed("重试失败: 消息所属客户端不可用")
+                _restore_failed('Retry failed: message client unavailable')
                 return
             msg = await message_client.get_messages(cid, int(msg_id))
 
         if not msg or msg.empty:
             logger.error(f"Retry failed: message {msg_id} not found in chat {cid}")
-            _restore_failed("重试失败: 消息不存在或已删除")
+            _restore_failed('Retry failed: message not found or deleted')
             return
 
         from module.app import TaskNode, TaskType
@@ -206,12 +208,13 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
         if from_user_id and _bot and _bot.bot:
             try:
                 chat_name = getattr(msg.chat, "title", str(cid))
-                msg_text = "🔄 重试任务已加入下载队列\n"
-                msg_text += f"消息: {msg_id}\n"
-                msg_text += f"任务: {node.task_id_display}\n"
-                msg_text += f"群组: {chat_name}"
+                msg_text = f"🔄 {_t('Retry task queued for download')}\n"
+                msg_text += f"{_t('Message')}: {msg_id}\n"
+                msg_text += f"{_t('Task')}: {node.task_id_display}\n"
+                msg_text += f"{_t('Group')}: {chat_name}"
                 sent_msg = await _bot.bot.send_message(int(from_user_id), msg_text)
-                # 记录消息ID，让 report_bot_status 能编辑这条消息更新进度
+                # Store the message ID so report_bot_status can edit this notification with
+                # progress.
                 node.reply_message_id = sent_msg.id
             except Exception as e:
                 logger.warning(f"Retry notification failed for user {from_user_id}: {e}")
@@ -224,7 +227,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
         # many retries are submitted simultaneously.
     except Exception as e:
         logger.error(f"Retry failed for chat={chat_id} msg={msg_id}: {e}", exc_info=True)
-        _restore_failed(f"重试失败: {e}")
+        _restore_failed(f'Retry failed: {e}')
 
 
 class DownloadService:
@@ -278,8 +281,8 @@ class DownloadService:
         from module.download_stat import _throttle_state
         import time as _now
         now = _now.time()
-        # throttle active 直接看 notified — 只要没解除限速就一直显示
-        # docker 重启后 _throttle_state 重置为默认值，自动清除
+        # Keep throttling visible while notified is set. Container restart resets
+        # _throttle_state automatically.
         throttle_active = _throttle_state["notified"]
         throttle_elapsed = int(now - _throttle_state["since"]) if _throttle_state["since"] > 0 else 0
         return {'active': is_flood_wait_active(), 'remaining': int(get_flood_wait_remaining()), 'reason': _unified_flood_wait.get("reason", ""), 'throttle': {
@@ -329,11 +332,9 @@ class DownloadService:
                 set_max_concurrent_transmissions(_bot.client, self.app.max_concurrent_transmissions)
         except Exception:
             pass
-        # 热生效：动态伸缩 worker 池（9-21）
-        # 注意：media_downloader 以 __main__ 身份运行，直接 import 会拿到独立
-        # 模块副本（双模块实例陷阱），_main_client_ref 是空的。必须取
-        # sys.modules['__main__'] 那份——与 bot.py consumer 的 _active_downloads
-        # 同款处理。
+        # Resize workers immediately. media_downloader runs as __main__; importing its module
+        # name would create a second copy with an empty _main_client_ref. Use
+        # sys.modules['__main__'], matching the Bot consumer's _active_downloads handling.
         try:
             import sys as _sys
             _md = _sys.modules.get("__main__")
@@ -375,10 +376,9 @@ class DownloadService:
                     # downloading yet. Only show tasks with real progress data.
                     if value.get("total_size", 0) == 0 and value.get("down_byte", 0) == 0:
                         continue
-                    # 9-23 性能修复：过滤已完成任务。历史 completed（3500+条）
-                    # 常驻内存且 down_byte==total_size，此前全部随本端点吐出
-                    # （2.9MB/次、每秒轮询）——WebUI 卡顿与 fail to fetch 元凶。
-                    # 已完成列表走 already_down=true 分页端点，此处只回真活跃。
+                    # Exclude completed history from active polling. Thousands of resident
+                    # completed rows previously produced multi-megabyte responses every second.
+                    # Completed history uses already_down=true pagination.
                     if is_already_down:
                         continue
 
@@ -421,9 +421,9 @@ class DownloadService:
                 else:
                     status = "active"
 
-                # Phase: 区分 placeholder（消息数据获取中）和真正在下载
-                # total_size<=1 且 down_byte==0 = consumer 刚创建的占位条目
-                # Pyrogram 第一次回调就会覆盖为真实 total_size
+                # Distinguish fetching placeholders from downloads: total_size<=1 and
+                # down_byte==0 indicate a new consumer placeholder. Pyrogram's first callback
+                # replaces total_size with the real value.
                 if status == "active" and value.get("total_size", 0) <= 1 and value.get("down_byte", 0) == 0:
                     phase = "fetching"
                 else:
@@ -459,8 +459,8 @@ class DownloadService:
                     "chat": str(chat_id),
                     "chat_title": chat_title,
                     "id": str(idx),
-                    "filename": os.path.basename(value["file_name"]) if value.get("file_name") else f"msg_{idx} (等待下载)",
-                    "total_size": format_byte(value["total_size"]) if value["total_size"] > 0 else "未知",
+                    "filename": os.path.basename(value["file_name"]) if value.get("file_name") else f'Message {idx} (pending download)',
+                    "total_size": format_byte(value["total_size"]) if value["total_size"] > 0 else 'Unknown',
                     "total_size_bytes": value["total_size"],
                     "download_progress": str(progress),
                     "download_progress_raw": progress,
@@ -640,10 +640,10 @@ class DownloadService:
                     self.retry_download(chat_id, msg_id, from_user_id, source_link=source_link, original_task_id=task_id),
                     self.app.loop,
                 )
-                return {"code": "1", "message": "已加入重试队列"}
-            return {"code": "0", "message": "应用尚未初始化完成"}
+                return {"code": "1", "message": 'Queued for retry'}
+            return {"code": "0", "message": 'Application is still starting'}
         except Exception as e:
-            return {"code": "0", "message": f"重试失败: {str(e)}"}
+            return {"code": "0", "message": f'Retry failed: {str(e)}'}
 
     def web_batch_retry(self, data=None):
         """Batch retry multiple failed downloads"""
@@ -710,7 +710,8 @@ class DownloadService:
 
         return {
             "code": "1",
-            "message": f"已加入重试队列 {queued} 个任务" + (f"，{len(errors)} 个失败" if errors else ""),
+            "message": (f"Queued {queued} tasks for retry; {len(errors)} failed" if errors else
+                        f"Queued {queued} tasks for retry"),
             "queued": queued,
             "errors": errors,
         }
@@ -726,8 +727,8 @@ class DownloadService:
 
         result = []
         for task in pending:
-            # 如果该任务已在 _download_result（consumer 创建了 placeholder），
-            # 说明即将出现在 Active 列表，从 Pending 排除，避免撞车
+            # Exclude tasks already represented by _download_result placeholders from Pending;
+            # they are about to appear in Active.
             _cid = task.get("chat_id")
             _mid = task.get("extra_data", {}).get("message_id")
             if _cid is not None and _mid is not None:
@@ -737,7 +738,7 @@ class DownloadService:
                     if _cid_int in _dr and _mid_int in _dr[_cid_int]:
                         continue
                 except (ValueError, TypeError):
-                    pass  # 类型不对就不过滤，保守起见让任务继续显示在 pending
+                    pass  # On unexpected types, conservatively keep the task visible in Pending.
 
             task_id = task.get("task_id", "")
             created_at = task.get("created_at", 0)
@@ -756,11 +757,11 @@ class DownloadService:
             # Determine source type
             source_type = task.get("task_type", "download")
             if source_type == "download":
-                source_type = "频道消息"
+                source_type = 'Channel post'
             elif source_type == "forward":
-                source_type = "转发消息"
+                source_type = 'Forwarded message'
             else:
-                source_type = "消息"
+                source_type = 'Message'
 
             # Build filename from URL or extra_data
             filename = task.get("extra_data", {}).get("filename", "")
@@ -773,12 +774,12 @@ class DownloadService:
             if isinstance(total_size, (int, float)) and total_size > 0:
                 total_size = format_byte(total_size)
             elif not total_size:
-                total_size = "未知"
+                total_size = 'Unknown'
 
             task_id_display = task.get("extra_data", {}).get("task_id_display", str(task_id))
 
-            # All pending tasks show as "等待中" — no more "排队中" state
-            queue_label = "等待中"
+            # Every pending task uses the Waiting label.
+            queue_label = 'Waiting'
 
             result.append({
                 "task_id": str(task_id),
@@ -798,8 +799,8 @@ class DownloadService:
         # Sort by created_at ascending (earliest first)
         result.sort(key=lambda x: x.get("created_ts", 0))
 
-        # 9-23 分页（对齐已完成页）：默认 limit=100，避免 1600+ 条待下载
-        # 全量序列化拖慢响应。前端滚动到底部带 offset 加载下一页。
+        # Paginate at 100 rows by default to avoid serializing thousands of pending tasks. The
+        # frontend supplies an offset when scrolling to the next page.
         total = len(result)
         page = result[offset : offset + limit] if limit > 0 else result[offset:]
         return {"tasks": page, "total": total}
