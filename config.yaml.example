@@ -1,5 +1,6 @@
 api_hash: your_api_hash
 api_id: your_api_id
+# 命令交互和通知 Bot；只通过 MCP 提交任务时可设为 ""。
 bot_token: your_bot_token
 #chat:
 #- chat_id: telegram_chat_id
@@ -46,6 +47,15 @@ web_host: 0.0.0.0
 web_port: 5000
 # WebUI 访问密码；部署前修改。设为 "" 可关闭密码登录。
 web_login_secret: "replace-with-a-long-password"
+# 可选：仅供 /mcp 使用的随机 Token，与网页密码独立；Web API 只使用 Session。
+mcp_token: ""
+# 可选：与 WebUI / Web API 共用 web_port，提供 /mcp；开启时必须设置 mcp_token。
+mcp_enabled: false
+# 仅暴露 MCP 查询工具，不影响独立的网页登录会话。
+mcp_read_only: false
+# 可选：额外允许的 Host（域名或 IP，可带端口），例如 ["nas.example.com", "192.168.1.20:5000"]。
+# 默认已允许 localhost / loopback；不填写完整 /mcp URL，不支持通配符。
+mcp_allowed_hosts: []
 allowed_user_ids:
 - 'me'
 date_format: ''

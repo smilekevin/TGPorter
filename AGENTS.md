@@ -26,12 +26,14 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `module/parallel_download.py` | Fixed-size parts, per-file part queues, checkpoint plans, and file merging |
 | `module/download_connection.py` | Independent connections owned by download workers and resource cleanup |
 | `module/pyrogram_extension.py` | Telegram download/upload integration, file reference refresh, rate-limit state, and SDK extensions |
-| `module/web.py` | Production Flask pages, Web API, authentication, and CSRF checks |
+| `module/web.py` | Flask pages/API, authentication/CSRF and the single-port ASGI listener |
+| `module/download_service.py` | Shared task queries and mutations for Web API and MCP, including async retry submission |
 | `module/templates/`, `module/static/` | WebUI templates, native HTML/CSS/JS, and static assets |
 | `module/filter.py`, `module/language.py`, `module/cloud_drive.py` | Message filtering, translations, and optional cloud uploads |
 | `run_local.py` | Standalone Mock WebUI for UI development; does not perform real downloads |
 | `tests/` | unittest regression tests that require no Telegram account |
 | `tools/benchmark_download.py` | Real Telegram download benchmarks and interruption/resume acceptance checks |
+| `module/mcp_server.py` | Integrated Streamable HTTP MCP tools at `/mcp`, using shared download operations |
 | `README.md`, `DEPLOY.md`, `docs/` | Chinese/English usage documentation, deployment guidance, and focused design/test guides |
 
 ## Design Constraints
@@ -59,14 +61,22 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 
 - Use the existing Flask templates and native frontend. Do not introduce a frontend framework or build pipeline for a local UI change.
 - Flask request threads and the asyncio download loop have a thread boundary. Follow the existing thread-safe coroutine submission approach rather than manipulating main-loop tasks directly from a request thread.
-- A non-empty `web_login_secret` protects pages and APIs and enables CSRF checks for state changes. New endpoints must follow the same rules. An empty value disables authentication by existing configuration design.
+- A non-empty `web_login_secret` protects pages and Web APIs using password-login sessions only. State changes require the session CSRF token. Never add a Bearer-token bypass to Web APIs, dashboard, login or logout. An empty password preserves the existing public WebUI/API mode independently of MCP.
 - When changing an API, check frontend requests, response shapes, and the real Flask route together. Mock UI checks do not replace production API validation.
+
+### Agent and MCP Integration
+
+- MCP lives in the main process/image on the same `web_host` / `web_port` as WebUI and APIs. Keep the existing Flask paths compatible; `create_web_app()` is the production ASGI entry point and must run the MCP session manager's lifespan. Do not add a sidecar, second listener or loopback Web API client.
+- Web API and MCP call `DownloadService` directly. Keep business operations independent of Flask requests and responses. Preserve task persistence and the existing thread-safe submissions to the downloader loop; do not create another worker pool or Telegram session.
+- `mcp_enabled` defaults to false and requires a non-empty `mcp_token` when enabled. Disabled `/mcp` returns 404. Every MCP request requires the MCP-only Bearer token, even if the browser password is empty; browser cookies never authenticate MCP, and MCP tokens never authenticate Web APIs. Use one `mcp_allowed_hosts` list for additional explicit hosts with optional ports, retaining loopback defaults. Derive the SDK HTTP/HTTPS Origin rules from that same list; do not add a separate origin setting. Reject paths, credentials and wildcards. This is an access allowlist, not a listener or connection URL. Tokens never belong in tool parameters, URLs, logs or error text.
+- Expose typed, bounded tools with accurate read-only/destructive annotations. Use stable `task_id` values rather than `task_id_display`. Deletion defaults to preserving completed files; explicit `delete_file=true` also removes them. `mcp_read_only` exposes only query tools and does not restrict independent browser sessions.
+- Translate shared-operation failures (`code="0"`) into MCP tool errors. Preserve batch retry's partial failure details and distinguish queue acceptance from completed downloads. MCP `submit_download` accepts one validated HTTPS `t.me` post link, resolves chat metadata on the downloader loop and persists it before the existing consumer fetches media. Return acceptance only after an atomic write succeeds; deduplicate unfinished posts and preserve the main account identity and topic metadata across restarts. Return `task_id` for active/completed rows and `pending_task_id` for pending cancellation. MCP submissions do not infer a Bot notification recipient and must not bypass concurrency or shared Telegram cooldowns. With MCP enabled and no `bot_token`, initialize the same task backend without a Bot session, keep the service running after configured downloads finish, and await its consumer/reply tasks during shutdown.
 
 ## Implementation Conventions
 
 - Prefer minimal changes. Follow the surrounding module's style, four-space indentation, and existing names. Do not bundle unrelated formatting, dependency upgrades, or architectural rewrites.
 - Use English identifiers and explain the intent of public functions and complex async flows. Comments should explain state, concurrency, or compatibility decisions rather than restate code.
-- CI and Docker use Python 3.11. Manage dependencies through `requirements.txt`. Pyrogram comes from the fork specified there; do not assume that its behavior matches the official release.
+- CI and Docker use Python 3.11. Manage all downloader and integrated MCP dependencies through `requirements.txt`; the main image includes them even when MCP is disabled. Pyrogram comes from the fork specified in the downloader requirements; do not assume that its behavior matches the official release.
 - Use the existing Loguru logging setup for important lifecycle events. Preserve connection-open and connection-close logs used by download acceptance checks.
 - Configuration changes must update `module/app.py`, `config.yaml.example`, and relevant documentation together. Bot command or Web API changes must be reflected in both README languages.
 - `module/parsetab.py` is generated parser output, not the primary implementation entry point. Make filtering changes in `module/filter.py` first.
@@ -79,6 +89,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 - `DEPLOY.md` owns prerequisites, credentials, complete installation and login steps, configuration examples and defaults, parallel-download settings and checkpoints, image updates, local builds, persistence, proxies and troubleshooting.
 - Maintain both Chinese and English sections when updating either document. Preserve the project/image name `telegram-media-downloader` and the service/container name `telegam-media-downloader`.
 - Keep summaries and links aligned with the detailed guide instead of duplicating complete commands, configuration blocks or persistence tables in README.
+- Maintain `AGENTS.md` when entry points, authentication, dependency management or deployment conventions change. `docs/mcp.md` owns the MCP tool reference; complete MCP Token and setup instructions belong in both language sections of `DEPLOY.md`.
 - Before finishing, check relative links and heading anchors, run `git diff --check`, and verify commands, image tags, configuration defaults and paths against `config.yaml.example`, `docker-compose.yaml`, the workflows and relevant source code.
 
 ## Development and Validation
@@ -104,6 +115,10 @@ python -B -m unittest discover -s tests -v
 python -B -m unittest discover -s tests -p 'test_parallel*.py' -v
 python -B -m unittest discover -s tests -p 'test_download_connections.py' -v
 
+# Web authentication and real MCP protocol tests against the single-port production app.
+python -B -m unittest discover -s tests -p 'test_web*.py' -v
+python -B -m unittest discover -s tests -p 'test_mcp*.py' -v
+
 # Mock UI development.
 python run_local.py
 
@@ -118,6 +133,7 @@ python media_downloader.py
 
 - The project and image are named `telegram-media-downloader`. The Compose service and container are named **`telegam-media-downloader`**, preserving the user's requested spelling. Do not apply that spelling to image/repository URLs or upstream links.
 - The image repository is `ghcr.io/smilekevin/telegram-media-downloader`. Docker uses a multi-stage Alpine build with `python media_downloader.py` as the runtime command.
+- The main image includes MCP. Enable it in `config.yaml`; reuse port 5000 and the existing Compose service and mounts. No separate MCP image, sidecar, optional dependency file or port mapping is required. Main-image CI and Release builds include the integrated MCP dependencies automatically.
 - Persist `downloads/`, `log/`, `sessions/`, `temp/`, `config.yaml`, and `data.yaml`. Configuration bind-mount sources must be files. Removing a container must not delete this host data.
 - Before deployment tests, check host ports and proxy reachability. Do not assume the example proxy address works on the current machine. Keep test overrides and temporary data in an isolated directory and out of the PR.
 - `.github/workflows/tests.yml` runs tests and amd64/arm64 builds for PRs, `master` pushes, and manual runs. Publishable CI runs push only `sha-<full-commit-sha>` tags and do not update `latest`.

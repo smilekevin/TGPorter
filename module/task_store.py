@@ -88,8 +88,10 @@ def _save_all(tasks: list):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(tasks, f, ensure_ascii=False, indent=2)
         os.replace(tmp, _TASKS_FILE)
+        return True
     except Exception as e:
         logger.warning(f"Failed to save bot tasks: {e}")
+        return False
 
 
 def save_task(task_id, chat_id, url, start_offset_id, end_offset_id,
@@ -99,6 +101,7 @@ def save_task(task_id, chat_id, url, start_offset_id, end_offset_id,
 
     防覆盖保险：同 task_id 已有任务且消息不同 → 拒绝写入；
     同 (chat, message_id) 已有 pending/downloading 任务 → 拒绝写入。
+    Returns True only after an atomic write; False on conflicts or write failures.
     """
     with _lock:
         tasks = _load_all()
@@ -144,8 +147,10 @@ def save_task(task_id, chat_id, url, start_offset_id, end_offset_id,
             "last_message_id": start_offset_id,
             "created_at": time.time(),
         })
-        _save_all(tasks)
+        if not _save_all(tasks):
+            return False
         logger.info(f"Saved bot task {task_id} ({task_type}) to persistence store")
+        return True
 
 
 def update_task_progress(task_id, last_message_id):

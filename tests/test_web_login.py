@@ -9,7 +9,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from module import download_stat, web
+from module import download_stat, download_service, web
 from module.app import Application
 
 
@@ -49,8 +49,8 @@ class WebLoginTests(unittest.TestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
     def test_all_dashboard_apis_reject_anonymous_requests_before_running_handlers(self):
-        with patch.object(web, "get_download_result", Mock()) as get_result, \
-                patch.object(web, "set_download_state", Mock()) as set_state:
+        with patch.object(download_service, "get_download_result", Mock()) as get_result, \
+                patch.object(download_service, "set_download_state", Mock()) as set_state:
             for route in self.app.url_map.iter_rules():
                 if route.endpoint in {"static", "index", "login", "logout"}:
                     continue

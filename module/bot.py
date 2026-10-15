@@ -307,6 +307,52 @@ class DownloadBot:
         self.task_id += 1
         return self.task_id
 
+    async def submit_download_link(self, chat_id, message_id, url, topic_id=0):
+        """Resolve a post's chat and durably enqueue it for the existing consumer."""
+        if is_flood_wait_active():
+            return {"code": "0", "message": "Telegram cooldown is active; retry after it expires."}
+        try:
+            chat = await asyncio.wait_for(self.client.get_chat(chat_id), timeout=10)
+        except pyrogram.errors.FloodWait as error:
+            from module.pyrogram_extension import _unified_flood_wait
+            _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + error.value + 5)
+            _unified_flood_wait["reason"] = f"submit_download FloodWait {error.value}s"
+            return {"code": "0", "message": "Telegram rate limit; retry after the cooldown expires."}
+        except asyncio.TimeoutError:
+            return {"code": "0", "message": "Telegram chat lookup timed out; no task was submitted."}
+        except Exception:
+            return {"code": "0", "message": "Cannot access this chat with the downloader's Telegram account."}
+        if not chat or not isinstance(getattr(chat, "id", None), int):
+            return {"code": "0", "message": "Telegram chat could not be resolved."}
+
+        def accepted(task, duplicate=False):
+            return {"code": "1", "status": task.get("download_state", "pending"),
+                    "task_id": f"{chat.id}_{message_id}", "pending_task_id": str(task["task_id"]),
+                    "task_id_display": task["extra_data"].get("task_id_display", ""),
+                    "url": url, "duplicate": duplicate}
+
+        # This runs on the download loop. No await occurs between deduplication,
+        # ID allocation and persistence, so concurrent submissions cannot race.
+        for task in get_running_tasks():
+            if (str(task.get("chat_id")) == str(chat.id)
+                    and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
+                return accepted(task, duplicate=True)
+        node = TaskNode(chat_id=chat.id, from_user_id="", limit=1,
+                        task_id=self.gen_task_id(), topic_id=topic_id)
+        extra = {"message_id": message_id, "message_client": "user", "topic_id": topic_id,
+                 "task_id_display": node.task_id_display, "submitted_via": "mcp",
+                 "source_chat_id": chat.id, "source_message_id": message_id,
+                 "source_chat_title": getattr(chat, "title", "") or "",
+                 "chat_title": getattr(chat, "title", "") or ""}
+        saved = save_task(node.task_id, chat.id, url, 0, 0, 1, None, "",
+                          task_type="download", extra_data=extra)
+        if not saved:
+            return {"code": "0", "message": "Task could not be persisted; submission was not accepted."}
+        # The consumer creates the live node and fetches the message later.
+        # No Bot notification recipient is inferred for MCP submissions.
+        self._ensure_pending_consumer()
+        return accepted({"task_id": node.task_id, "extra_data": extra})
+
     def get_message_client(self, chat_id, from_user_id="", message_client=""):
         """Restore the account that owns a persisted message's chat/ID pair."""
         if message_client == "bot":
@@ -1011,9 +1057,28 @@ async def start_download_bot(
     await _bot.start(app, client, add_download_task, download_chat_task)
 
 
+async def start_download_backend(app, client, add_download_task, download_chat_task):
+    """Keep the existing queue/recovery backend alive for MCP without a Bot session."""
+    if (_bot.app is app and _bot._pending_consumer_task is not None
+            and not _bot._pending_consumer_task.done()):
+        return
+    _bot.app = app
+    _bot.client = client
+    _bot.bot = None
+    _bot.add_download_task = add_download_task
+    _bot.download_chat_task = download_chat_task
+    _bot.is_running = True
+    await _bot.recover_tasks()
+    if _bot.reply_task is None or _bot.reply_task.done():
+        _bot.reply_task = app.loop.create_task(_bot.update_reply_message())
+    _bot._ensure_pending_consumer()
+    logger.info("Download backend started for MCP without a Telegram Bot session")
+
+
 async def stop_download_bot():
     """Stop download bot"""
-    _bot.update_config()
+    if _bot.bot:
+        _bot.update_config()
     _bot.is_running = False
     _bot.stop_task("all", discard_partial=False)
     background_tasks = [
@@ -2355,6 +2420,7 @@ async def _consume_one_pending():
                 bot=_bot.bot,
                 task_id=task_id,
                 task_id_display=extra.get("task_id_display", ""),
+                topic_id=extra.get("topic_id", 0),
             )
             node.source_chat_id = extra.get("source_chat_id", 0)
             node.source_message_id = extra.get("source_message_id", 0)
