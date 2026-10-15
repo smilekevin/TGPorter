@@ -20,7 +20,13 @@ class _MediaSession:
         self.owner = owner
         self.session = session
 
+    def __getattr__(self, name):
+        return getattr(self.session, name)
+
     async def invoke(self, query, **kwargs):
+        # The pool must see even short FloodWaits before it creates more
+        # connections; SDK-internal sleeping would hide the account cooldown.
+        kwargs["sleep_threshold"] = 0
         result = await self.session.invoke(query, **kwargs)
         if isinstance(result, raw.types.upload.FileCdnRedirect):
             self.owner.cdn_dc_id = result.dc_id
@@ -71,17 +77,18 @@ class _DownloadClient:
         await session.start()
         if not current_dc and not is_cdn:
             for _ in range(3):
-                exported = await self.client.invoke(raw.functions.auth.ExportAuthorization(dc_id=dc_id))
+                exported = await self.client.invoke(raw.functions.auth.ExportAuthorization(dc_id=dc_id),
+                                                    sleep_threshold=0)
                 try:
                     await session.invoke(raw.functions.auth.ImportAuthorization(
-                        id=exported.id, bytes=exported.bytes))
+                        id=exported.id, bytes=exported.bytes), sleep_threshold=0)
                 except AuthBytesInvalid:
                     continue
                 else:
                     break
             else:
                 raise AuthBytesInvalid
-        return session if is_cdn else _MediaSession(self, session)
+        return _MediaSession(self, session)
 
     def connection_factory(self, *args, **kwargs):
         connection = self.client.connection_factory(*args, **kwargs)

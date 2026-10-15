@@ -14,11 +14,15 @@ from pyrogram.file_id import FileId, FileType
 
 from module.download_connection import close_download_connections
 from module.parallel_download import CHUNK_SIZE as MB, download_file, parts_path, discard_partial_download
+from module.parallel_download import DownloadWorkersExhausted
 from module.pyrogram_extension import HookClient
 
 
 class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        ramp = patch("module.parallel_download.CONNECTION_START_INTERVAL", 0)
+        ramp.start()
+        self.addCleanup(ramp.stop)
         retry_wait = patch("module.parallel_download._wait_network_retry", AsyncMock())
         self.retry_wait = retry_wait.start()
         self.addCleanup(retry_wait.stop)
@@ -47,6 +51,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.ready_gate.set()
         self.cdn = False
         self.corrupt_hash = False
+        self.rpc_options = []
         owner = self
 
         class Transport:
@@ -85,6 +90,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 await self.connection.close()
 
             async def invoke(self, query, **kwargs):
+                owner.rpc_options.append(kwargs)
                 if isinstance(query, raw.functions.auth.ImportAuthorization):
                     return True
                 if owner.request_gate:
@@ -302,8 +308,8 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.network_failure = True
         self.fail_once = True
         await self.download()
-        self.assertEqual(self.retry_wait.await_count, 1)
-        self.assertEqual(len(self.sessions), 5)
+        self.retry_wait.assert_not_awaited()
+        self.assertLessEqual(len(self.sessions), 4)
         self.assertEqual(self.path.read_bytes(), self.data)
         self.assert_closed()
 
@@ -344,6 +350,9 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.sessions), 4)
         self.assertEqual(self.auth.await_count, 4)
         self.assertEqual(self.client.invoke.await_count, 4)
+        self.assertTrue(all(call.kwargs["sleep_threshold"] == 0
+                            for call in self.client.invoke.await_args_list))
+        self.assertTrue(all(options.get("sleep_threshold") == 0 for options in self.rpc_options))
         self.assertEqual(self.path.read_bytes(), self.data)
         self.assert_closed()
 
@@ -360,8 +369,9 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_cdn_hash_mismatch_preserves_parts_and_closes_connections(self):
         self.cdn = True
         self.corrupt_hash = True
-        with self.assertRaises(pyrogram.errors.CDNFileHashMismatch):
+        with self.assertRaises(DownloadWorkersExhausted) as result:
             await self.download()
+        self.assertIsInstance(result.exception.error, pyrogram.errors.CDNFileHashMismatch)
         self.assertFalse(self.path.exists())
         self.assertTrue((parts_path(str(self.path)) / "manifest.json").exists())
         self.assert_closed()

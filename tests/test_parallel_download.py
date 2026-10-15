@@ -12,6 +12,8 @@ from pathlib import Path
 
 from module.parallel_download import CHUNK_SIZE as MB
 from module.parallel_download import download_file, parts_path, part_count, _wait_network_retry
+from module.parallel_download import DownloadWorkersExhausted
+from module.telegram import pyrogram
 
 
 class Stopped(Exception):
@@ -50,6 +52,9 @@ class FakeClient:
 
 class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        ramp = patch("module.parallel_download.CONNECTION_START_INTERVAL", 0)
+        ramp.start()
+        self.addCleanup(ramp.stop)
         retry_wait = patch("module.parallel_download._wait_network_retry", AsyncMock())
         self.retry_wait = retry_wait.start()
         self.addCleanup(retry_wait.stop)
@@ -103,47 +108,234 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
                 failed.add(index)
                 raise ConnectionError("Transient connection failure")
         self.client.before_chunk = before
-        # Each part has its own budget, so more than three errors across the
-        # file do not exhaust the file attempt. Parts resume completed chunks.
+        # Completing a part resets the last worker's counter, so errors across
+        # separate successful parts do not exhaust the file attempt.
         await self.download(count=1, part_size=MB)
         self.assert_file()
         self.assertGreater(self.retry_wait.await_count, 3)
         self.assertEqual(self.client.tracker["active"], 0)
 
-    async def test_part_retry_does_not_cancel_healthy_worker(self):
-        blocked = asyncio.Event()
-        release = asyncio.Event()
-        failed = False
+    async def test_failed_connections_retire_while_survivor_finishes_their_parts(self):
+        healthy = None
+        failed = set()
+        failed_both = asyncio.Event()
+
         async def before(index):
-            nonlocal failed
-            if index == 0 and not failed:
-                failed = True
-                raise ConnectionError("Transient connection failure")
-        async def wait(*args):
-            blocked.set()
-            await release.wait()
+            nonlocal healthy
+            task = asyncio.current_task()
+            if index == 0 and healthy is None:
+                healthy = task
+                await failed_both.wait()
+            if task is not healthy:
+                failed.add(task)
+                if len(failed) == 2:
+                    failed_both.set()
+                raise pyrogram.errors.AuthBytesInvalid()
+
         self.client.before_chunk = before
-        self.retry_wait.side_effect = wait
-        task = asyncio.create_task(self.download(count=2, part_size=MB))
-        try:
-            await asyncio.wait_for(blocked.wait(), 2)
-            await self.until(lambda: len(self.client.calls) >= 9)
-            self.assertFalse(task.done())
-            release.set()
-            await task
-            self.assert_file()
-        finally:
-            release.set()
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.wait_for(self.download(count=3, part_size=MB), 2)
+        self.assert_file()
+        self.assertEqual(len(failed), 2)
+        self.retry_wait.assert_not_awaited()
+        self.assertEqual(self.client.tracker["active"], 0)
 
     async def test_persistent_part_failure_has_bounded_attempts(self):
-        self.client.early_end = 0
-        with self.assertRaises(ConnectionError):
+        async def before(_):
+            raise ConnectionError("Persistent offline failure")
+        self.client.before_chunk = before
+        with self.assertRaises(DownloadWorkersExhausted):
             await self.download(count=1, part_size=MB)
         self.assertEqual(len(self.client.calls), 3)
         self.assertEqual(self.retry_wait.await_count, 2)
         self.assertTrue(parts_path(str(self.path)).exists())
+
+    async def test_connections_start_gradually(self):
+        starts = []
+        blocked = asyncio.Event()
+
+        async def before(_):
+            starts.append(asyncio.get_running_loop().time())
+            await blocked.wait()
+
+        self.client.before_chunk = before
+        with patch("module.parallel_download.CONNECTION_START_INTERVAL", 0.04):
+            task = asyncio.create_task(self.download(count=3))
+            try:
+                await self.until(lambda: len(starts) == 1)
+                await asyncio.sleep(0.015)
+                self.assertEqual(len(starts), 1)
+                await self.until(lambda: len(starts) == 3)
+                self.assertTrue(all(b - a >= 0.035 for a, b in zip(starts, starts[1:])))
+            finally:
+                blocked.set()
+                await task
+        self.assert_file()
+
+    async def test_only_last_worker_gets_three_attempts(self):
+        async def before(_):
+            raise pyrogram.errors.AuthBytesInvalid()
+        self.client.before_chunk = before
+        with self.assertRaises(DownloadWorkersExhausted) as result:
+            await self.download(count=3)
+        self.assertIsInstance(result.exception.error, pyrogram.errors.AuthBytesInvalid)
+        self.assertEqual(len(self.client.calls), 5)
+        self.assertEqual(self.retry_wait.await_count, 2)
+        self.assertEqual(self.client.tracker["active"], 0)
+
+    async def test_flood_stops_expansion_but_existing_connection_finishes(self):
+        throttled = asyncio.Event()
+        release = asyncio.Event()
+        healthy = None
+
+        async def before(index):
+            nonlocal healthy
+            if index == 0 and healthy is None:
+                healthy = asyncio.current_task()
+                await release.wait()
+            if asyncio.current_task() is not healthy:
+                raise pyrogram.errors.FloodWait(1)
+
+        self.client.before_chunk = before
+        with patch("module.parallel_download.CONNECTION_START_INTERVAL", 0.03):
+            task = asyncio.create_task(download_file(
+                self.client, "file-id", len(self.data), str(self.path), "file-identity", 3,
+                self.report, self.wait_ready, 3 * MB,
+                flood_wait=lambda _: throttled.set()))
+            try:
+                await asyncio.wait_for(throttled.wait(), 2)
+                await asyncio.sleep(0.07)
+                self.assertEqual(len(self.client.calls), 2)
+                self.assertFalse(task.done())
+                release.set()
+                await asyncio.wait_for(task, 0.5)
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        self.assert_file()
+        self.retry_wait.assert_not_awaited()
+
+    async def test_all_flooded_connections_resume_after_extended_cooldown(self):
+        first = asyncio.Event()
+        second = asyncio.Event()
+        starts = []
+        failed = set()
+        deadlines = []
+
+        async def before(index):
+            task = asyncio.current_task()
+            if task not in failed:
+                failed.add(task)
+                if len(failed) == 1:
+                    await second.wait()
+                else:
+                    second.set()
+                    await first.wait()
+                    await asyncio.sleep(0.04)
+                starts.append(asyncio.get_running_loop().time())
+                raise pyrogram.errors.FloodWait(0.08 if len(starts) == 1 else 0.16)
+
+        def flood(seconds):
+            deadlines.append(asyncio.get_running_loop().time() + seconds)
+            first.set()
+
+        self.client.before_chunk = before
+        task = asyncio.create_task(download_file(
+            self.client, "file-id", len(self.data), str(self.path), "file-identity", 2,
+            self.report, self.wait_ready, 3 * MB, flood_wait=flood))
+        await asyncio.wait_for(task, 2)
+        self.assertEqual(len(deadlines), 2)
+        self.assertGreaterEqual(asyncio.get_running_loop().time(), max(deadlines))
+        self.assert_file()
+        self.retry_wait.assert_not_awaited()
+
+    async def test_cancel_during_flood_cooldown_preserves_checkpoint(self):
+        throttled = asyncio.Event()
+
+        async def before(index):
+            if index == 1:
+                raise pyrogram.errors.FloodPremiumWait(900)
+
+        self.client.before_chunk = before
+        task = asyncio.create_task(download_file(
+            self.client, "file-id", len(self.data), str(self.path), "file-identity", 1,
+            self.report, self.wait_ready, 3 * MB, flood_wait=lambda _: throttled.set()))
+        await asyncio.wait_for(throttled.wait(), 2)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        self.assertEqual(self.client.tracker["active"], 0)
+        self.assertEqual((parts_path(str(self.path)) / "0.part").stat().st_size, MB)
+
+    async def test_shared_flood_cooldown_delays_other_file_connections(self):
+        deadline = asyncio.get_running_loop().time() + 0.08
+        other = FakeClient(self.data)
+        task = asyncio.create_task(download_file(
+            other, "other-id", len(self.data), str(self.path), "other-identity", 2,
+            self.report, self.wait_ready, 3 * MB,
+            flood_remaining=lambda: max(0, deadline - asyncio.get_running_loop().time())))
+        try:
+            await asyncio.sleep(0.03)
+            self.assertEqual(other.calls, [])
+            deadline += 0.08
+            await asyncio.sleep(0.07)
+            self.assertEqual(other.calls, [])
+            await asyncio.wait_for(task, 2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.assert_file()
+
+    async def test_unused_worker_cannot_keep_creation_slot_across_flood_wait(self):
+        self.data = self.data[:2 * MB]
+        self.client.data = self.data
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        throttled = asyncio.Event()
+        failed = False
+
+        async def before(index):
+            nonlocal failed
+            if index == 1 and not failed:
+                entered.set()
+                await release.wait()
+                failed = True
+                raise pyrogram.errors.FloodWait(0.15)
+
+        self.client.before_chunk = before
+        with patch("module.parallel_download.CONNECTION_START_INTERVAL", 0.03):
+            task = asyncio.create_task(download_file(
+                self.client, "file-id", len(self.data), str(self.path), "file-identity", 2,
+                self.report, self.wait_ready, MB, flood_wait=lambda _: throttled.set()))
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+                await asyncio.sleep(0.08)
+                release.set()
+                await asyncio.wait_for(throttled.wait(), 2)
+                await asyncio.sleep(0.04)
+                self.assertEqual(len(self.client.calls), 2)
+                self.assertFalse(task.done())
+                await asyncio.wait_for(task, 2)
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        self.assert_file()
+
+    async def test_repeated_premium_flood_waits_resume_without_failure_budget(self):
+        waits = 0
+
+        async def before(index):
+            nonlocal waits
+            if index == 1 and waits < 4:
+                waits += 1
+                raise pyrogram.errors.FloodPremiumWait(0.01)
+
+        self.client.before_chunk = before
+        await asyncio.wait_for(self.download(count=1), 2)
+        self.assertEqual(waits, 4)
+        self.retry_wait.assert_not_awaited()
+        self.assert_file()
 
     async def test_out_of_order_ranges_merge_to_identical_file_and_aggregate_progress(self):
         release_first = asyncio.Event()

@@ -329,7 +329,7 @@ async def upload_telegram_chat_message(
             )
             break
         except pyrogram.errors.exceptions.flood_420.FloodWait as wait_err:
-            _unified_flood_wait["until"] = time.time() + wait_err.value + 5
+            _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + wait_err.value + 5)
             _unified_flood_wait["reason"] = f"upload FloodWait {wait_err.value}s (msg {message.id})"
             await asyncio.sleep(wait_err.value * 2)
             logger.warning(
@@ -1330,7 +1330,7 @@ async def _report_bot_status(
                 wait_hours = wait_seconds / 3600
                 wait_minutes = (wait_seconds % 3600) / 60
                 node.flood_wait_until = time.time() + wait_seconds
-                _unified_flood_wait["until"] = time.time() + wait_seconds
+                _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + wait_seconds)
                 _unified_flood_wait["reason"] = f"edit_message FloodWait {wait_seconds}s"
                 logger.warning(
                     "FLOOD_WAIT in edit_message: need to wait {:.0f}h {:.0f}m ({} seconds)",
