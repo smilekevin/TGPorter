@@ -19,6 +19,10 @@ RUN apk add --no-cache rclone
 
 FROM python:3.11.9-alpine AS runtime
 
+ARG APP_VERSION=unknown
+ENV APP_VERSION=${APP_VERSION}
+LABEL org.opencontainers.image.version=${APP_VERSION}
+
 WORKDIR /app
 
 # Copy installed deps from build stage

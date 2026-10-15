@@ -79,6 +79,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.tags.outputs.version }}
           labels: |
             org.opencontainers.image.title=Telegram Media Downloader
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

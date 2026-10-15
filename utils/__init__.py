@@ -1,5 +1,7 @@
 """Init namespace"""
 
-__version__ = "1.0.0"
+from .version import get_version
+
+__version__ = get_version()
 __license__ = "MIT License"
 __copyright__ = "Copyright (C) 2025 tangyoha <https://github.com/tangyoha>"

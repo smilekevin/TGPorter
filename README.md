@@ -119,6 +119,8 @@
 
 推荐使用本 fork 的预构建镜像 `ghcr.io/smilekevin/telegram-media-downloader:latest`，由 GitHub Release 发布流程更新。准备 Telegram API 凭据与 Bot Token，配置下载参数和 WebUI 密码，首次在终端登录后切换为后台运行。
 
+WebUI、Bot、MCP 和启动日志共用实际运行版本：Release 镜像显示 Git tag，源码运行读取 Git 信息。版本优先级与回退规则见 [运行版本](./DEPLOY.md#运行版本)。
+
 | 运行方式 | 说明 | 操作指南 |
 |----------|------|----------|
 | Docker 镜像 | 直接运行预构建镜像，适合服务器 / NAS | [镜像部署](./DEPLOY.md#docker-镜像部署) |
@@ -498,6 +500,8 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 ## Quick Start
 
 Use this fork's prebuilt image, `ghcr.io/smilekevin/telegram-media-downloader:latest`, updated by GitHub Releases. Prepare Telegram API credentials and a Bot Token, configure download settings and a WebUI password, then complete interactive login before starting in the background.
+
+WebUI, Bot, MCP and startup logs share the running version: Release images display the Git tag, while source runs read Git metadata. See [Running Version](./DEPLOY.md#running-version) for precedence and fallbacks.
 
 | Method | Use case | Guide |
 |--------|----------|-------|

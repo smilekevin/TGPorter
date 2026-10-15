@@ -15,6 +15,7 @@ import uvicorn
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
+import utils
 from module import download_stat, task_store, web
 from module.mcp_server import create_server
 from module.download_service import DownloadService
@@ -111,6 +112,12 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tools["list_downloads"].input_schema["properties"]["limit"]["maximum"], 500)
             self.assertIn("not task_id_display", tools["pause_task"].input_schema["properties"]["task_id"]["description"])
             self.assertNotIn(self.config.mcp_token, str(listed))
+
+    async def test_status_preserves_the_shared_runtime_version(self):
+        with patch.object(utils, "__version__", "v1.2.3-rc.1"):
+            async with Client(create_server(self.service)) as client:
+                status = self.assert_success(await client.call_tool("get_status"))
+                self.assertEqual(status["version"], "v1.2.3-rc.1")
 
     async def test_status_and_all_four_lists_use_shared_operations(self):
         async with Client(self.server) as client:
