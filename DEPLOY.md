@@ -12,7 +12,7 @@ English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api
 
 ## 前置条件
 
-1. Docker 镜像部署需要 Docker；Compose 部署还需 Docker Compose。手动安装需要 Python 3.11 和 pip。
+1. Docker 镜像部署需要 Docker；Compose 部署还需 Docker Compose。手动安装需要 Python 3.14 和 pip。
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
 3. 已创建 Bot Token（通过 @BotFather）
 
@@ -175,7 +175,7 @@ Compose 将 session 保存在宿主机的 `sessions/`；`--rm` 只删除一次�
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
 cd telegram-media-downloader
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 
@@ -194,12 +194,12 @@ python media_downloader.py
 
 ### 本地开发模式
 
-在仓库根目录使用 Python 3.11 虚拟环境；只需 Flask 和 Werkzeug，无需安装完整下载依赖或配置 Telegram 凭证。
+在仓库根目录使用 Python 3.14 虚拟环境；只需 Flask 和 Werkzeug，无需安装完整下载依赖或配置 Telegram 凭证。
 
 ```bash
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
-python -m pip install Flask==2.2.2 Werkzeug==2.2.2
+python -m pip install Flask==3.1.3 Werkzeug==3.1.9
 # 无需 Telegram 账号，Mock 数据启动 WebUI
 python run_local.py
 # 访问 http://localhost:5000
@@ -505,7 +505,7 @@ environment:
 
 ## Prerequisites
 
-- Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.11 and pip.
+- Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.14 and pip.
 - Actual downloads require Telegram API credentials and access to the target messages. Mock development mode does not require Telegram login.
 - The project and image use `telegram-media-downloader`; the Compose service and container intentionally use `telegam-media-downloader`.
 - The prebuilt image is `ghcr.io/smilekevin/telegram-media-downloader`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`. The README Version badge follows the latest stable GitHub Release tag; its Python badge reads `python-version` from `.github/workflows/tests.yml`. Badge updates appear after caches refresh.
@@ -662,7 +662,7 @@ Compose saves the session in the host's `sessions/` directory. `--rm` removes on
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
 cd telegram-media-downloader
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 
@@ -681,12 +681,12 @@ At `Enter phone number or bot token:`, enter your phone number with its country 
 
 ### Local Dev Mode
 
-From the repository root, use a Python 3.11 virtual environment. Only Flask and Werkzeug are required; Telegram credentials and the full downloader dependencies are unnecessary.
+From the repository root, use a Python 3.14 virtual environment. Only Flask and Werkzeug are required; Telegram credentials and the full downloader dependencies are unnecessary.
 
 ```bash
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
-python -m pip install Flask==2.2.2 Werkzeug==2.2.2
+python -m pip install Flask==3.1.3 Werkzeug==3.1.9
 # No Telegram account needed, mock data for WebUI debugging
 python run_local.py
 # Open http://localhost:5000

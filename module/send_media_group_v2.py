@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Callable, List, Optional, Union
 
-import pyrogram
+from module.telegram import pyrogram
 from pyrogram import raw, types, utils
 from pyrogram.file_id import FileType
 

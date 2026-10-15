@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-import pyrogram
+from module.telegram import pyrogram
 from pyrogram import enums, types
 from pyrogram.client import Cache
 from pyrogram.file_id import FileId, FileType

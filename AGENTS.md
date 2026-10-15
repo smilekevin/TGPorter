@@ -26,6 +26,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `module/download_stat.py` | Download progress, history, failures, pause, and cancellation state |
 | `module/parallel_download.py` | Fixed-size parts, per-file part queues, checkpoint plans, and file merging |
 | `module/download_connection.py` | Independent connections owned by download workers and resource cleanup |
+| `module/telegram.py` | Python 3.14-compatible import of the pinned Pyrogram fork |
 | `module/pyrogram_extension.py` | Telegram download/upload integration, file reference refresh, rate-limit state, and SDK extensions |
 | `module/web.py` | Flask pages/API, authentication/CSRF and the single-port ASGI listener |
 | `module/download_service.py` | Shared task queries and mutations for Web API and MCP, including async retry submission |
@@ -79,7 +80,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 - Prefer minimal changes. Follow the surrounding module's style, four-space indentation, and existing names. Do not bundle unrelated formatting, dependency upgrades, or architectural rewrites.
 - Keep runtime Python, JS and HTML source in English, including comments and diagnostic text. Chinese UI text belongs in `lang/`; tests may retain language fixtures. Do not add historical-message aliases: unrecognized records stay literal. Persist canonical English error text and translate it at display time. Bot and WebUI share `lang/*.json` message keys. Keep one file per language: English lists canonical message keys once, while translated catalogs map English keys to values. Generate current-message matching rules from English templates; reuse shared vocabulary, preserve named placeholders, and use English fallback. `zh` aliases `zh-cn`; `zh-tw` is Traditional Chinese. New catalogs are discovered at startup; see `docs/languages.md`.
 - Use English identifiers and explain the intent of public functions and complex async flows. Comments should explain state, concurrency, or compatibility decisions rather than restate code.
-- CI and Docker use Python 3.11. Manage all downloader and integrated MCP dependencies through `requirements.txt`; the main image includes them even when MCP is disabled. Pyrogram comes from the fork specified in the downloader requirements; do not assume that its behavior matches the official release.
+- CI and Docker use Python 3.14. Manage all downloader and integrated MCP dependencies through `requirements.txt`; the main image includes them even when MCP is disabled. Pyrogram comes from the commit-pinned fork specified in the downloader requirements; import it through `module.telegram` to initialize its import-time wrappers on Python 3.14. Do not assume that its behavior matches the official release.
 - Use the existing Loguru logging setup for important lifecycle events. Preserve connection-open and connection-close logs used by download acceptance checks.
 - Configuration changes must update `module/app.py`, `config.yaml.example`, and relevant documentation together. Bot command or Web API changes must be reflected in both README languages.
 - `module/parsetab.py` is generated parser output, not the primary implementation entry point. Make filtering changes in `module/filter.py` first.
@@ -100,7 +101,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 Run commands from the repository root and use an isolated Python environment:
 
 ```bash
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```

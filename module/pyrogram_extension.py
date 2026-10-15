@@ -13,7 +13,7 @@ from io import BytesIO, StringIO
 from mimetypes import MimeTypes
 from typing import Callable, Iterable, List, Optional, Tuple, Union
 
-import pyrogram
+from module.telegram import pyrogram
 from loguru import logger
 from pyrogram import enums, parser, types, utils
 from pyrogram.client import Cache

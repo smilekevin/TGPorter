@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import pyrogram
+from module.telegram import pyrogram
 from pyrogram.file_id import FileId
 from ruamel.yaml import YAML
 

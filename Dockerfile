@@ -1,4 +1,4 @@
-FROM python:3.11.9-alpine AS build
+FROM python:3.14.8-alpine AS build
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir \
 RUN apk add --no-cache rclone
 
 
-FROM python:3.11.9-alpine AS runtime
+FROM python:3.14.8-alpine AS runtime
 
 ARG APP_VERSION=unknown
 ENV APP_VERSION=${APP_VERSION}
@@ -26,7 +26,7 @@ LABEL org.opencontainers.image.version=${APP_VERSION}
 WORKDIR /app
 
 # Copy installed deps from build stage
-COPY --from=build /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=build /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 
 # Copy rclone to the path expected by the app (matches code default: ./rclone/rclone)
 COPY --from=build /usr/bin/rclone /app/rclone/rclone

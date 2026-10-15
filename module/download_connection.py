@@ -4,6 +4,7 @@ import asyncio
 from itertools import count
 
 from loguru import logger
+from module.telegram import pyrogram
 from pyrogram import Client
 
 

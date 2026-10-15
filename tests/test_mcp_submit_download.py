@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx2
-import pyrogram
+from module.telegram import pyrogram
 import uvicorn
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client

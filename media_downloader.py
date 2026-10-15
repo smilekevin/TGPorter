@@ -6,7 +6,7 @@ import shutil
 import time
 from typing import List, Optional, Tuple, Union
 
-import pyrogram
+from module.telegram import pyrogram
 from loguru import logger
 from pyrogram.types import Audio, Document, Photo, Video, VideoNote, Voice
 from rich.logging import RichHandler

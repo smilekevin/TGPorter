@@ -1,17 +1,15 @@
-#https://github.com/tangyoha/pyrogram/archive/refs/tags/v2.0.69.zip
-https://github.com/tangyoha/pyrogram/archive/refs/heads/patch.zip
-#https://github.com/tangyoha/pyrogram/archive/refs/heads/master_v2.0.69_1.zip
-PyYAML==5.3.1
-rich==12.5.1
+# Keep the project-specific Pyrogram fork reproducible.
+https://github.com/tangyoha/pyrogram/archive/51a100c5e2745471ee89c1dd96dd69962973108b.zip
+PyYAML==6.0.3
+rich==15.0.0
 PyTgCrypto==1.2.12
-loguru==0.6.0
-# aligo==5.4.0
-Werkzeug==2.2.2
-flask==2.2.2
+loguru==0.7.3
+Werkzeug==3.1.9
+flask==3.1.3
 ply==3.11
-ruamel.yaml==0.17.21
-flask-login==0.6.2
-pycryptodome==3.18.0
-requests==2.32.3
+ruamel.yaml==0.19.1
+flask-login==0.6.3
+pycryptodome==4.0.0
+requests==2.34.2
 mcp==2.3.0
 a2wsgi==1.10.10

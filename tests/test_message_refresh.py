@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from module.telegram import pyrogram
 from pyrogram import enums, types
 from pyrogram.client import Cache
 

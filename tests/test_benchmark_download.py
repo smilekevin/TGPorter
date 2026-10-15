@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from module.telegram import pyrogram
 from pyrogram.file_id import FileId, FileType
 
 from tools.benchmark_download import benchmark, message_target, prepare_session, resume_download

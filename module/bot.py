@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Callable, List, Union
 
-import pyrogram
+from module.telegram import pyrogram
 from loguru import logger
 from pyrogram import types
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler

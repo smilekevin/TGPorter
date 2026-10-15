@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from module.telegram import pyrogram
 from pyrogram import Client, raw
 from pyrogram.file_id import FileId, FileType
 
