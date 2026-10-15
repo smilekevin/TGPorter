@@ -118,7 +118,7 @@
     "Loading...": "Завантаження...",
     "Cancel": "Скасувати",
     "Clear selection": "Зняти вибір",
-    "Also delete local files": "Також видалити локальні файли",
+    "Also delete local files and cache": "Також видалити локальні файли та кеш",
     "Failed ": "Помилка ",
     "Failed downloads will appear here": "Тут з’являться невдалі завантаження",
     "Completed ": "Завершено ",
@@ -152,7 +152,7 @@
     "No pending tasks": "Немає завдань у черзі",
     "No matching tasks": "Збігів не знайдено",
     "Unknown error": "Невідома помилка",
-    "Local file no longer exists": "Локальний файл більше не існує",
+    "No local files or cache found": "Локальні файли та кеш не знайдено",
     "items": "записів",
     "Checking files...": "Перевірка файлів...",
     "Fetching file information...": "Отримання відомостей про файл...",
@@ -190,6 +190,8 @@
     "Tasks: {count}": "Завдань: {count}",
     "Selected: {count}": "Вибрано: {count}",
     "All {count} items loaded": "Завантажено записів: {count}",
-    "Delete {count} selected tasks? This cannot be undone.": "Видалити вибрані завдання ({count})? Цю дію неможливо скасувати."
+    "Delete {count} selected tasks? This cannot be undone.": "Видалити вибрані завдання ({count})? Цю дію неможливо скасувати.",
+    "Cache files (partial downloads)": "Файли кешу (часткові завантаження)",
+    "Local file": "Локальний файл"
   }
 }

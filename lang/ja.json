@@ -116,7 +116,7 @@
     "Loading...": "読み込み中...",
     "Cancel": "キャンセル",
     "Clear selection": "選択を解除",
-    "Also delete local files": "ローカルファイルも削除",
+    "Also delete local files and cache": "ローカルファイルとキャッシュも削除",
     "Failed ": "失敗日時: ",
     "Failed downloads will appear here": "失敗したダウンロードがここに表示されます",
     "Completed ": "完了日時: ",
@@ -150,7 +150,7 @@
     "No pending tasks": "待機中のタスクはありません",
     "No matching tasks": "一致するタスクが見つかりません",
     "Unknown error": "不明なエラー",
-    "Local file no longer exists": "ローカルファイルは存在しません",
+    "No local files or cache found": "ローカルファイルまたはキャッシュが見つかりません",
     "items": "件",
     "Checking files...": "ファイルを確認中...",
     "Fetching file information...": "ファイル情報を取得中...",
@@ -327,6 +327,8 @@
     "get_messages connection timeout, possibly rate limited; chat {chat}, message {message}, attempt {count}": "get_messages 接続タイムアウト。制限の可能性あり。チャット {chat}、メッセージ {message}、試行 {count}",
     "get_messages network error; chat {chat}, message {message}, attempt {count}": "get_messages ネットワークエラー。チャット {chat}、メッセージ {message}、試行 {count}",
     "Connection timeout, possibly rate limited (message {message})": "接続タイムアウト。制限の可能性あり（メッセージ {message}）",
-    "Resume FloodWait (message {message})": "再開時のFloodWait（メッセージ {message}）"
+    "Resume FloodWait (message {message})": "再開時のFloodWait（メッセージ {message}）",
+    "Cache files (partial downloads)": "キャッシュファイル（未完了のダウンロード）",
+    "Local file": "ローカルファイル"
   }
 }

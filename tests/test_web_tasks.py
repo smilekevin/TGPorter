@@ -76,6 +76,44 @@ class WebTaskTests(unittest.TestCase):
         self.assertFalse(self.parts.exists())
         self.assertTrue(other.exists())
 
+    def test_failed_cache_without_output_reports_existing_cache_path(self):
+        self.file.unlink()
+        for suffix in ('.parts', '.temp', ''):
+            with self.subTest(suffix=suffix):
+                cache = Path(str(self.staging) + suffix)
+                if suffix != '.parts':
+                    cache.write_bytes(b'partial')
+                result = self.post('/check_file_exists?task_id=failed-1').json
+                self.assertTrue(result['exists'])
+                self.assertFalse(result['output_exists'])
+                self.assertTrue(result['cache_exists'])
+                self.assertEqual(result['cache_paths'], [str(cache)])
+                self.assertEqual(result['path'], str(cache))
+                self.assertEqual(result['filename'], cache.name)
+                if cache.is_dir():
+                    shutil.rmtree(cache)
+                else:
+                    cache.unlink()
+
+    def test_output_and_cache_are_reported_separately(self):
+        result = self.post('/check_file_exists?task_id=failed-1').json
+        self.assertTrue(result['output_exists'])
+        self.assertTrue(result['cache_exists'])
+        self.assertEqual(result['path'], str(self.file))
+        self.assertEqual(result['cache_paths'], [str(self.parts)])
+        completed = self.post('/check_file_exists?task_id=task-1').json
+        self.assertTrue(completed['output_exists'])
+        self.assertFalse(completed['cache_exists'])
+
+    def test_no_files_reports_no_cache(self):
+        self.file.unlink()
+        shutil.rmtree(self.parts)
+        result = self.post('/check_file_exists?task_id=failed-1').json
+        self.assertFalse(result['exists'])
+        self.assertFalse(result['output_exists'])
+        self.assertFalse(result['cache_exists'])
+        self.assertEqual(result['cache_paths'], [])
+
     def test_failed_delete_can_preserve_output_and_staging(self):
         self.assertEqual(self.post('/delete_task?task_id=failed-1').json['code'], '1')
         self.assertTrue(self.file.exists())
@@ -114,10 +152,11 @@ const assert = require('node:assert/strict');
 global.WebI18n = {language: 'zh', t: text => text};
 let requests = [];
 let duplicate = false;
+let fileStatus = {exists: true};
 global.fetch = async (url, options) => {
     requests.push({url, options});
     return {status: 200, json: async () => url === '/submit_download'
-        ? {code: '1', duplicate} : {code: '1', exists: true}};
+        ? {code: '1', duplicate} : {code: '1', ...fileStatus}};
 };
 ''' + script + '''
 (async () => {
@@ -134,6 +173,19 @@ global.fetch = async (url, options) => {
         await ui.batchDelete();
         assert.equal(ui.deleteModal.deleteFile, tab !== 'completed');
     }
+    fileStatus = {exists: true, output_exists: false, cache_exists: true,
+                  filename: 'partial.parts', path: '/temp/partial.parts'};
+    await ui.deleteTask('failed-1');
+    assert.equal(ui.deleteModal.fileExists, true);
+    assert.equal(ui.deleteModal.cacheOnly, true);
+    assert.equal(ui.deleteModal.filePath, '/temp/partial.parts');
+    fileStatus = {exists: true, output_exists: true, cache_exists: false};
+    await ui.deleteTask('task-1');
+    assert.equal(ui.deleteModal.cacheOnly, false);
+    fileStatus = {exists: false, output_exists: false, cache_exists: false};
+    await ui.deleteTask('missing');
+    assert.equal(ui.deleteModal.fileExists, false);
+    assert.equal(ui.deleteModal.cacheOnly, false);
     ui.downloadUrl = ' https://t.me/channel_name/123 ';
     await ui.submitDownload();
     const sent = requests.find(r => r.url === '/submit_download');

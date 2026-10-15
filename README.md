@@ -84,7 +84,7 @@
   - ✅ **已完成** — 无限滚动，服务端搜索
   - ❌ **失败** — 失败原因 + 源消息链接，支持重试
   - ⏳ **待执行** — pending/queued 队列，等待时间显示，区分等待中/排队中状态
-- **操作** — 暂停/恢复、删除（单个/批量）、重试（单个/批量）
+- **操作** — 暂停/恢复、删除（单个/批量）、重试（单个/批量）；删除确认会识别本地文件和下载缓存
 - **实时数据** — 总速度 = 所有活跃任务速度之和，3 秒无回调判为过期归零
 - **粘性导航栏** — 滚动时标签页固定在顶部
 - **密码登录** — 网页和 Web API 使用登录 Session，可选记住登录 7 天，修改状态需 CSRF Token
@@ -187,7 +187,7 @@ Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参
 | `/get_app_version` | GET | 应用版本 |
 | `/get_max_workers` | GET | 当前同时下载的文件数 |
 | `/set_max_workers` | POST | 设置同时下载的文件数（`n=1`–`6`） |
-| `/check_file_exists` | POST | 检查任务的本地文件或失败断点是否存在 |
+| `/check_file_exists` | POST | 检查任务的本地文件或失败断点，分别返回 `output_exists`、`cache_exists` 和 `cache_paths` |
 | `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
 | `/pause_task` | POST | 暂停单个任务 |
 | `/resume_task` | POST | 恢复单个任务 |
@@ -471,7 +471,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
   - ✅ **Completed** — infinite scroll, server-side search
   - ❌ **Failed** — error reason + source link, retry supported
   - ⏳ **Pending** — queue with wait time
-- **Actions** — pause/resume, delete (single/batch), retry (single/batch)
+- **Actions** — pause/resume, delete (single/batch), retry (single/batch); deletion confirmation identifies local files and download cache
 - **Real-time** — total speed = sum of active task speeds, 3s stale check
 - **Sticky nav** — tabs stay visible while scrolling
 - **Password login** — WebUI and Web APIs use login sessions with an optional seven-day remember-me cookie; state changes require a CSRF token
@@ -574,7 +574,7 @@ The main service exposes typed tools, structured results and actionable errors a
 | `/get_app_version` | GET | App version |
 | `/get_max_workers` | GET | Current number of simultaneous file downloads |
 | `/set_max_workers` | POST | Set simultaneous file downloads (`n=1`–`6`) |
-| `/check_file_exists` | POST | Check local output or failed-task partial data |
+| `/check_file_exists` | POST | Check local output or failed-task partial data; return `output_exists`, `cache_exists`, and `cache_paths` separately |
 | `/set_download_state` | POST | Global pause/resume (`state=pause` / `state=continue`) |
 | `/pause_task` | POST | Pause a task |
 | `/resume_task` | POST | Resume a task |

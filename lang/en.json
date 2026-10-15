@@ -116,7 +116,7 @@
     "Loading...",
     "Cancel",
     "Clear selection",
-    "Also delete local files",
+    "Also delete local files and cache",
     "Failed ",
     "Failed downloads will appear here",
     "Completed ",
@@ -150,7 +150,7 @@
     "No pending tasks",
     "No matching tasks",
     "Unknown error",
-    "Local file no longer exists",
+    "No local files or cache found",
     "items",
     "Checking files...",
     "Fetching file information...",
@@ -327,6 +327,8 @@
     "get_messages connection timeout, possibly rate limited; chat {chat}, message {message}, attempt {count}",
     "get_messages network error; chat {chat}, message {message}, attempt {count}",
     "Connection timeout, possibly rate limited (message {message})",
-    "Resume FloodWait (message {message})"
+    "Resume FloodWait (message {message})",
+    "Cache files (partial downloads)",
+    "Local file"
   ]
 }

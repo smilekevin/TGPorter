@@ -120,7 +120,7 @@
     "Loading...": "加载中...",
     "Cancel": "取消",
     "Clear selection": "取消选择",
-    "Also delete local files": "同时删除本地文件",
+    "Also delete local files and cache": "同时删除本地文件和缓存",
     "Failed ": "失败于 ",
     "Failed downloads will appear here": "失败的下载会在这里显示",
     "Completed ": "完成于 ",
@@ -154,7 +154,7 @@
     "No pending tasks": "暂无待下载任务",
     "No matching tasks": "未找到匹配的任务",
     "Unknown error": "未知错误",
-    "Local file no longer exists": "本地文件已不存在",
+    "No local files or cache found": "未找到本地文件或缓存",
     "items": "条",
     "Checking files...": "正在检查文件...",
     "Fetching file information...": "正在获取文件信息...",
@@ -331,6 +331,8 @@
     "get_messages connection timeout, possibly rate limited; chat {chat}, message {message}, attempt {count}": "get_messages 连接超时疑似限速 chat {chat} msg {message} (第{count}次)",
     "get_messages network error; chat {chat}, message {message}, attempt {count}": "get_messages 网络错误 chat {chat} msg {message} (第{count}次)",
     "Connection timeout, possibly rate limited (message {message})": "连接超时疑似限速 (msg {message})",
-    "Resume FloodWait (message {message})": "续传 FloodWait (msg {message})"
+    "Resume FloodWait (message {message})": "续传 FloodWait (msg {message})",
+    "Cache files (partial downloads)": "缓存文件（未完成下载）",
+    "Local file": "本地文件"
   }
 }

@@ -116,7 +116,7 @@
     "Loading...": "Загрузка...",
     "Cancel": "Отмена",
     "Clear selection": "Снять выделение",
-    "Also delete local files": "Также удалить локальные файлы",
+    "Also delete local files and cache": "Также удалить локальные файлы и кэш",
     "Failed ": "Ошибка ",
     "Failed downloads will appear here": "Здесь появятся неудачные загрузки",
     "Completed ": "Завершено ",
@@ -150,7 +150,7 @@
     "No pending tasks": "Нет задач в очереди",
     "No matching tasks": "Совпадений не найдено",
     "Unknown error": "Неизвестная ошибка",
-    "Local file no longer exists": "Локальный файл больше не существует",
+    "No local files or cache found": "Локальные файлы и кэш не найдены",
     "items": "записей",
     "Checking files...": "Проверка файлов...",
     "Fetching file information...": "Получение сведений о файле...",
@@ -188,6 +188,8 @@
     "Tasks: {count}": "Задач: {count}",
     "Selected: {count}": "Выбрано: {count}",
     "All {count} items loaded": "Загружено записей: {count}",
-    "Delete {count} selected tasks? This cannot be undone.": "Удалить выбранные задачи ({count})? Это действие необратимо."
+    "Delete {count} selected tasks? This cannot be undone.": "Удалить выбранные задачи ({count})? Это действие необратимо.",
+    "Cache files (partial downloads)": "Файлы кэша (частичные загрузки)",
+    "Local file": "Локальный файл"
   }
 }

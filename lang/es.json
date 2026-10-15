@@ -116,7 +116,7 @@
     "Loading...": "Cargando...",
     "Cancel": "Cancelar",
     "Clear selection": "Quitar selección",
-    "Also delete local files": "Eliminar también archivos locales",
+    "Also delete local files and cache": "Eliminar también archivos locales y caché",
     "Failed ": "Falló ",
     "Failed downloads will appear here": "Las descargas fallidas aparecerán aquí",
     "Completed ": "Completada ",
@@ -150,7 +150,7 @@
     "No pending tasks": "No hay tareas pendientes",
     "No matching tasks": "No hay tareas coincidentes",
     "Unknown error": "Error desconocido",
-    "Local file no longer exists": "El archivo local ya no existe",
+    "No local files or cache found": "No se encontraron archivos locales ni caché",
     "items": "elementos",
     "Checking files...": "Comprobando archivos...",
     "Fetching file information...": "Obteniendo información del archivo...",
@@ -327,6 +327,8 @@
     "get_messages connection timeout, possibly rate limited; chat {chat}, message {message}, attempt {count}": "Tiempo de conexión get_messages agotado, posible límite; chat {chat}, mensaje {message}, intento {count}",
     "get_messages network error; chat {chat}, message {message}, attempt {count}": "Error de red get_messages; chat {chat}, mensaje {message}, intento {count}",
     "Connection timeout, possibly rate limited (message {message})": "Conexión agotada, posible límite (mensaje {message})",
-    "Resume FloodWait (message {message})": "FloodWait al reanudar (mensaje {message})"
+    "Resume FloodWait (message {message})": "FloodWait al reanudar (mensaje {message})",
+    "Cache files (partial downloads)": "Archivos de caché (descargas parciales)",
+    "Local file": "Archivo local"
   }
 }

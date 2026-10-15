@@ -862,6 +862,7 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                                         </svg>
                                         <div class="min-w-0">
+                                            <p class="text-xs font-medium text-amber-800" x-text="deleteModal.cacheOnly ? t('Cache files (partial downloads)') : t('Local file')"></p>
                                             <p class="text-xs font-medium text-amber-800 break-all" x-text="deleteModal.filename"></p>
                                             <p class="text-xs text-amber-600 mt-0.5 break-all" x-text="deleteModal.filePath"></p>
                                         </div>
@@ -874,7 +875,7 @@
                                     <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
-                                    <span class="text-sm text-gray-500" x-text="deleteModal.checkFailed ? t('Could not check file status; reopen to retry') : t('Local file no longer exists')"></span>
+                                    <span class="text-sm text-gray-500" x-text="deleteModal.checkFailed ? t('Could not check file status; reopen to retry') : t('No local files or cache found')"></span>
                                 </div>
                             </template>
                         </div>
@@ -884,7 +885,7 @@
 
             <label x-show="!deleteModal.isBatch" class="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" x-model="deleteModal.deleteFile" class="w-4 h-4 rounded text-red-600">
-                <span class="text-sm" x-text="t('Also delete local files')"></span>
+                <span class="text-sm" x-text="t('Also delete local files and cache')"></span>
             </label>
             <p class="text-xs text-gray-500 mt-2" x-text="t('Select to remove local files and partial downloads; deselect to keep them.')"></p>
 
@@ -896,7 +897,7 @@
                     </p>
                     <label class="flex items-center gap-2 cursor-pointer bg-amber-50 border border-amber-200 rounded-lg p-3">
                         <input type="checkbox" x-model="deleteModal.deleteFile" class="w-4 h-4 rounded border-amber-300 text-red-600 focus:ring-red-500">
-                        <span class="text-sm text-amber-800"><span data-i18n="Also delete local files" x-text="t('Also delete local files')">Also delete local files</span></span>
+                        <span class="text-sm text-amber-800"><span data-i18n="Also delete local files and cache" x-text="t('Also delete local files and cache')">Also delete local files and cache</span></span>
                     </label>
                 </div>
             </template>
@@ -983,6 +984,7 @@
                 isBatch: false,
                 taskIds: [],
                 fileExists: false,
+                cacheOnly: false,
                 checkFailed: false,
                 filename: '',
                 filePath: '',
@@ -1436,6 +1438,7 @@
                     isBatch: false,
                     taskIds: [taskId],
                     fileExists: false,
+                    cacheOnly: false,
                     checkFailed: false,
                     filename: '',
                     filePath: '',
@@ -1450,6 +1453,7 @@
                     const data = await res.json();
                     if (data.code === '1') {
                         this.deleteModal.fileExists = data.exists;
+                        this.deleteModal.cacheOnly = Boolean(data.cache_exists && !data.output_exists);
                         this.deleteModal.filename = data.filename || '';
                         this.deleteModal.filePath = data.path || '';
                     } else {
@@ -1473,6 +1477,7 @@
                     isBatch: true,
                     taskIds: taskIds,
                     fileExists: false,
+                    cacheOnly: false,
                     filename: '',
                     filePath: '',
                     deleteFile: this.activeTab !== 'completed',
