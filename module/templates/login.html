@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#2563eb">
-    <title>Sign in - Telegram Media Downloader</title>
+    <title>Sign in - TG Porter</title>
     <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}" type="image/png">
     {% include 'language_catalogs.html' %}
     <script src="{{ url_for('static', filename='web_i18n.js') }}"></script>
@@ -38,7 +38,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
         </svg>
         <h1><span data-i18n="Sign in to dashboard">Sign in to dashboard</span></h1>
-        <p>Telegram Media Downloader</p>
+        <p>TG Porter</p>
         <form action="{{ url_for('login') }}" method="post">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label for="password"><span data-i18n="Password">Password</span></label>

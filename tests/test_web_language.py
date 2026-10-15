@@ -24,7 +24,7 @@ class WebLanguageTests(unittest.TestCase):
         script = r"""
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-function boot(languages, saved, blocked = false, title = 'Sign in - Telegram Media Downloader') {
+function boot(languages, saved, blocked = false, title = 'Sign in - TG Porter') {
     const label = { dataset: { i18n: 'Downloading' }, textContent: '' };
     const select = { value: '', addEventListener() {} };
     const document = {
@@ -59,7 +59,7 @@ assert.equal(select.value, 'ru');
 assert.equal(api.setLanguage('uk-UA'), 'uk');
 assert.equal(storage.get('web_language'), 'uk');
 assert.equal(label.textContent, 'Завантаження');
-assert.equal(document.title, 'Вхід - Telegram Media Downloader');
+assert.equal(document.title, 'Вхід - TG Porter');
 assert.equal(api.t('Tasks: {count}', 'en', {count: 12}), 'Tasks: 12');
 assert.equal(api.t('Queued 3 tasks for retry; 1 failed', 'en'), 'Queued 3 tasks for retry; 1 failed');
 assert.equal(api.t('<user filename>.mp4'), '<user filename>.mp4');
@@ -78,9 +78,9 @@ const denied = boot(['ru-RU'], null, true);
 assert.equal(denied.api.language, 'ru');
 assert.equal(denied.api.setLanguage('en'), 'en');
 assert.equal(boot(['uk-UA'], 'ua').api.language, 'uk');
-const dashboard = boot(['en-US'], null, false, 'Telegram Media Downloader');
+const dashboard = boot(['en-US'], null, false, 'TG Porter');
 dashboard.api.setLanguage('uk');
-assert.equal(dashboard.document.title, 'Telegram Media Downloader');
+assert.equal(dashboard.document.title, 'TG Porter');
 """.replace("SOURCE", json.dumps(source)).replace("PAYLOAD", json.dumps({"catalogs": CATALOGS, "aliases": ALIASES, "patterns": MESSAGE_PATTERNS}))
         result = subprocess.run(["node"], input=script, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -96,6 +96,8 @@ assert.equal(dashboard.document.title, 'Telegram Media Downloader');
                 self.assertIn("detectLanguage", response.get_data(as_text=True))
         with patch.object(web, "_app", SimpleNamespace(web_login_secret="test")):
             login = client.get("/login").get_data(as_text=True)
+        self.assertIn('<title>TG Porter</title>', dashboard)
+        self.assertIn('<title>Sign in - TG Porter</title>', login)
         for page in (dashboard, login):
             self.assertIn('/static/web_i18n.js', page)
             self.assertIn('data-language-switch', page)

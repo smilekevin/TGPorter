@@ -101,7 +101,7 @@ class VersionTests(unittest.TestCase):
              "print(utils.__version__); print(APP_VERSION)"],
             cwd=ROOT, env={**os.environ, "APP_VERSION": "v1.2.3"}, text=True, timeout=10,
         )
-        self.assertEqual(result.splitlines(), ["v1.2.3", "Telegram Media Downloader v1.2.3"])
+        self.assertEqual(result.splitlines(), ["v1.2.3", "TG Porter v1.2.3"])
 
 
 if __name__ == "__main__":

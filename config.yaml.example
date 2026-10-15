@@ -1,3 +1,4 @@
+# TG Porter configuration
 api_hash: your_api_hash
 api_id: your_api_id
 # Bot for commands and notifications; set to "" when submitting tasks only through MCP.

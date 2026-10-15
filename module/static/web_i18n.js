@@ -4,7 +4,7 @@
     const {catalogs, aliases, patterns} = JSON.parse(document.getElementById('language-catalogs').textContent);
     const supported = Object.keys(catalogs);
     const storageKey = 'web_language';
-    const isLoginPage = document.title === 'Sign in - Telegram Media Downloader';
+    const isLoginPage = document.title === 'Sign in - TG Porter';
     function normalize(value) {
         const code = String(value || '').toLowerCase().replaceAll('_', '-');
         const parts = code.split('-');
@@ -55,7 +55,7 @@
                 element.value = api.language;
             });
             if (isLoginPage) {
-                document.title = api.t('Sign in - Telegram Media Downloader');
+                document.title = api.t('Sign in - TG Porter');
             }
         },
         setLanguage(value) {

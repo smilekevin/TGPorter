@@ -11,8 +11,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "ghcr.io/smilekevin/telegram-media-downloader"
-REPOSITORY = "smilekevin/telegram-media-downloader"
+IMAGE = "ghcr.io/smilekevin/tgporter"
+REPOSITORY = "smilekevin/TGPorter"
 SHA = "a" * 40
 DIGEST = "sha256:" + "b" * 64
 
@@ -74,7 +74,7 @@ class DockerWorkflowTests(unittest.TestCase):
             const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
             const result = { reads: [], updates: [] };
             const context = {
-              repo: { owner: 'smilekevin', repo: 'telegram-media-downloader' },
+              repo: { owner: 'smilekevin', repo: 'TGPorter' },
               payload: { release: { id: 42, body: 'Stale event notes' } },
             };
             const github = { rest: { repos: {
@@ -234,7 +234,7 @@ class DockerWorkflowTests(unittest.TestCase):
         result = self.run_release_notes(notes)
         self.assertNotIn("error", result)
         self.assertEqual(result["reads"], [{
-            "owner": "smilekevin", "repo": "telegram-media-downloader", "release_id": 42,
+            "owner": "smilekevin", "repo": "TGPorter", "release_id": 42,
         }])
         self.assertEqual(len(result["updates"]), 1)
         update = result["updates"][0]

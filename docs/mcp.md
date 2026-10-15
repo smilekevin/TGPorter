@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Telegram Media Downloader 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑。它可提交单条 Telegram 消息链接并管理任务。每个请求都要求配置的 `mcp_token`。
+TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑。它可提交单条 Telegram 消息链接并管理任务。每个请求都要求配置的 `mcp_token`。
 
 完整安装、Token 生成与配置、Streamable HTTP 客户端示例、Docker / NAS 部署和更新步骤统一维护在 [DEPLOY.md 的 MCP Agent 接入](../DEPLOY.md#mcp-agent-接入)。
 
@@ -46,7 +46,7 @@ Telegram Media Downloader 的 MCP 在主服务的 `/mcp` 提供工具，直接�
 
 # MCP Tool Reference
 
-Telegram Media Downloader’s integrated `/mcp` endpoint exposes 13 typed tools on the main service and calls internal task-management operations directly. Every request requires the configured `mcp_token`. Tools submit single Telegram post links and manage downloads.
+TG Porter’s integrated `/mcp` endpoint exposes 13 typed tools on the main service and calls internal task-management operations directly. Every request requires the configured `mcp_token`. Tools submit single Telegram post links and manage downloads.
 
 Complete installation, token generation/configuration, Streamable HTTP client examples, Docker/NAS deployment and updates are maintained in [DEPLOY.md: MCP Agent Integration](../DEPLOY.md#mcp-agent-integration).
 

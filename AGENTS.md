@@ -8,7 +8,7 @@ These instructions apply to the entire repository. Read this file, relevant sour
 - Name branches by purpose: `feat/<feature>`, `fix/<issue>`, `docs/<topic>`, `refactor/<module>`, `test/<scope>`, or `chore/<task>`. Use short lowercase English names with hyphens, such as `docs/project-agent-guidelines`.
 - Choose a compliant name before creating a branch. Run `git branch --show-current` before each commit, push, and PR creation. If the current branch violates the naming rule, move the task's changes to a compliant new branch before committing or pushing.
 - Normally start from the target repository's latest `master`. If the current checkout contains another task or uncommitted changes, use an isolated checkout. Do not overwrite, stage, or commit unrelated user changes.
-- This fork's PR target is `smilekevin/telegram-media-downloader`. The local `fork` remote normally points there, while `origin` normally points to upstream `MangoIsIllegal/hermes-telegram-downloader`. Verify the actual URLs with `git remote -v` before pushing; do not infer the target from the remote name alone.
+- This fork's PR target is `smilekevin/TGPorter`. The local `fork` remote normally points there, while `origin` normally points to upstream `MangoIsIllegal/hermes-telegram-downloader`. Verify the actual URLs with `git remote -v` before pushing; do not infer the target from the remote name alone.
 - Write all PR titles and descriptions in English.
 - Keep each PR focused on one problem. Commit messages and PR titles should describe the resulting behavior; prefixes such as `feat:`, `fix:`, and `docs:` are appropriate. Describe the reason for the change, validation results, and anything not verified in the PR body.
 - When the user asks for a PR, complete the relevant commit, push, and PR creation. Merge or publish a Release only within the user's authorization; a request to create a PR does not automatically authorize merging it.
@@ -91,7 +91,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 - For future project changes, update `README.md` and `DEPLOY.md` together in the same change set. Keep both documents consistent with the final behavior, configuration and supported usage; do not update only one of them.
 - `README.md` owns the project overview, features, architecture, Bot commands, Web API and short startup summaries. Deployment entries must link to `DEPLOY.md`.
 - `DEPLOY.md` owns prerequisites, credentials, complete installation and login steps, configuration examples and defaults, parallel-download settings and checkpoints, image updates, local builds, persistence, proxies and troubleshooting.
-- Maintain both Chinese and English sections when updating either document. Preserve the project/image name `telegram-media-downloader` and the service/container name `telegam-media-downloader`.
+- Maintain both Chinese and English sections when updating either document. Use the display name `TG Porter`, repository name `TGPorter`, and lowercase image/service/container name `tgporter`.
 - Keep summaries and links aligned with the detailed guide instead of duplicating complete commands, configuration blocks or persistence tables in README.
 - Maintain `AGENTS.md` when entry points, authentication, dependency management or deployment conventions change. `docs/mcp.md` owns the MCP tool reference; complete MCP Token and setup instructions belong in both language sections of `DEPLOY.md`.
 - Before finishing, check relative links and heading anchors, run `git diff --check`, and verify commands, image tags, configuration defaults and paths against `config.yaml.example`, `docker-compose.yaml`, the workflows and relevant source code.
@@ -135,8 +135,8 @@ python media_downloader.py
 
 ## Docker and Publishing
 
-- The project and image are named `telegram-media-downloader`. The Compose service and container are named **`telegam-media-downloader`**, preserving the user's requested spelling. Do not apply that spelling to image/repository URLs or upstream links.
-- The image repository is `ghcr.io/smilekevin/telegram-media-downloader`. Docker uses a multi-stage Alpine build with `python media_downloader.py` as the runtime command.
+- The project display name is `TG Porter` and the repository is `TGPorter`. Docker image, Compose service and container names use lowercase `tgporter`. Preserve upstream project names and attribution links.
+- The image repository is `ghcr.io/smilekevin/tgporter`. Docker uses a multi-stage Alpine build with `python media_downloader.py` as the runtime command.
 - The main image includes MCP. Enable it in `config.yaml`; reuse port 5000 and the existing Compose service and mounts. No separate MCP image, sidecar, optional dependency file or port mapping is required. Main-image CI and Release builds include the integrated MCP dependencies automatically.
 - Persist `downloads/`, `log/`, `sessions/`, `temp/`, `config.yaml`, and `data.yaml`. Configuration bind-mount sources must be files. Removing a container must not delete this host data.
 - Before deployment tests, check host ports and proxy reachability. Do not assume the example proxy address works on the current machine. Keep test overrides and temporary data in an isolated directory and out of the PR.

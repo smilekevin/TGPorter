@@ -284,6 +284,8 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('type="password"', login.text)
             static = await http.get(self.url + "/static/manifest.json")
             self.assertEqual(static.status_code, 200)
+            self.assertEqual(static.json()["name"], "TG Porter")
+            self.assertEqual(static.json()["short_name"], "TGPorter")
             self.assertEqual((await http.get(self.url + "/get_download_state")).status_code, 401)
             self.assertEqual((await http.get(self.url + "/get_download_state", headers=headers)).status_code, 401)
             csrf = await self.login_browser(http)

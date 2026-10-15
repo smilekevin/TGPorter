@@ -9,12 +9,12 @@ permissions:
   packages: write
 
 concurrency:
-  group: telegram-media-downloader-release
+  group: tgporter-release
   queue: max
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/smilekevin/telegram-media-downloader
+  IMAGE: ghcr.io/smilekevin/tgporter
 
 jobs:
   build:
@@ -82,7 +82,7 @@ jobs:
           build-args: |
             APP_VERSION=${{ steps.tags.outputs.version }}
           labels: |
-            org.opencontainers.image.title=Telegram Media Downloader
+            org.opencontainers.image.title=TG Porter
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.version.outputs.sha }}
             org.opencontainers.image.licenses=MIT
@@ -105,7 +105,7 @@ jobs:
             echo '## Release Docker image'
             echo "Source commit: ${SHA}"
             echo
-            echo 'Package: [telegram-media-downloader](https://github.com/users/smilekevin/packages/container/telegram-media-downloader)'
+            echo 'Package: [tgporter](https://github.com/users/smilekevin/packages/container/tgporter)'
             echo
             echo 'Published image tags:'
             while IFS= read -r tag; do

@@ -44,6 +44,7 @@ class LanguageTests(unittest.TestCase):
         # Both entry points resolve the same key instead of keeping separate dictionaries.
         for code in lang.CATALOGS:
             set_language(code)
+            self.assertEqual(_t('TG Porter'), 'TG Porter')
             self.assertEqual(_t('Downloading'), lang.translate('Downloading', code))
         self.assertEqual(lang.translate('Retry failed: {error}', 'fr', error='{count}<file>'),
                          'Échec de la nouvelle tentative : {count}<file>')

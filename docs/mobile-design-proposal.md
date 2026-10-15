@@ -1,4 +1,4 @@
-# Telegram Media Downloader WebUI 移动端设计方案
+# TG Porter WebUI 移动端设计方案
 
 ## 现状分析
 
@@ -33,9 +33,9 @@
 
 ```json
 {
-  "name": "Telegram Media Downloader",
-  "short_name": "TG Downloader",
-  "description": "Telegram Media Downloader",
+  "name": "TG Porter",
+  "short_name": "TGPorter",
+  "description": "TG Porter",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f9fafb",
