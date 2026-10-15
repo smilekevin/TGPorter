@@ -4,9 +4,9 @@
 
 Installation, configuration, login and operations are maintained here. English instructions start at [Prerequisites](#prerequisites). See the [README](./README.md#features) for features, Bot commands, Web APIs and architecture.
 
-中文：[前置条件](#前置条件) · [凭据准备](#部署前准备api-凭据与-bot-token) · [Docker 镜像](#docker-镜像部署) · [Compose](#docker-compose-部署) · [手动安装](#手动安装) · [本地开发](#本地开发模式) · [配置说明](#配置说明) · [WebUI 登录](#webui-登录) · [运维](#docker-管理) · [持久化](#docker-数据持久化) · [代理](#代理配置) · [故障排查](#故障排查)
+中文：[前置条件](#前置条件) · [凭据准备](#部署前准备api-凭据与-bot-token) · [Docker 镜像](#docker-镜像部署) · [Compose](#docker-compose-部署) · [手动安装](#手动安装) · [本地开发](#本地开发模式) · [配置说明](#配置说明) · [WebUI 登录](#webui-登录) · [MCP](#mcp-agent-接入) · [运维](#docker-管理) · [持久化](#docker-数据持久化) · [代理](#代理配置) · [故障排查](#故障排查)
 
-English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api-credentials-and-bot-token) · [Docker Image](#docker-image-deployment) · [Compose](#docker-compose-deployment) · [Manual Install](#manual-install) · [Local Dev](#local-dev-mode) · [Configuration](#configuration) · [WebUI Login](#webui-login) · [Operations](#docker-management) · [Persistence](#docker-data-persistence) · [Proxy](#proxy-configuration) · [Troubleshooting](#troubleshooting)
+English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api-credentials-and-bot-token) · [Docker Image](#docker-image-deployment) · [Compose](#docker-compose-deployment) · [Manual Install](#manual-install) · [Local Dev](#local-dev-mode) · [Configuration](#configuration) · [WebUI Login](#webui-login) · [MCP](#mcp-agent-integration) · [Operations](#docker-management) · [Persistence](#docker-data-persistence) · [Proxy](#proxy-configuration) · [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -256,6 +256,10 @@ download_part_size_mb: 64  # 固定切片大小（MiB），最后一片按剩余
 web_host: 0.0.0.0
 web_port: 5000
 web_login_secret: "replace-with-a-long-password"  # WebUI 访问密码；设为 "" 关闭登录
+mcp_token: ""  # 仅供 /mcp 使用，与网页密码独立
+mcp_enabled: false
+mcp_read_only: false
+mcp_allowed_hosts: []
 
 # 权限
 allowed_user_ids:
@@ -290,7 +294,11 @@ proxy:
 | `file_download_concurrency` | 单文件并发下载 worker 数 | `1` |
 | `download_part_size_mb` | 固定切片大小，单位 MiB，必须为正整数 | `64` |
 | `web_port` | WebUI 端口 | `5000` |
-| `web_login_secret` | WebUI 访问密码；非空时首页和所有接口均需登录，空字符串关闭登录 | `""` |
+| `web_login_secret` | WebUI / Web API 的 Session 登录密码；空字符串保留免登录模式，与 MCP 鉴权独立 | `""` |
+| `mcp_token` | 仅供 `/mcp` 使用的 Bearer Token；可打印 ASCII 字符串，不含空白，MCP 开启时不能为空 | `""` |
+| `mcp_enabled` | 开启同端口的 `/mcp` Streamable HTTP 入口，始终要求 Token | `false` |
+| `mcp_read_only` | MCP 仅暴露查询工具，不影响独立的网页登录会话 | `false` |
+| `mcp_allowed_hosts` | 额外允许的 Host，域名或 IP，可带端口；默认已允许 localhost / loopback | `[]` |
 | `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
 | `language` | 界面语言（`ZH` / `EN` / `RU` / `UA`） | `EN` |
 | `proxy` | 代理配置（scheme / hostname / port） | `{}` |
@@ -321,11 +329,65 @@ proxy:
 
 浏览器打开 `http://你的服务器IP:5000`
 
-配置了非空的 `web_login_secret` 时，会先显示登录页，输入配置的密码后进入控制面板。首页和所有下载接口都会校验登录状态；右上角可退出。登录有效期为 7 天，重启服务或修改密码后需要重新登录。
+配置了非空的 `web_login_secret` 时，会先显示登录页，输入配置的密码后进入控制面板。首页和所有下载接口都会校验访问凭据；右上角可退出。登录有效期为 7 天，重启服务或修改密码后需要重新登录。
 
-修改状态的请求还需提供当前 session 的 CSRF Token，WebUI 会自动携带。
+Web API 与网页共用密码登录 Session，修改状态时还需提供当前 Session 的 CSRF Token，WebUI 会自动携带。Web API 不接受 Bearer Token；Agent 使用下节的 `/mcp` 和独立 MCP Token。
 
 要关闭密码登录，可在 `config.yaml` 中设置 `web_login_secret: ""`。修改配置后重启容器。已有部署需更新到包含此修复的镜像，仅修改旧版本的配置不会启用登录。
+
+## MCP Agent 接入
+
+MCP 集成在下载器主服务中，复用主镜像、容器和 `web_port`（默认 `5000`），入口为 `/mcp`。工具直接调用内部任务管理逻辑。[工具与参数参考](./docs/mcp.md)。12 个工具管理已有任务；新增 Telegram 下载链接继续通过 Bot 提交。
+
+### 开启 MCP
+
+MCP 默认关闭。先生成一个随机 Token：
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+在 `config.yaml` 将结果填入带引号的 `mcp_token`，并开启 MCP。Token 必须是可打印 ASCII 字符串，不含空白；空字符串或 `null` 表示未配置：
+
+```yaml
+mcp_token: "paste-your-generated-token-here"
+mcp_enabled: true
+mcp_read_only: false
+mcp_allowed_hosts: ["nas.example.com"]
+```
+
+`mcp_enabled: true` 必须配置非空 `mcp_token`，否则启动报错。每个请求都需携带 Bearer Token。关闭时 `/mcp` 返回 `404`。
+
+服务端使用 `mcp_allowed_hosts` 配置额外允许的域名或 IP，例如 `["nas.example.com", "192.168.1.20:5000"]`。端口须与请求的 Host 一致，不含协议或路径，不支持通配符。默认已允许 localhost / loopback；Origin 校验自动复用这份白名单，接受对应的 HTTP / HTTPS 来源。监听地址和端口仍由 `web_host`、`web_port` 决定，完整连接 URL 仅在客户端配置中填写。
+
+更新到包含此功能的主镜像后，修改配置并重启现有容器即可：
+
+```bash
+docker compose restart telegam-media-downloader
+```
+
+首次部署、更新镜像和从源码构建仍使用前文的主服务步骤。无需额外镜像、容器、端口、环境变量或依赖文件；本地安装只需 `pip install -r requirements.txt`。已有持久化挂载保持不变。
+
+### Agent 客户端
+
+通过 Streamable HTTP 连接服务器的 `/mcp` 地址。支持 `url`、`headers` 的客户端可参考以下格式，具体字段以客户端为准：
+
+```json
+{
+  "mcpServers": {
+    "telegram-downloader": {
+      "url": "https://nas.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer paste-the-token-from-config.yaml"
+      }
+    }
+  }
+}
+```
+
+本机可使用 `http://127.0.0.1:5000/mcp`，局域网可使用配置的 NAS 地址。公网访问使用 HTTPS 反向代理，保留原始 Host 请求头，并允许 `/mcp` 的 GET、POST、DELETE 请求通过。此实现采用预配置 Bearer Token，不提供 OAuth 登录页。Token 只放在受保护的配置和请求头中，不放在 URL 或工具参数中；错误或缺失 Token 返回 `401`。
+
+`mcp_read_only: true` 只暴露三个查询工具。修改 Token 后重启下载器，并同步更新 Agent 配置，旧 Token 随即失效。默认允许写操作，删除工具的 `delete_file` 默认 `false`。[工具列表与删除语义](./docs/mcp.md)。
 
 ## Docker 管理
 
@@ -663,6 +725,10 @@ download_part_size_mb: 64  # fixed part size in MiB; the final part uses the rem
 web_host: 0.0.0.0
 web_port: 5000
 web_login_secret: "replace-with-a-long-password"  # WebUI password; "" disables login
+mcp_token: ""  # MCP-only bearer token, independent of the browser password
+mcp_enabled: false
+mcp_read_only: false
+mcp_allowed_hosts: []
 
 # Permissions
 allowed_user_ids:
@@ -697,7 +763,11 @@ Defaults apply when an option is omitted and may differ from the example configu
 | `file_download_concurrency` | Concurrent download workers per file | `1` |
 | `download_part_size_mb` | Fixed part size in MiB; positive integer | `64` |
 | `web_port` | WebUI port | `5000` |
-| `web_login_secret` | WebUI password; a non-empty value protects the dashboard and all APIs, an empty string disables login | `""` |
+| `web_login_secret` | WebUI/API session-login password; empty preserves public access; independent of MCP authentication | `""` |
+| `mcp_token` | MCP-only bearer token; printable ASCII without whitespace; required when MCP is enabled | `""` |
+| `mcp_enabled` | Enable the same-port `/mcp` Streamable HTTP endpoint, always requiring a token | `false` |
+| `mcp_read_only` | Expose only MCP query tools without restricting separate browser sessions | `false` |
+| `mcp_allowed_hosts` | Additional allowed Host values: domain/IP with optional port; localhost/loopback already allowed | `[]` |
 | `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
 | `language` | UI language (`ZH` / `EN` / `RU` / `UA`) | `EN` |
 | `proxy` | Proxy config (scheme / hostname / port) | `{}` |
@@ -730,9 +800,63 @@ with its file and worker number; the matching `Closed independent download conne
 
 ## WebUI Login
 
-Open `http://SERVER_IP:5000`. A non-empty `web_login_secret` protects the dashboard and download APIs. Enter that password on the login page; use the top-right action to log out. Login lasts seven days and must be renewed after a service restart or password change. State-changing requests also require the session's CSRF token; the WebUI supplies it automatically.
+Open `http://SERVER_IP:5000`. A non-empty `web_login_secret` protects the dashboard and download APIs. Enter that password on the login page; use the top-right action to log out. Login lasts seven days and must be renewed after a service restart or password change. State-changing requests using browser sessions also require the session's CSRF token; the WebUI supplies it automatically. The Web API accepts only browser login sessions, not bearer tokens. Agents use `/mcp` with a separate MCP token.
 
 Set `web_login_secret: ""` to disable password login and restart the service after changing configuration. Existing deployments must use an image containing the login implementation; changing an older image's configuration alone does not enable it.
+
+## MCP Agent Integration
+
+MCP is integrated into the downloader, reusing the main image, container and `web_port` (default `5000`). Its endpoint is `/mcp`. Tools call internal download-management operations directly. [Tool reference](./docs/mcp.md#mcp-tool-reference). The 12 tools manage existing tasks; submit new Telegram download links through the Bot.
+
+### Enable MCP
+
+MCP is disabled by default. Generate a random token:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Set the quoted `mcp_token` value in `config.yaml` and enable MCP. Tokens must be printable ASCII strings without whitespace; an empty string or `null` means unconfigured:
+
+```yaml
+mcp_token: "paste-your-generated-token-here"
+mcp_enabled: true
+mcp_read_only: false
+mcp_allowed_hosts: ["nas.example.com"]
+```
+
+Enabling MCP without a non-empty `mcp_token` fails startup. Every request requires a bearer token. When disabled, `/mcp` returns `404`.
+
+Use `mcp_allowed_hosts` for additional allowed domains/IPs, such as `["nas.example.com", "192.168.1.20:5000"]`. Ports must match the request's Host header; omit scheme and path. Wildcards are not supported. Localhost/loopback remain allowed by default. Origin validation automatically reuses the same allowlist for HTTP/HTTPS origins. The listener still uses `web_host` and `web_port`; configure the full connection URL only in the client.
+
+After updating the main image to a version containing this feature, edit the configuration and restart the existing container:
+
+```bash
+docker compose restart telegam-media-downloader
+```
+
+Initial deployment, image updates and source builds use the main-service instructions above. No additional image, container, port, environment variables or dependency file is needed. Local installs use `pip install -r requirements.txt`. Existing persistence mounts remain unchanged.
+
+### Agent Client
+
+Connect through Streamable HTTP at the server’s `/mcp` URL. Clients supporting `url` and `headers` can use this example; actual fields depend on the client:
+
+```json
+{
+  "mcpServers": {
+    "telegram-downloader": {
+      "url": "https://nas.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer paste-the-token-from-config.yaml"
+      }
+    }
+  }
+}
+```
+
+Use `http://127.0.0.1:5000/mcp` locally or the configured NAS URL on a LAN. For public access, use an HTTPS reverse proxy that preserves the original Host header and forwards GET, POST and DELETE requests to `/mcp`. Authentication uses a preconfigured bearer token, without an OAuth login page. Store tokens in protected configuration and request headers, never URLs or tool parameters. Missing or invalid tokens return `401`.
+
+`mcp_read_only: true` exposes only the three query tools. After rotating a token, restart the downloader and update agent configuration; the previous token is revoked. Write tools are enabled by default; deletion's `delete_file` defaults to `false`. See the [tool reference](./docs/mcp.md#mcp-tool-reference).
 
 ## Docker Management
 

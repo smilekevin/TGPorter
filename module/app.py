@@ -427,6 +427,10 @@ class Application:
         self.language = Language.EN
         self.after_upload_telegram_delete: bool = True
         self.web_login_secret: str = ""
+        self.mcp_token: str = ""
+        self.mcp_enabled: bool = False
+        self.mcp_read_only: bool = False
+        self.mcp_allowed_hosts: List[str] = []
         self.debug_web: bool = False
         self.log_level: str = "INFO"
         self.start_timeout: int = 60
@@ -558,6 +562,23 @@ class Application:
 
         web_login_secret = _config.get("web_login_secret", self.web_login_secret)
         self.web_login_secret = "" if web_login_secret is None else str(web_login_secret)
+        mcp_token = _config.get("mcp_token", self.mcp_token)
+        if mcp_token is None:
+            mcp_token = ""
+        if not isinstance(mcp_token, str) or any(not 33 <= ord(char) <= 126 for char in mcp_token):
+            raise ValueError("mcp_token must be a printable ASCII string without whitespace")
+        self.mcp_token = mcp_token
+        for name in ("mcp_enabled", "mcp_read_only"):
+            value = _config.get(name, getattr(self, name))
+            if not isinstance(value, bool):
+                raise ValueError(f"{name} must be a boolean")
+            setattr(self, name, value)
+        from module.mcp_server import validate_allowed_hosts
+        self.mcp_allowed_hosts = validate_allowed_hosts(
+            _config.get("mcp_allowed_hosts", self.mcp_allowed_hosts)
+        )
+        if self.mcp_enabled and not self.mcp_token:
+            raise ValueError("mcp_enabled requires a non-empty mcp_token")
         self.debug_web = _config.get("debug_web", self.debug_web)
         self.log_level = _config.get("log_level", self.log_level)
 

@@ -87,6 +87,13 @@
 - **操作** — 暂停/恢复、删除（单个/批量）、重试（单个/批量）
 - **实时数据** — 总速度 = 所有活跃任务速度之和，3 秒无回调判为过期归零
 - **粘性导航栏** — 滚动时标签页固定在顶部
+- **密码登录** — 网页和 Web API 使用登录 Session，修改状态需 CSRF Token
+
+### Agent 接入
+
+- **MCP 工具** — 12 个工具支持任务查询、暂停、恢复、重试、删除和并发设置
+- **接入方式** — Streamable HTTP，与主服务共用端口和镜像，使用独立 Token 鉴权
+- **只读模式** — 可仅开放查询工具
 
 ### 通知
 
@@ -118,6 +125,7 @@
 | Docker Compose | 使用仓库中的 Compose 文件管理服务 | [Compose 部署](./DEPLOY.md#docker-compose-部署) |
 | 手动安装 | 使用 Python 3.11 运行 | [手动安装](./DEPLOY.md#手动安装) |
 | 本地开发 | 使用 Mock 数据调试 WebUI，无需 Telegram 账号 | [本地开发模式](./DEPLOY.md#本地开发模式) |
+| Agent / MCP | 用 MCP Token 管理已有下载任务 | [MCP 配置与部署](./DEPLOY.md#mcp-agent-接入) |
 
 凭据获取、首次登录、完整配置、并行下载与分片续传、镜像更新、代理和数据持久化统一维护在 [DEPLOY.md](./DEPLOY.md)。
 
@@ -157,6 +165,12 @@
 
 ## Web API
 
+### API 鉴权与 MCP
+
+配置非空 `web_login_secret` 后，网页与 Web API 只接受密码登录建立的 Session Cookie；修改状态的请求还需 CSRF Token，由网页自动携带。Bearer Token 不能代替 Session 或 CSRF。空密码保留网页与 Web API 的免登录模式。[WebUI 登录与部署](./DEPLOY.md#webui-登录)。
+
+Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参数、错误说明。MCP 直接调用内部任务管理逻辑，使用 `mcp_token` 鉴权，无需额外镜像或容器；默认关闭，开启后每个请求始终要求 Token，额外的 Host 白名单按需配置。12 个工具覆盖查询、暂停、恢复、重试、删除和并发设置；新增下载链接仍通过 Bot 提交。[MCP 接入与部署](./DEPLOY.md#mcp-agent-接入) / [MCP 工具参考](./docs/mcp.md)。
+
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/` | GET | WebUI 主页 |
@@ -169,6 +183,8 @@
 | `/get_completed_count` | GET | 已完成数量（轻量轮询） |
 | `/get_flood_wait` | GET | FloodWait 冷却状态 + 剩余秒数 |
 | `/get_app_version` | GET | 应用版本 |
+| `/get_max_workers` | GET | 当前同时下载的文件数 |
+| `/set_max_workers` | POST | 设置同时下载的文件数（`n=1`–`6`） |
 | `/check_file_exists` | POST | 检查已完成任务的本地文件是否存在 |
 | `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
 | `/pause_task` | POST | 暂停单个任务 |
@@ -185,13 +201,18 @@
 
 ```mermaid
 flowchart TB
-    User["用户"]
+    User["用户<br/>WebUI / 浏览器"]
+    Agent["Agent<br/>MCP 客户端"]
     Telegram["Telegram"]
 
     subgraph Container["Docker 容器"]
         direction TB
         Bot["Bot 命令与媒体入口<br/>Pyrogram"]
-        Web["WebUI<br/>Flask :5000"]
+        subgraph HTTP["统一 HTTP 服务<br/>Uvicorn / ASGI，web_port 默认 5000"]
+            API["页面 / Web API<br/>Flask"]
+            MCP["MCP /mcp<br/>Streamable HTTP"]
+        end
+        Service["共用任务管理逻辑<br/>download_service.py"]
         Store["任务持久化<br/>task_store.py"]
         Recovery["启动恢复<br/>recover_tasks()"]
         Consumer["Pending Consumer<br/>每 2 秒消费"]
@@ -205,9 +226,13 @@ flowchart TB
     Data[("宿主机持久化挂载<br/>log / downloads / temp / sessions")]
 
     User --> Bot
-    User --> Web
+    User -->|Session / CSRF| API
+    Agent -->|Bearer Token| MCP
+    API --> Service
+    MCP --> Service
     Bot -->|保存任务| Store
-    Web -->|重试任务| Store
+    Service -->|Pending 查询 / 重试入队| Store
+    Service <-->|状态查询 / 任务控制| Stats
     Recovery -->|恢复状态与编号| Store
     Store -->|读取 Pending| Consumer
     Consumer -->|单条下载| Queue
@@ -225,12 +250,12 @@ flowchart TB
     classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
     classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
     classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
-    class Bot,Web entry
-    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class User,Bot,API,Agent,MCP entry
+    class Service,Consumer,Scan,Queue,Workers,Clients pipeline
     class Store,Stats,Data storage
 ```
 
-实线表示任务与媒体处理，虚线表示持久化或批量/监听入口。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。下载进度与历史同时供 WebUI 显示和 Bot 通知使用。
+实线表示请求、任务与媒体处理，虚线表示持久化或批量/监听入口。用户与 Agent 是并列调用方：用户通过浏览器中的 WebUI 访问 Web API，Agent 通过 MCP 客户端访问 `/mcp`；两条入口直接调用相同的内部任务管理逻辑。网页、Web API 与 MCP 由同一个 HTTP 服务监听 `web_port`，MCP 不调用 WebUI 或通过 HTTP 调用 Web API。图中 Session / CSRF 对应已开启网页密码的模式。单条任务先持久化，再由 Consumer 投递到 Worker 队列；范围扫描和实时监听也使用同一个队列。下载进度与历史同时供 WebUI 显示和 Bot 通知使用。
 
 ### 核心流程
 
@@ -442,6 +467,13 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Actions** — pause/resume, delete (single/batch), retry (single/batch)
 - **Real-time** — total speed = sum of active task speeds, 3s stale check
 - **Sticky nav** — tabs stay visible while scrolling
+- **Password login** — WebUI and Web APIs use login sessions; state changes require a CSRF token
+
+### Agent Integration
+
+- **MCP tools** — 12 tools for task queries, pause/resume, retry, deletion and worker settings
+- **Connection** — Streamable HTTP on the main service's port and image, authenticated with a separate token
+- **Read-only mode** — optionally expose query tools only
 
 ### Notifications
 
@@ -473,6 +505,7 @@ Use this fork's prebuilt image, `ghcr.io/smilekevin/telegram-media-downloader:la
 | Docker Compose | Manage the service with the repository Compose file | [Compose deployment](./DEPLOY.md#docker-compose-deployment) |
 | Manual install | Run with Python 3.11 | [Manual install](./DEPLOY.md#manual-install) |
 | Local development | Debug WebUI with mock data, without a Telegram account | [Local dev mode](./DEPLOY.md#local-dev-mode) |
+| Agent / MCP | Manage existing downloads through token-authenticated MCP tools | [MCP configuration and deployment](./DEPLOY.md#mcp-agent-integration) |
 
 Credentials, first login, full configuration, parallel downloads and checkpoints, image updates, proxies and persistence are maintained in [DEPLOY.md](./DEPLOY.md#prerequisites).
 
@@ -512,6 +545,12 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 
 ## Web API
 
+### Authentication and MCP
+
+With a non-empty `web_login_secret`, WebUI and the Web API accept only password-login session cookies. State changes also require the session's CSRF token, which WebUI supplies automatically. Bearer tokens cannot replace sessions or CSRF. An empty password preserves public WebUI/API access. [WebUI login and deployment](./DEPLOY.md#webui-login).
+
+The main service exposes typed tools, structured results and actionable errors at `/mcp` on the same port. MCP calls internal download-management operations directly and authenticates with `mcp_token`, without another image or container. MCP is disabled by default and always requires a token when enabled; configure additional allowed hosts only as needed. Its 12 tools cover queries, pause/resume, retry, deletion and worker settings; new download links continue to enter through the Bot. [MCP setup and deployment](./DEPLOY.md#mcp-agent-integration) / [MCP tool reference](./docs/mcp.md#mcp-tool-reference).
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | WebUI page |
@@ -524,6 +563,8 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 | `/get_completed_count` | GET | Completed count (lightweight polling) |
 | `/get_flood_wait` | GET | FloodWait cooldown status + remaining seconds |
 | `/get_app_version` | GET | App version |
+| `/get_max_workers` | GET | Current number of simultaneous file downloads |
+| `/set_max_workers` | POST | Set simultaneous file downloads (`n=1`–`6`) |
 | `/check_file_exists` | POST | Check if local file exists for a completed task |
 | `/set_download_state` | POST | Global pause/resume (`state=pause` / `state=continue`) |
 | `/pause_task` | POST | Pause a task |
@@ -540,13 +581,18 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 
 ```mermaid
 flowchart TB
-    User["User"]
+    User["User<br/>WebUI / Browser"]
+    Agent["Agent<br/>MCP Client"]
     Telegram["Telegram"]
 
     subgraph Container["Docker Container"]
         direction TB
         Bot["Bot commands and media<br/>Pyrogram"]
-        Web["WebUI<br/>Flask :5000"]
+        subgraph HTTP["Single HTTP service<br/>Uvicorn / ASGI, web_port defaults to 5000"]
+            API["Pages / Web API<br/>Flask"]
+            MCP["MCP /mcp<br/>Streamable HTTP"]
+        end
+        Service["Shared task operations<br/>download_service.py"]
         Store["Task persistence<br/>task_store.py"]
         Recovery["Startup recovery<br/>recover_tasks()"]
         Consumer["Pending Consumer<br/>Every 2 seconds"]
@@ -560,9 +606,13 @@ flowchart TB
     Data[("Persistent host mounts<br/>log / downloads / temp / sessions")]
 
     User --> Bot
-    User --> Web
+    User -->|Session / CSRF| API
+    Agent -->|Bearer Token| MCP
+    API --> Service
+    MCP --> Service
     Bot -->|Save task| Store
-    Web -->|Retry task| Store
+    Service -->|Pending queries / retry enqueue| Store
+    Service <-->|Status queries / task control| Stats
     Recovery -->|Restore states and IDs| Store
     Store -->|Read Pending| Consumer
     Consumer -->|Single download| Queue
@@ -580,12 +630,12 @@ flowchart TB
     classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
     classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
     classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
-    class Bot,Web entry
-    class Consumer,Scan,Queue,Workers,Clients pipeline
+    class User,Bot,API,Agent,MCP entry
+    class Service,Consumer,Scan,Queue,Workers,Clients pipeline
     class Store,Stats,Data storage
 ```
 
-Solid edges show task and media processing. Dashed edges show persistence or batch/monitoring entry points. Single downloads are persisted before the consumer feeds the worker queue; history scans and live monitoring feed the same queue. Progress and history also supply WebUI views and Bot notifications.
+Solid edges show requests, task and media processing. Dashed edges show persistence or batch/monitoring entry points. Users and agents are peer callers: users access the Web API through WebUI in a browser, while agents access `/mcp` through MCP clients. Both entry points call the same internal task-management operations directly. Pages, Web API and MCP share one HTTP listener on `web_port`. MCP does not call WebUI or make HTTP calls to the Web API. Session/CSRF labels represent password-protected browser mode. Single downloads are persisted before the consumer feeds the worker queue; history scans and live monitoring feed the same queue. Progress and history also supply WebUI views and Bot notifications.
 
 ### Core Flow
 
