@@ -543,14 +543,14 @@ class DownloadService:
         for chat_id, messages in get_download_result().items():
             for msg_id, value in messages.items():
                 if str(task_id) in (f"{chat_id}_{msg_id}", str(value.get("task_id", ""))):
-                    return value.get("file_name", ""), ""
+                    return value.get("file_name", ""), value.get("temp_file_name", "")
         for value in get_failed_downloads():
             if str(value.get("task_id", "")) == str(task_id):
                 return value.get("file_name", ""), value.get("temp_file_name", "")
         return "", ""
 
     def web_check_file_exists(self, task_id=None):
-        """Check recorded output and failed-task staging files."""
+        """Check recorded output and staging files for active and failed tasks."""
         if not task_id:
             return {"code": "0", "message": "Task ID required"}
         output, staging = self._task_files(task_id)

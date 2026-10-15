@@ -406,6 +406,7 @@ async def update_download_status(
             _download_result[chat_id][message_id]["total_size"] = total_size
             _download_result[chat_id][message_id]["progress"] = _progress
             _download_result[chat_id][message_id]["file_name"] = file_name
+            _download_result[chat_id][message_id]["temp_file_name"] = getattr(node, "download_temp_paths", {}).get(message_id, "")
             _download_result[chat_id][message_id]["end_time"] = end_time
             _download_result[chat_id][message_id]["download_speed"] = download_speed
             _download_result[chat_id][message_id][
@@ -434,6 +435,7 @@ async def update_download_status(
                 "total_size": total_size,
                 "progress": _progress,
                 "file_name": file_name,
+                "temp_file_name": getattr(node, "download_temp_paths", {}).get(message_id, ""),
                 "start_time": start_time,
                 "end_time": cur_time,
                 "download_speed": 0 if initial else down_byte / max(cur_time - start_time, 0.001),

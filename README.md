@@ -187,7 +187,7 @@ Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参
 | `/get_app_version` | GET | 应用版本 |
 | `/get_max_workers` | GET | 当前同时下载的文件数 |
 | `/set_max_workers` | POST | 设置同时下载的文件数（`n=1`–`6`） |
-| `/check_file_exists` | POST | 检查任务的本地文件或失败断点，分别返回 `output_exists`、`cache_exists` 和 `cache_paths` |
+| `/check_file_exists` | POST | 检查本地文件或活动/失败任务断点，分别返回 `output_exists`、`cache_exists` 和 `cache_paths`；删除确认只提示缓存存在 |
 | `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
 | `/pause_task` | POST | 暂停单个任务 |
 | `/resume_task` | POST | 恢复单个任务 |
@@ -574,7 +574,7 @@ The main service exposes typed tools, structured results and actionable errors a
 | `/get_app_version` | GET | App version |
 | `/get_max_workers` | GET | Current number of simultaneous file downloads |
 | `/set_max_workers` | POST | Set simultaneous file downloads (`n=1`–`6`) |
-| `/check_file_exists` | POST | Check local output or failed-task partial data; return `output_exists`, `cache_exists`, and `cache_paths` separately |
+| `/check_file_exists` | POST | Check local output or active/failed-task partial data; return `output_exists`, `cache_exists`, and `cache_paths` separately; deletion confirmation only indicates cache presence |
 | `/set_download_state` | POST | Global pause/resume (`state=pause` / `state=continue`) |
 | `/pause_task` | POST | Pause a task |
 | `/resume_task` | POST | Resume a task |

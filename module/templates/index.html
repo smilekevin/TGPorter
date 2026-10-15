@@ -863,8 +863,12 @@
                                         </svg>
                                         <div class="min-w-0">
                                             <p class="text-xs font-medium text-amber-800" x-text="deleteModal.cacheOnly ? t('Cache files (partial downloads)') : t('Local file')"></p>
-                                            <p class="text-xs font-medium text-amber-800 break-all" x-text="deleteModal.filename"></p>
-                                            <p class="text-xs text-amber-600 mt-0.5 break-all" x-text="deleteModal.filePath"></p>
+                                            <template x-if="!deleteModal.cacheOnly">
+                                                <div>
+                                                    <p class="text-xs font-medium text-amber-800 break-all" x-text="deleteModal.filename"></p>
+                                                    <p class="text-xs text-amber-600 mt-0.5 break-all" x-text="deleteModal.filePath"></p>
+                                                </div>
+                                            </template>
                                         </div>
                                     </div>
 
