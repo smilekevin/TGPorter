@@ -4,6 +4,9 @@ import asyncio
 import datetime
 import logging
 import os
+import re
+from concurrent.futures import TimeoutError as FutureTimeout
+from urllib.parse import urlsplit
 
 import utils
 from module.task_store import get_pending_tasks, remove_task
@@ -27,6 +30,37 @@ from utils.format import format_byte
 
 
 logger = logging.getLogger("download.service")
+
+
+def parse_download_url(url):
+    """Accept a single Telegram post, including private-channel and topic links."""
+    error = "Use an HTTPS t.me message link, such as https://t.me/channel/123 or https://t.me/c/123456/789."
+    if not isinstance(url, str) or not 1 <= len(url) <= 2048 or any(c.isspace() for c in url):
+        raise ValueError(error)
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or parsed.netloc.lower() != "t.me"
+                or parsed.query or parsed.fragment):
+            raise ValueError(error)
+        parts = parsed.path.strip("/").split("/")
+        if parts[0] == "s" and len(parts) == 3:
+            parts = parts[1:]
+        private = parts[0] == "c"
+        if private:
+            if len(parts) not in (3, 4) or not re.fullmatch(r"[1-9][0-9]*", parts[1]):
+                raise ValueError(error)
+            chat_id = int("-100" + parts[1])
+            ids = parts[2:]
+        else:
+            if len(parts) not in (2, 3) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", parts[0]):
+                raise ValueError(error)
+            chat_id = parts[0]
+            ids = parts[1:]
+        if not all(re.fullmatch(r"[1-9][0-9]*", value) and int(value) <= 2147483647 for value in ids):
+            raise ValueError(error)
+        return chat_id, int(ids[-1]), int(ids[0]) if len(ids) == 2 else 0, "https://t.me/" + "/".join(parts)
+    except (ValueError, IndexError):
+        raise ValueError(error) from None
 
 
 async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_task_id="", source_link="", original_task_id=""):
@@ -201,6 +235,30 @@ class DownloadService:
     def __init__(self, app, retry_download=None):
         self.app = app
         self.retry_download = retry_download or _async_retry_download
+
+    def submit_download(self, url):
+        """Resolve and persist on the downloader loop; never fetch media in a request thread."""
+        try:
+            chat_id, message_id, topic_id, canonical_url = parse_download_url(url)
+        except ValueError as error:
+            return {"code": "0", "message": str(error)}
+        from module.bot import _bot
+        loop = getattr(self.app, "loop", None)
+        if (not loop or not loop.is_running() or loop.is_closed()
+                or _bot.app is not self.app or not _bot.client or not _bot.is_running
+                or not callable(getattr(_bot, "add_download_task", None))):
+            return {"code": "0", "message": "Downloader is not ready; try again after Telegram startup."}
+        operation = _bot.submit_download_link(chat_id, message_id, canonical_url, topic_id)
+        try:
+            future = asyncio.run_coroutine_threadsafe(operation, loop)
+        except RuntimeError:
+            operation.close()
+            return {"code": "0", "message": "Downloader is shutting down."}
+        try:
+            return future.result(timeout=15)
+        except FutureTimeout:
+            future.cancel()
+            return {"code": "0", "message": "Submission timed out; check pending tasks before retrying."}
 
     def get_completed_count(self):
         """Lightweight endpoint: return only the total count of completed downloads.

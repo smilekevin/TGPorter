@@ -104,7 +104,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with Client(self.server) as client:
             listed = await client.list_tools()
             tools = {tool.name: tool for tool in listed.tools}
-            self.assertEqual(len(tools), 12)
+            self.assertEqual(len(tools), 13)
             self.assertTrue(tools["get_status"].annotations.read_only_hint)
             self.assertTrue(tools["delete_task"].annotations.destructive_hint)
             self.assertFalse(tools["delete_task"].input_schema["properties"]["delete_file"]["default"])
@@ -261,7 +261,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             csrf = await self.login_browser(http)
             async with httpx2.AsyncClient(headers=headers, trust_env=False) as mcp_http, \
                     Client(streamable_http_client(self.url + "/mcp", http_client=mcp_http)) as client:
-                self.assertEqual(len((await client.list_tools()).tools), 12)
+                self.assertEqual(len((await client.list_tools()).tools), 13)
                 for state in ("active", "completed", "pending", "failed"):
                     result = self.assert_success(await client.call_tool("list_downloads", {"status": state}))
                     self.assertEqual(result["total"], 1)

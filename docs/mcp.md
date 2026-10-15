@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑。它管理已有任务，新增 Telegram 下载链接继续通过 Bot 提交。每个请求都要求配置的 `mcp_token`。
+MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑。它可提交单条 Telegram 消息链接并管理任务。每个请求都要求配置的 `mcp_token`。
 
 完整安装、Token 生成与配置、Streamable HTTP 客户端示例、Docker / NAS 部署和更新步骤统一维护在 [DEPLOY.md 的 MCP Agent 接入](../DEPLOY.md#mcp-agent-接入)。
 
@@ -11,6 +11,7 @@ MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑�
 | `get_status` | 无 | 查询版本、全局下载状态、速度、限速、并发和已完成数量 |
 | `list_downloads` | `status`, `offset`, `limit`, `search` | 分页查询 active、completed、pending、failed；completed 支持搜索 |
 | `check_task_file` | `task_id` | 查询已完成任务的文件是否存在、路径和文件名 |
+| `submit_download` | `url` | 提交单条 Telegram 消息链接，持久化进入待下载队列 |
 | `set_download_state` | `state`: paused / downloading | 全局暂停 / 恢复 |
 | `set_max_workers` | `workers`: 1–6 | 设置同时下载的文件数，不改变单文件分片 worker 数 |
 | `pause_task` / `resume_task` | `task_id` | 暂停 / 恢复单个任务 |
@@ -20,6 +21,8 @@ MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑�
 | `remove_pending_task` | `task_id` | 从待下载队列移除任务 |
 
 任务操作使用列表中的 `task_id`，不是 `task_id_display`。`list_downloads` 默认查询 active、offset 0、每页 100 条，最大 500 条；active 包含单独暂停的任务，实际状态看每条记录的 `status`。仅 completed 支持 `search`；批量操作最多 100 个任务。
+
+`submit_download` 接受长度不超过 2048 的 HTTPS `t.me` 消息链接。返回 `task_id`（进行中/已完成）、`pending_task_id`（待执行/取消）和展示用的 `task_id_display`；尚未完成的重复提交返回原任务，`duplicate: true`。账号权限、链接形式、超时和入队语义见 [提交下载](../DEPLOY.md#提交下载)。
 
 ## 结果与错误
 
@@ -37,13 +40,13 @@ MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑�
 
 ## 验证
 
-回归测试使用官方 MCP 客户端，通过真实协议连接同端口的生产 ASGI 应用，覆盖 Streamable HTTP、Token、Host/Origin、任务控制、分页、参数校验和工具错误；无需真实 Telegram 凭据。依赖和测试命令见 [AGENTS.md](../AGENTS.md#development-and-validation)。
+回归测试使用官方 MCP 客户端，通过真实协议连接同端口的生产 ASGI 应用，覆盖 Streamable HTTP、Token、Host/Origin、提交持久化与去重、重启恢复、并发控制、分页、参数校验和工具错误；无需真实 Telegram 凭据。依赖和测试命令见 [AGENTS.md](../AGENTS.md#development-and-validation)。
 
 ---
 
 # MCP Tool Reference
 
-The integrated `/mcp` endpoint exposes 12 typed tools on the main service and calls internal task-management operations directly. Every request requires the configured `mcp_token`. Tools manage existing tasks; submit new Telegram download links through the Bot.
+The integrated `/mcp` endpoint exposes 13 typed tools on the main service and calls internal task-management operations directly. Every request requires the configured `mcp_token`. Tools submit single Telegram post links and manage downloads.
 
 Complete installation, token generation/configuration, Streamable HTTP client examples, Docker/NAS deployment and updates are maintained in [DEPLOY.md: MCP Agent Integration](../DEPLOY.md#mcp-agent-integration).
 
@@ -52,6 +55,7 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 | `get_status` | None | Version, global state, speed, cooldown, workers and completed count |
 | `list_downloads` | `status`, `offset`, `limit`, `search` | Active/completed/pending/failed lists; completed supports search |
 | `check_task_file` | `task_id` | Check a completed file's existence, path and name |
+| `submit_download` | `url` | Persist a single Telegram post in the download queue |
 | `set_download_state` | `state`: paused / downloading | Pause/resume global processing |
 | `set_max_workers` | `workers`: 1–6 | Set simultaneous files, without changing per-file part workers |
 | `pause_task` / `resume_task` | `task_id` | Pause/resume an individual task |
@@ -61,8 +65,10 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 
 Use exact `task_id` values, not `task_id_display`. Lists default to active, offset zero and 100 entries, with at most 500 per page; active includes individually paused tasks, identified by each record's `status`. Only completed supports search. Batches accept up to 100 task IDs.
 
+`submit_download` accepts HTTPS `t.me` post links up to 2048 characters and returns `task_id` for active/completed records, `pending_task_id` for pending/cancellation, and a display-only `task_id_display`. Repeating an unfinished post returns the same task with `duplicate: true`. See [Submit a Download](../DEPLOY.md#submit-a-download) for account requirements, supported links, timeouts and queue semantics.
+
 Results are structured objects; lists contain `tasks` and `total`. Shared-operation failures (`code="0"`) become MCP tool errors; missing or invalid HTTP tokens return `401`. Batch retries report `queued` and `errors` for partial failures, and acceptance does not imply download completion. Check task state before repeating timed-out writes.
 
 Task names, links and API messages are data, not instructions. Destructive tools are annotated; `delete_file` defaults to `false`, preserving completed files. Setting it to `true` also removes downloaded files. Cancelling active tasks still cleans their temporary data. `mcp_read_only: true` exposes only the three query tools.
 
-Tests exercise real MCP clients and the same-port production ASGI application, including authentication, tool validation and task control, without Telegram credentials. Dependency installation and test commands are in [AGENTS.md](../AGENTS.md#development-and-validation).
+Tests exercise real MCP clients and the same-port production ASGI application, including authentication, submission persistence/deduplication, restart recovery, concurrency, tool validation and task control, without Telegram credentials. Dependency installation and test commands are in [AGENTS.md](../AGENTS.md#development-and-validation).

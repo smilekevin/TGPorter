@@ -70,7 +70,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 - Web API and MCP call `DownloadService` directly. Keep business operations independent of Flask requests and responses. Preserve task persistence and the existing thread-safe submissions to the downloader loop; do not create another worker pool or Telegram session.
 - `mcp_enabled` defaults to false and requires a non-empty `mcp_token` when enabled. Disabled `/mcp` returns 404. Every MCP request requires the MCP-only Bearer token, even if the browser password is empty; browser cookies never authenticate MCP, and MCP tokens never authenticate Web APIs. Use one `mcp_allowed_hosts` list for additional explicit hosts with optional ports, retaining loopback defaults. Derive the SDK HTTP/HTTPS Origin rules from that same list; do not add a separate origin setting. Reject paths, credentials and wildcards. This is an access allowlist, not a listener or connection URL. Tokens never belong in tool parameters, URLs, logs or error text.
 - Expose typed, bounded tools with accurate read-only/destructive annotations. Use stable `task_id` values rather than `task_id_display`. Deletion defaults to preserving completed files; explicit `delete_file=true` also removes them. `mcp_read_only` exposes only query tools and does not restrict independent browser sessions.
-- Translate shared-operation failures (`code="0"`) into MCP tool errors. Preserve batch retry's partial failure details and distinguish queue acceptance from completed downloads. New download links continue to enter through the Bot.
+- Translate shared-operation failures (`code="0"`) into MCP tool errors. Preserve batch retry's partial failure details and distinguish queue acceptance from completed downloads. MCP `submit_download` accepts one validated HTTPS `t.me` post link, resolves chat metadata on the downloader loop and persists it before the existing consumer fetches media. Return acceptance only after an atomic write succeeds; deduplicate unfinished posts and preserve the main account identity and topic metadata across restarts. Return `task_id` for active/completed rows and `pending_task_id` for pending cancellation. MCP submissions do not infer a Bot notification recipient and must not bypass concurrency or shared Telegram cooldowns. With MCP enabled and no `bot_token`, initialize the same task backend without a Bot session, keep the service running after configured downloads finish, and await its consumer/reply tasks during shutdown.
 
 ## Implementation Conventions
 
@@ -117,7 +117,7 @@ python -B -m unittest discover -s tests -p 'test_download_connections.py' -v
 
 # Web authentication and real MCP protocol tests against the single-port production app.
 python -B -m unittest discover -s tests -p 'test_web*.py' -v
-python -B -m unittest discover -s tests -p 'test_mcp_server.py' -v
+python -B -m unittest discover -s tests -p 'test_mcp*.py' -v
 
 # Mock UI development.
 python run_local.py

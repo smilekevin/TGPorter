@@ -1,5 +1,6 @@
 api_hash: your_api_hash
 api_id: your_api_id
+# 命令交互和通知 Bot；只通过 MCP 提交任务时可设为 ""。
 bot_token: your_bot_token
 #chat:
 #- chat_id: telegram_chat_id

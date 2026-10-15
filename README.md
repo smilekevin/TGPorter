@@ -91,7 +91,7 @@
 
 ### Agent 接入
 
-- **MCP 工具** — 12 个工具支持任务查询、暂停、恢复、重试、删除和并发设置
+- **MCP 工具** — 13 个工具支持提交下载、任务查询、暂停、恢复、重试、删除和并发设置；支持不配置 Bot 的 MCP 独立运行模式
 - **接入方式** — Streamable HTTP，与主服务共用端口和镜像，使用独立 Token 鉴权
 - **只读模式** — 可仅开放查询工具
 
@@ -125,7 +125,7 @@
 | Docker Compose | 使用仓库中的 Compose 文件管理服务 | [Compose 部署](./DEPLOY.md#docker-compose-部署) |
 | 手动安装 | 使用 Python 3.11 运行 | [手动安装](./DEPLOY.md#手动安装) |
 | 本地开发 | 使用 Mock 数据调试 WebUI，无需 Telegram 账号 | [本地开发模式](./DEPLOY.md#本地开发模式) |
-| Agent / MCP | 用 MCP Token 管理已有下载任务 | [MCP 配置与部署](./DEPLOY.md#mcp-agent-接入) |
+| Agent / MCP | 用 MCP Token 提交和管理下载任务 | [MCP 配置与部署](./DEPLOY.md#mcp-agent-接入) |
 
 凭据获取、首次登录、完整配置、并行下载与分片续传、镜像更新、代理和数据持久化统一维护在 [DEPLOY.md](./DEPLOY.md)。
 
@@ -169,7 +169,7 @@
 
 配置非空 `web_login_secret` 后，网页与 Web API 只接受密码登录建立的 Session Cookie；修改状态的请求还需 CSRF Token，由网页自动携带。Bearer Token 不能代替 Session 或 CSRF。空密码保留网页与 Web API 的免登录模式。[WebUI 登录与部署](./DEPLOY.md#webui-登录)。
 
-Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参数、错误说明。MCP 直接调用内部任务管理逻辑，使用 `mcp_token` 鉴权，无需额外镜像或容器；默认关闭，开启后每个请求始终要求 Token，额外的 Host 白名单按需配置。12 个工具覆盖查询、暂停、恢复、重试、删除和并发设置；新增下载链接仍通过 Bot 提交。[MCP 接入与部署](./DEPLOY.md#mcp-agent-接入) / [MCP 工具参考](./docs/mcp.md)。
+Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参数、错误说明。MCP 直接调用内部任务管理逻辑，使用 `mcp_token` 鉴权，无需额外镜像或容器；默认关闭，开启后每个请求始终要求 Token，额外的 Host 白名单按需配置。13 个工具覆盖提交下载、查询、暂停、恢复、重试、删除和并发设置；`submit_download` 可提交单条 Telegram 消息链接，持久化进入现有下载队列。[MCP 接入与部署](./DEPLOY.md#mcp-agent-接入) / [MCP 工具参考](./docs/mcp.md)。
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -231,7 +231,7 @@ flowchart TB
     API --> Service
     MCP --> Service
     Bot -->|保存任务| Store
-    Service -->|Pending 查询 / 重试入队| Store
+    Service -->|提交 / Pending 查询 / 重试入队| Store
     Service <-->|状态查询 / 任务控制| Stats
     Recovery -->|恢复状态与编号| Store
     Store -->|读取 Pending| Consumer
@@ -471,7 +471,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Agent Integration
 
-- **MCP tools** — 12 tools for task queries, pause/resume, retry, deletion and worker settings
+- **MCP tools** — 13 tools for download submission, task queries, pause/resume, retry, deletion and worker settings; MCP-only mode runs without a configured Bot
 - **Connection** — Streamable HTTP on the main service's port and image, authenticated with a separate token
 - **Read-only mode** — optionally expose query tools only
 
@@ -505,7 +505,7 @@ Use this fork's prebuilt image, `ghcr.io/smilekevin/telegram-media-downloader:la
 | Docker Compose | Manage the service with the repository Compose file | [Compose deployment](./DEPLOY.md#docker-compose-deployment) |
 | Manual install | Run with Python 3.11 | [Manual install](./DEPLOY.md#manual-install) |
 | Local development | Debug WebUI with mock data, without a Telegram account | [Local dev mode](./DEPLOY.md#local-dev-mode) |
-| Agent / MCP | Manage existing downloads through token-authenticated MCP tools | [MCP configuration and deployment](./DEPLOY.md#mcp-agent-integration) |
+| Agent / MCP | Submit and manage downloads through token-authenticated MCP tools | [MCP configuration and deployment](./DEPLOY.md#mcp-agent-integration) |
 
 Credentials, first login, full configuration, parallel downloads and checkpoints, image updates, proxies and persistence are maintained in [DEPLOY.md](./DEPLOY.md#prerequisites).
 
@@ -549,7 +549,7 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 
 With a non-empty `web_login_secret`, WebUI and the Web API accept only password-login session cookies. State changes also require the session's CSRF token, which WebUI supplies automatically. Bearer tokens cannot replace sessions or CSRF. An empty password preserves public WebUI/API access. [WebUI login and deployment](./DEPLOY.md#webui-login).
 
-The main service exposes typed tools, structured results and actionable errors at `/mcp` on the same port. MCP calls internal download-management operations directly and authenticates with `mcp_token`, without another image or container. MCP is disabled by default and always requires a token when enabled; configure additional allowed hosts only as needed. Its 12 tools cover queries, pause/resume, retry, deletion and worker settings; new download links continue to enter through the Bot. [MCP setup and deployment](./DEPLOY.md#mcp-agent-integration) / [MCP tool reference](./docs/mcp.md#mcp-tool-reference).
+The main service exposes typed tools, structured results and actionable errors at `/mcp` on the same port. MCP calls internal download-management operations directly and authenticates with `mcp_token`, without another image or container. MCP is disabled by default and always requires a token when enabled; configure additional allowed hosts only as needed. Its 13 tools cover submission, queries, pause/resume, retry, deletion and worker settings. `submit_download` accepts a single Telegram message link and persists it in the existing download queue. [MCP setup and deployment](./DEPLOY.md#mcp-agent-integration) / [MCP tool reference](./docs/mcp.md#mcp-tool-reference).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -611,7 +611,7 @@ flowchart TB
     API --> Service
     MCP --> Service
     Bot -->|Save task| Store
-    Service -->|Pending queries / retry enqueue| Store
+    Service -->|Submission / Pending queries / retry| Store
     Service <-->|Status queries / task control| Stats
     Recovery -->|Restore states and IDs| Store
     Store -->|Read Pending| Consumer

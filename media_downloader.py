@@ -12,7 +12,7 @@ from pyrogram.types import Audio, Document, Photo, Video, VideoNote, Voice
 from rich.logging import RichHandler
 
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
-from module.bot import start_download_bot, stop_download_bot
+from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
 from module.task_store import update_task_progress, update_download_state
@@ -1565,7 +1565,7 @@ async def run_until_all_task_finish():
     """Normal download"""
     while True:
         finish = all(value.need_check and value.total_task == value.finish_task for _, value in app.chat_download_config.items())
-        if (not app.bot_token and finish) or app.restart_program:
+        if (not app.bot_token and not getattr(app, "mcp_enabled", False) and finish) or app.restart_program:
             break
         await asyncio.sleep(1)
 
@@ -1981,6 +1981,8 @@ def main():
         tasks.append(app.loop.create_task(_throttle_restart_loop(client)))
         if app.bot_token:
             app.loop.run_until_complete(start_download_bot(app, client, add_download_task, download_chat_task))
+        elif app.mcp_enabled:
+            app.loop.run_until_complete(start_download_backend(app, client, add_download_task, download_chat_task))
         _exec_loop()
     except KeyboardInterrupt:
         logger.info(_t("KeyboardInterrupt"))
@@ -1989,7 +1991,7 @@ def main():
     finally:
         app.is_running = False
         save_downloads()
-        if app.bot_token:
+        if app.bot_token or app.mcp_enabled:
             app.loop.run_until_complete(stop_download_bot())
         app.loop.run_until_complete(stop_server(client))
         for task in tasks:

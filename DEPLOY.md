@@ -286,7 +286,7 @@ proxy:
 |------|------|--------|
 | `api_id` | Telegram API ID（[my.telegram.org](https://my.telegram.org/apps)） | — |
 | `api_hash` | Telegram API Hash | — |
-| `bot_token` | 命令交互和通知 Bot 的 Token（[@BotFather](https://t.me/BotFather)） | — |
+| `bot_token` | 命令交互和通知 Bot 的 Token（[@BotFather](https://t.me/BotFather)）；MCP 独立运行时可留空 | — |
 | `media_types` | 下载的媒体类型列表 | — |
 | `file_formats` | 各类型文件格式过滤 | — |
 | `save_path` | 文件保存路径 | `./downloads` |
@@ -337,7 +337,7 @@ Web API 与网页共用密码登录 Session，修改状态时还需提供当前 
 
 ## MCP Agent 接入
 
-MCP 集成在下载器主服务中，复用主镜像、容器和 `web_port`（默认 `5000`），入口为 `/mcp`。工具直接调用内部任务管理逻辑。[工具与参数参考](./docs/mcp.md)。12 个工具管理已有任务；新增 Telegram 下载链接继续通过 Bot 提交。
+MCP 集成在下载器主服务中，复用主镜像、容器和 `web_port`（默认 `5000`），入口为 `/mcp`。工具直接调用内部任务管理逻辑。[工具与参数参考](./docs/mcp.md)。13 个工具支持提交和管理下载任务；`submit_download` 接受单条 Telegram 消息链接，持久化到现有 Pending 队列。
 
 ### 开启 MCP
 
@@ -387,7 +387,19 @@ docker compose restart telegam-media-downloader
 
 本机可使用 `http://127.0.0.1:5000/mcp`，局域网可使用配置的 NAS 地址。公网访问使用 HTTPS 反向代理，保留原始 Host 请求头，并允许 `/mcp` 的 GET、POST、DELETE 请求通过。此实现采用预配置 Bearer Token，不提供 OAuth 登录页。Token 只放在受保护的配置和请求头中，不放在 URL 或工具参数中；错误或缺失 Token 返回 `401`。
 
-`mcp_read_only: true` 只暴露三个查询工具。修改 Token 后重启下载器，并同步更新 Agent 配置，旧 Token 随即失效。默认允许写操作，删除工具的 `delete_file` 默认 `false`。[工具列表与删除语义](./docs/mcp.md)。
+`mcp_read_only: true` 只暴露三个查询工具，不开放提交下载。修改 Token 后重启下载器，并同步更新 Agent 配置，旧 Token 随即失效。默认允许写操作，删除工具的 `delete_file` 默认 `false`。[工具列表与删除语义](./docs/mcp.md)。
+
+### 提交下载
+
+调用 `submit_download`，参数例如：
+
+```json
+{"url": "https://t.me/channel_name/123"}
+```
+
+支持公开消息、`https://t.me/c/123456/789` 私有频道消息，以及带话题 ID 的消息链接。下载器当前登录的 Telegram 账号必须能访问该频道。仅通过 MCP 提交任务时，可将 `bot_token` 设为 `""`；服务会持续运行并启动现有队列与恢复机制，不创建额外 Bot 会话。仅接受 `https://t.me` 的单条消息链接，不接受频道首页、邀请链接、查询参数、整频道或范围任务。频道解析超时为 10 秒；服务未就绪或处于 Telegram 冷却期时返回工具错误。
+
+返回 `status: pending` 表示已持久化入队，不表示下载完成。`task_id` 对应进行中/已完成记录，`pending_task_id` 对应待执行记录，可传给 `remove_pending_task` 取消；`task_id_display` 仅用于展示。同一消息仍在队列或下载中时，重复提交返回已有任务并设置 `duplicate: true`。任务复用现有并发限制和重启恢复，不额外发送 Bot 通知；后续使用 `list_downloads` 查询进度。
 
 ## Docker 管理
 
@@ -755,7 +767,7 @@ Defaults apply when an option is omitted and may differ from the example configu
 |-----------|-------------|---------|
 | `api_id` | Telegram API ID ([my.telegram.org](https://my.telegram.org/apps)) | — |
 | `api_hash` | Telegram API Hash | — |
-| `bot_token` | Command and notification bot Token ([@BotFather](https://t.me/BotFather)) | — |
+| `bot_token` | Command and notification bot Token ([@BotFather](https://t.me/BotFather)); may be empty in MCP-only mode | — |
 | `media_types` | Media types to download | — |
 | `file_formats` | Format filter per type | — |
 | `save_path` | File save path | `./downloads` |
@@ -806,7 +818,7 @@ Set `web_login_secret: ""` to disable password login and restart the service aft
 
 ## MCP Agent Integration
 
-MCP is integrated into the downloader, reusing the main image, container and `web_port` (default `5000`). Its endpoint is `/mcp`. Tools call internal download-management operations directly. [Tool reference](./docs/mcp.md#mcp-tool-reference). The 12 tools manage existing tasks; submit new Telegram download links through the Bot.
+MCP is integrated into the downloader, reusing the main image, container and `web_port` (default `5000`). Its endpoint is `/mcp`. Tools call internal download-management operations directly. [Tool reference](./docs/mcp.md#mcp-tool-reference). The 13 tools submit and manage downloads; `submit_download` accepts a single Telegram message link and persists it in the existing Pending queue.
 
 ### Enable MCP
 
@@ -856,7 +868,19 @@ Connect through Streamable HTTP at the server’s `/mcp` URL. Clients supporting
 
 Use `http://127.0.0.1:5000/mcp` locally or the configured NAS URL on a LAN. For public access, use an HTTPS reverse proxy that preserves the original Host header and forwards GET, POST and DELETE requests to `/mcp`. Authentication uses a preconfigured bearer token, without an OAuth login page. Store tokens in protected configuration and request headers, never URLs or tool parameters. Missing or invalid tokens return `401`.
 
-`mcp_read_only: true` exposes only the three query tools. After rotating a token, restart the downloader and update agent configuration; the previous token is revoked. Write tools are enabled by default; deletion's `delete_file` defaults to `false`. See the [tool reference](./docs/mcp.md#mcp-tool-reference).
+`mcp_read_only: true` exposes only the three query tools, without download submission. After rotating a token, restart the downloader and update agent configuration; the previous token is revoked. Write tools are enabled by default; deletion's `delete_file` defaults to `false`. See the [tool reference](./docs/mcp.md#mcp-tool-reference).
+
+### Submit a Download
+
+Call `submit_download` with arguments such as:
+
+```json
+{"url": "https://t.me/channel_name/123"}
+```
+
+Public posts, private-channel posts such as `https://t.me/c/123456/789`, and topic-message links are supported. The downloader's logged-in Telegram account must have access to the chat. For MCP-only submissions, set `bot_token: ""`; the service stays running and starts the existing queue/recovery backend without creating another Bot session. Only single-message HTTPS `t.me` links are accepted; channel homepages, invite links, query parameters, whole-channel downloads and ranges are unsupported. Chat lookup times out after 10 seconds. Startup-not-ready and Telegram cooldown conditions return tool errors.
+
+A `pending` response means durable queue acceptance, not a completed download. `task_id` identifies active/completed records; `pending_task_id` identifies the pending record and can be passed to `remove_pending_task`. `task_id_display` is for display only. Repeating a post that is still pending/downloading returns its existing task with `duplicate: true`. Submissions reuse concurrency limits and restart recovery without sending extra Bot notifications. Use `list_downloads` to follow progress.
 
 ## Docker Management
 
