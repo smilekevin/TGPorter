@@ -1,6 +1,6 @@
 {
   "name": "Telegram Media Downloader",
-  "short_name": "TG下载",
+  "short_name": "TG Downloader",
   "description": "Telegram Media Downloader",
   "start_url": "/",
   "display": "standalone",

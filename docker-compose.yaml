@@ -12,15 +12,15 @@ services:
       - http_proxy=socks5://172.17.0.1:1080
       - https_proxy=socks5://172.17.0.1:1080
     volumes:
-      # 下载目录 (修改为你的实际路径)
+      # Download directory (change to your actual path)
       - "./downloads:/app/downloads/"
-      # 配置文件
+      # Configuration files
       - "./config.yaml:/app/config.yaml"
       - "./data.yaml:/app/data.yaml"
-      # 日志
+      # Logs
       - "./log:/app/log/"
       # Telegram session
       - "./sessions:/app/sessions"
-      # 临时文件
+      # Temporary files
       - "./temp:/app/temp"
     restart: unless-stopped

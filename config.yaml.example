@@ -1,6 +1,6 @@
 api_hash: your_api_hash
 api_id: your_api_id
-# 命令交互和通知 Bot；只通过 MCP 提交任务时可设为 ""。
+# Bot for commands and notifications; set to "" when submitting tasks only through MCP.
 bot_token: your_bot_token
 #chat:
 #- chat_id: telegram_chat_id
@@ -8,7 +8,7 @@ bot_token: your_bot_token
 #  download_filter: message_date >= 2022-12-01 00:00:00 and message_date <= 2023-01-17 00:00:00
 #- chat_id: telegram_chat_id_2
 #  last_read_message_id: 0
-# 我们将ids_to_retry移到data.yaml
+# ids_to_retry has moved to data.yaml.
 ids_to_retry: []
 media_types:
 - audio
@@ -39,22 +39,22 @@ file_name_prefix:
 - file_name
 #file_name_prefix_split: ' - '
 max_download_task: 5
-# 单文件并发 worker 数；每个 worker 独立连接，下载完切片后继续取下一片。
+# Workers per file; each uses an independent connection and takes another part when finished.
 file_download_concurrency: 4
-# 固定切片大小（单位 MiB）；最后一片按剩余大小下载，小文件只切一片。
+# Fixed part size in MiB; the last part contains the remainder, and small files use one part.
 download_part_size_mb: 64
 web_host: 0.0.0.0
 web_port: 5000
-# WebUI 访问密码；部署前修改。设为 "" 可关闭密码登录。
+# WebUI password; change before deployment. Set to "" to disable password login.
 web_login_secret: "replace-with-a-long-password"
-# 可选：仅供 /mcp 使用的随机 Token，与网页密码独立；Web API 只使用 Session。
+# Optional random token for /mcp only, independent of the WebUI password; Web APIs use sessions only.
 mcp_token: ""
-# 可选：与 WebUI / Web API 共用 web_port，提供 /mcp；开启时必须设置 mcp_token。
+# Optional /mcp endpoint on the same web_port as WebUI / Web APIs; requires mcp_token when enabled.
 mcp_enabled: false
-# 仅暴露 MCP 查询工具，不影响独立的网页登录会话。
+# Expose only MCP query tools; independent browser sessions are unaffected.
 mcp_read_only: false
-# 可选：额外允许的 Host（域名或 IP，可带端口），例如 ["nas.example.com", "192.168.1.20:5000"]。
-# 默认已允许 localhost / loopback；不填写完整 /mcp URL，不支持通配符。
+# Optional additional allowed hosts (domain or IP, with optional port), e.g. ["nas.example.com", "192.168.1.20:5000"].
+# Localhost / loopback are allowed by default; do not use full /mcp URLs or wildcards.
 mcp_allowed_hosts: []
 allowed_user_ids:
 - 'me'
