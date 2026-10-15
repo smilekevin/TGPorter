@@ -9,6 +9,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import utils
 from module import download_stat, download_service, web
 from module.app import Application
 
@@ -47,6 +48,16 @@ class WebLoginTests(unittest.TestCase):
         self.assertIn('type="password"', response.get_data(as_text=True))
         self.assertNotIn("test-password", response.get_data(as_text=True))
         self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_version_api_and_dashboard_preserve_the_resolved_version(self):
+        self.login()
+        with patch.object(utils, "__version__", "v1.2.3-rc.1"):
+            response = self.client.get("/get_app_version")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_data(as_text=True), "v1.2.3-rc.1")
+        dashboard = self.client.get("/").get_data(as_text=True)
+        self.assertIn('x-text="version"', dashboard)
+        self.assertNotIn("'v' + version", dashboard)
 
     def test_all_dashboard_apis_reject_anonymous_requests_before_running_handlers(self):
         with patch.object(download_service, "get_download_result", Mock()) as get_result, \

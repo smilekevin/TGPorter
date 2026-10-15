@@ -107,6 +107,16 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertEqual(release["name"], "Build Release Docker Image")
         self.assertEqual(release["on"], {"release": {"types": ["published"]}})
 
+    def test_builds_pass_source_versions_into_the_runtime_image(self):
+        self.assertEqual(self.steps["release"]["build"]["with"]["build-args"].strip(),
+                         "APP_VERSION=${{ steps.tags.outputs.version }}")
+        self.assertEqual(self.steps["ci"]["build"]["with"]["build-args"].strip(),
+                         "APP_VERSION=sha-${{ steps.version.outputs.sha }}")
+        runtime = (ROOT / "Dockerfile").read_text().split(" AS runtime\n", 1)[1]
+        self.assertIn("ARG APP_VERSION=unknown\n", runtime)
+        self.assertIn("ENV APP_VERSION=${APP_VERSION}\n", runtime)
+        self.assertIn("LABEL org.opencontainers.image.version=${APP_VERSION}\n", runtime)
+
     def test_ci_handles_pr_master_push_and_manual_runs(self):
         events = self.workflows["ci"]["on"]
         self.assertEqual(set(events), {"pull_request", "push", "workflow_dispatch"})

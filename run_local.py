@@ -12,6 +12,8 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, Response, jsonify, render_template, request
 
+import utils
+
 app = Flask(__name__, 
     template_folder=os.path.join(os.path.dirname(__file__), 'module', 'templates'),
     static_folder=os.path.join(os.path.dirname(__file__), 'module', 'static'),
@@ -84,7 +86,7 @@ def get_download_status():
 
 @app.route("/get_app_version")
 def get_app_version():
-    return "2.2.7-dev"
+    return utils.__version__
 
 @app.route("/set_download_state", methods=["POST"])
 def set_download_state():

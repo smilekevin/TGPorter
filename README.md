@@ -300,11 +300,17 @@ _TCP.TIMEOUT = 900
 
 ## 相比上游的改动
 
-本 fork 的直接上游是 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。下面先列出相对该项目的修复，再保留它基于 tangyoha v2.2.6 的原有改造说明。
+本 fork 的直接上游是 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。下面列出相对该项目的新增功能与修复，并保留它基于 tangyoha v2.2.6 的原有改造说明。
+
+### 本 fork 的新增功能
+
+- **单文件多流并行下载**：多个独立连接并行下载固定大小的切片，可分别配置同时下载的文件数、每个文件的并发数和切片大小。暂停、断网或重启后继续已有分片，不重复下载已完成切片；WebUI 为每个文件汇总显示一条进度。[下载配置与断点说明](./DEPLOY.md#配置参数说明)。
+- **MCP Agent 接入**：13 个工具支持提交单条 Telegram 消息下载、查询状态、暂停/恢复、重试、删除和调整并发。与 WebUI 共用端口和镜像，支持独立 Token、只读模式，以及不配置 Bot 的运行方式。[MCP 配置与部署](./DEPLOY.md#mcp-agent-接入)。
+- **预构建多架构镜像**：提供 amd64 / arm64 镜像，发布 GitHub Release 后可按版本标签或 digest 部署，Release notes 提供拉取地址；CI 另提供 SHA 标签的验证镜像。[镜像部署](./DEPLOY.md#docker-镜像部署)。
 
 ### 本 fork 的修复
 
-上游已提供任务持久化、Pending 队列和 Worker 池，本 fork 在此基础上修复恢复与下载问题，并增加镜像发布和回归测试。
+上游已提供任务持久化、Pending 队列和 Worker 池，本 fork 在此基础上修复恢复与下载问题，并补充离线回归测试。
 
 - **Pending Consumer 生命周期**：修复上游 `recover_tasks()` 无历史任务时提前返回、导致 Consumer 未启动的问题；空任务启动也会运行唯一的周期 Consumer，退出时取消并等待结束；恢复状态和任务编号在注册 Bot handler 前完成。
 - **恢复与队列交接**：排除正在消费和已经入队的任务；入队失败或取消后释放占位并保持 Pending，供下次重试。通知有 30 秒超时，避免阻塞消费循环。
@@ -312,7 +318,6 @@ _TCP.TIMEOUT = 900
 - **Worker 计数**：Worker 与 Consumer 共享并发计数；空闲取消和缩容哨兵不扣减下载计数，每个 Worker 只计入和退出一次，重试重新入队时保留占位。
 - **依赖安装**：将上游的 `PyTgCrypto==1.2.6` 更新为 `PyTgCrypto==1.2.12`，提供 Python 3.11 的 Alpine x86_64 和 ARM64 安装包。
 - **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
-- **Docker 构建**：CI 在 PR、master 推送或手动运行时构建验证镜像，测试通过后发布 SHA 标签并在 Summary 提供拉取地址；**Build Release Docker Image** 只在发布 GitHub Release 时运行，发布版本标签并更新 `latest`。镜像推送成功后，自动在 Release notes 中补充版本拉取命令、digest 地址和支持的平台；保留原有说明，重新运行时更新同一区块。
 
 分支验证：本仓库的 PR 会自动运行 **Telegram Media Downloader CI**，也可在 Actions 手动选择分支运行 CI。成功后从 Summary 的 **CI image for verification** 复制 `docker pull` 命令或 Compose 的 `image:` 配置。CI 只发布 SHA 标签，`latest` 仅由 Release 工作流更新。
 
@@ -680,11 +685,17 @@ _TCP.TIMEOUT = 900
 
 ## Changes from Upstream
 
-This fork is based directly on [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader). The first section describes fixes relative to that project; the second preserves its original changes relative to tangyoha v2.2.6.
+This fork is based directly on [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader). The sections below describe added features and fixes relative to that project, followed by its original changes relative to tangyoha v2.2.6.
+
+### Features Added in This Fork
+
+- **Parallel streams per file**: download fixed-size parts over independent connections, with separate settings for simultaneous files, streams per file and part size. Pauses, network interruptions and restarts resume the saved parts without downloading completed parts again; WebUI shows one aggregate progress row per file. [Download settings and checkpoints](./DEPLOY.md#parameters).
+- **MCP agent integration**: 13 tools submit single Telegram message downloads, query status, pause/resume, retry, delete tasks and adjust concurrency. MCP shares the WebUI port and image, with a separate token, read-only mode and support for running without a Bot. [MCP setup and deployment](./DEPLOY.md#mcp-agent-integration).
+- **Prebuilt multi-platform images**: amd64 / arm64 images support deployment by Release version tag or digest, with pull references in Release notes. CI also provides SHA-tagged verification images. [Image deployment](./DEPLOY.md#docker-image-deployment).
 
 ### Fixes in This Fork
 
-Upstream already provides task persistence, a Pending queue and a worker pool. This fork fixes recovery and download issues in those mechanisms and adds image publishing and regression tests.
+Upstream already provides task persistence, a Pending queue and a worker pool. This fork fixes recovery and download issues in those mechanisms and adds offline regression tests.
 
 - **Pending consumer lifecycle**: fix the upstream early return in `recover_tasks()` that leaves the consumer unstarted when there are no historical tasks. Start one periodic consumer even with an empty store, cancel and await it at shutdown, and restore states and task IDs before registering Bot handlers.
 - **Recovery and queue handoff**: exclude tasks being consumed or already queued; release reservations on rejected or cancelled handoffs so Pending tasks can retry. Bound notifications to 30 seconds.
@@ -692,7 +703,6 @@ Upstream already provides task persistence, a Pending queue and a worker pool. T
 - **Worker accounting**: share active counts with the consumer, avoid decrements for idle cancellation or resize sentinels, count worker entry/exit once, and reserve requeued retries.
 - **Dependencies**: update the upstream `PyTgCrypto==1.2.6` pin to `PyTgCrypto==1.2.12`, which includes Python 3.11 Alpine wheels for x86_64 and ARM64.
 - **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
-- **Docker builds**: CI tests and publishes SHA verification images for PRs, master pushes and manual runs, with pull references in its Summary. **Build Release Docker Image** runs only when a GitHub Release is published, publishing version tags and updating `latest`. After pushing the image successfully, it adds version and digest pull commands and supported platforms to the Release notes, preserving the existing description and updating the same section on reruns.
 
 For branch verification, this repository's PRs automatically run **Telegram Media Downloader CI**. You can also select a branch and run CI manually in Actions. After success, copy the `docker pull` command or Compose `image:` configuration from **CI image for verification** in the Summary. CI publishes only SHA tags; only the Release workflow updates `latest`.
 

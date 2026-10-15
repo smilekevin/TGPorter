@@ -16,7 +16,7 @@ def print_meta(logger):
     console = Console()
     # pylint: disable = C0301
     console.log(
-        f"[bold]Telegram Media Downloader v{__version__}[/bold],\n[i]{__copyright__}[/i]"
+        f"[bold]Telegram Media Downloader {__version__}[/bold],\n[i]{__copyright__}[/i]"
     )
     console.log(f"Licensed under the terms of the {__license__}", end="\n\n")
     logger.info(f"Device: {DEVICE_MODEL} - {APP_VERSION}")
