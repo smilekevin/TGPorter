@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from module.telegram import pyrogram
 from pyrogram import Client, raw
 from pyrogram.file_id import FileId, FileType
 
@@ -27,6 +28,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.client.storage = SimpleNamespace(
             dc_id=AsyncMock(return_value=2), auth_key=AsyncMock(return_value=b"k" * 256),
             test_mode=AsyncMock(return_value=False))
+        self.client.get_dc_option = AsyncMock(return_value=SimpleNamespace(ip_address="149.154.167.51", port=443))
         self.client.proxy = {"scheme": "socks5", "hostname": "offline", "port": 1080}
         self.client.invoke = AsyncMock(return_value=SimpleNamespace(id=1, bytes=b"authorization"))
         self.existing = SimpleNamespace(stop=AsyncMock())
@@ -41,6 +43,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.ready_gate = asyncio.Event()
         self.ready_gate.set()
         self.cdn = False
+        self.corrupt_hash = False
         owner = self
 
         class Transport:
@@ -55,7 +58,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.client.connection_factory = Transport
 
         class MediaSession:
-            def __init__(self, client, dc_id, auth_key, test_mode,
+            def __init__(self, client, dc_id, server_address, port, auth_key, test_mode,
                          is_media=False, is_cdn=False):
                 self.client = client
                 self.dc_id = dc_id
@@ -92,17 +95,14 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                     return raw.types.upload.CdnFile(bytes=chunk)
                 if isinstance(query, raw.functions.upload.GetCdnFileHashes):
                     return [raw.types.FileHash(offset=query.offset, limit=len(chunk),
-                                              hash=hashlib.sha256(chunk).digest())]
+                                              hash=bytes(32) if owner.corrupt_hash else hashlib.sha256(chunk).digest())]
                 return raw.types.upload.File(type=raw.types.storage.FileUnknown(),
                                              mtime=0, bytes=chunk)
 
         self.auth = AsyncMock(return_value=b"a" * 256)
         for item in (
-            patch("pyrogram.methods.messages.inline_session.Session", MediaSession),
-            patch("pyrogram.methods.messages.inline_session.Auth",
-                  return_value=SimpleNamespace(create=self.auth)),
-            patch("pyrogram.client.Session", MediaSession),
-            patch("pyrogram.client.Auth", return_value=SimpleNamespace(create=self.auth)),
+            patch("module.download_connection.Session", MediaSession),
+            patch("module.download_connection.Auth", return_value=SimpleNamespace(create=self.auth)),
             patch("pyrogram.client.aes.ctr256_decrypt", side_effect=lambda chunk, *_: chunk),
         ):
             item.start()
@@ -296,12 +296,12 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(self.download())
         await self.until(lambda: len(self.active) == 4)
 
-        async def terminate():
+        async def terminate(**kwargs):
             self.assert_closed()
 
         with patch.object(Client, "terminate", AsyncMock(side_effect=terminate)) as base:
             await self.client.terminate()
-            base.assert_awaited_once()
+            base.assert_awaited_once_with(clear_handlers=True)
         with self.assertRaises(ConnectionError):
             await task
         self.assertTrue(self.client._download_connections_closing)
@@ -321,7 +321,33 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         await self.download()
         self.assertEqual(len(self.sessions), 9)
         self.assertEqual(sum(session.is_cdn for session in self.sessions), 5)
+        self.assertTrue(all(session.dc_id == 4 for session in self.sessions if session.is_cdn))
+        self.assertTrue(all(session.dc_id == 2 for session in self.sessions if not session.is_cdn))
         self.assertEqual(self.path.read_bytes(), self.data)
+        self.assert_closed()
+
+    async def test_cdn_hash_mismatch_preserves_parts_and_closes_connections(self):
+        self.cdn = True
+        self.corrupt_hash = True
+        with self.assertRaises(pyrogram.errors.CDNFileHashMismatch):
+            await self.download()
+        self.assertFalse(self.path.exists())
+        self.assertTrue((parts_path(str(self.path)) / "manifest.json").exists())
+        self.assert_closed()
+
+    async def test_foreign_dc_authorization_retries_are_bounded_and_cleaned_up(self):
+        self.file_id.dc_id = 4
+        self.request_gate = None
+        self.client.invoke.return_value = SimpleNamespace(id=1, bytes=b"authorization")
+        from module.download_connection import DownloadConnection
+        # Reject the import on the actual worker-owned session, before any bytes.
+        with patch("module.download_connection.Session.invoke",
+                   AsyncMock(side_effect=pyrogram.errors.AuthBytesInvalid)):
+            async with DownloadConnection(self.client, "offline-auth") as connection:
+                with self.assertRaises(pyrogram.errors.AuthBytesInvalid):
+                    async for _ in connection.get_file(self.file_id, len(self.data), 1, 0, self.progress):
+                        pass
+        self.assertEqual(self.client.invoke.await_count, 3)
         self.assert_closed()
 
 

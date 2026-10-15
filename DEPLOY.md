@@ -12,7 +12,13 @@ English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api
 
 ## 前置条件
 
-1. Docker 镜像部署需要 Docker；Compose 部署还需 Docker Compose。手动安装需要 Python 3.11 和 pip。
+Telegram SDK 使用 `requirements.txt` 中固定版本的 Kurigram（仍通过 `pyrogram` 导入）。不要在同一虚拟环境中混装 Pyrogram、Pyrofork 和 Kurigram；从旧版本手动安装迁移时，请重新创建虚拟环境，再安装完整依赖。
+
+主服务通过 `requirements.txt` 安装依赖，直接使用的 Starlette、Uvicorn、Pydantic 固定为已验证版本。过滤表达式由固定版本的 Lark 解析，不再使用 PLY 或生成 `parsetab.py`。不再需要 Flask-Login、Requests 或 PyCryptodome；从旧环境升级时重新创建虚拟环境，可避免残留包掩盖缺失依赖。
+
+首次使用此版本前，先停止服务并备份 `sessions/`、`config.yaml`、`data.yaml`、`downloads/` 和 `temp/`。Kurigram 会原地升级旧 Session 数据库；回滚到旧 SDK 时，应停服并恢复升级前的 Session 备份。任务与 `.parts/` 检查点格式保持不变；离线迁移测试不替代真实 Telegram 下载验收。
+
+1. Docker 镜像部署需要 Docker；Compose 部署还需 Docker Compose。手动安装需要 Python 3.14 和 pip。
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
 3. 已创建 Bot Token（通过 @BotFather）
 
@@ -46,7 +52,7 @@ Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloa
 2. 按提示设置 Bot 名称和用户名，创建成功后复制 BotFather 返回的完整 Token。
 3. 将 Token 填入 `config.yaml` 的 `bot_token`，用于命令交互和通知 Bot。详见 [Telegram 官方说明](https://core.telegram.org/bots/features#botfather)。
 
-主下载客户端可以选择手机号或 Bot Token 登录；仅填写配置中的 `bot_token` 不会代替主下载客户端的首次登录。使用 Bot 身份下载时，下载范围取决于该 Bot 对目标消息的访问权限。各部署方式的首次登录和 session 丢失后的重新登录步骤见下文，两种登录方式的背景说明见 [Pyrogram 官方文档](https://docs.pyrogram.org/start/auth)。
+主下载客户端可以选择手机号或 Bot Token 登录；仅填写配置中的 `bot_token` 不会代替主下载客户端的首次登录。使用 Bot 身份下载时，下载范围取决于该 Bot 对目标消息的访问权限。各部署方式的首次登录和 session 丢失后的重新登录步骤见下文，两种登录方式的背景说明见 [Kurigram 文档](https://docs.kurigram.icu/start/auth)。
 
 ### Docker 镜像部署
 
@@ -175,7 +181,7 @@ Compose 将 session 保存在宿主机的 `sessions/`；`--rm` 只删除一次�
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
 cd telegram-media-downloader
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 
@@ -194,12 +200,12 @@ python media_downloader.py
 
 ### 本地开发模式
 
-在仓库根目录使用 Python 3.11 虚拟环境；只需 Flask 和 Werkzeug，无需安装完整下载依赖或配置 Telegram 凭证。
+在仓库根目录使用 Python 3.14 虚拟环境；只需 Flask 和 Werkzeug，无需安装完整下载依赖或配置 Telegram 凭证。
 
 ```bash
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
-python -m pip install Flask==2.2.2 Werkzeug==2.2.2
+python -m pip install Flask==3.1.3 Werkzeug==3.1.9
 # 无需 Telegram 账号，Mock 数据启动 WebUI
 python run_local.py
 # 访问 http://localhost:5000
@@ -208,6 +214,8 @@ python run_local.py
 ---
 
 ## 配置说明
+
+下载过滤表达式保留比较、算术、`and` / `or`、`&&` / `||`、括号、单引号字符串、`r'...'` 正则和 `B` / `KB` / `MB` / `GB` / `TB` 单位。日期需要完整时间（如 `2024-01-01 00:00:00`）。正则比较执行完整匹配，可以放在比较式任一侧；非法字符不再被跳过，而是返回语法错误。缺失字段和运算优先级沿用原有规则。
 
 ### config.yaml
 
@@ -471,9 +479,11 @@ docker-compose up -d
 
 保留所有挂载目录，容器移除或重建不会删除宿主机数据。迁移时同步保留配置、运行数据、任务日志、session 和分片断点；自定义的宿主机下载路径对应表中的 `./downloads/`。
 
+主下载账号使用 Bot 身份时，请在 `allowed_user_ids` 中填写操作人的数字 Telegram 用户 ID。数字 ID 不依赖该 Bot 的联系人缓存；`me` 指向主下载账号本身，不会自动授权真人用户。Bot 身份不会接收启动帮助通知。
+
 ## 代理配置
 
-Pyrogram 连接 Telegram 使用 `config.yaml` 中的 `proxy`：
+Kurigram 连接 Telegram 使用 `config.yaml` 中的 `proxy`：
 
 ```yaml
 proxy:
@@ -490,7 +500,7 @@ environment:
   - https_proxy=socks5://你的代理IP:端口
 ```
 
-容器中 `127.0.0.1` 指向容器自身，代理地址必须可从容器访问；`172.17.0.1` 需根据 Docker / NAS 网络实际情况调整。手动安装使用本机可访问的地址。无需代理时设置 `proxy: {}`，并删除或注释 Compose 中的代理环境变量。
+容器中 `127.0.0.1` 指向容器自身，代理地址必须可从容器访问；`172.17.0.1` 需根据 Docker / NAS 网络实际情况调整。手动安装使用本机可访问的地址。无需代理时设置 `proxy: {}`，并删除或注释 Compose 中的代理环境变量。省略 `proxy` 或设为 `null` 也表示不使用 Telegram 代理；主客户端和 Bot 客户端都会将空配置转换为 Kurigram 所需的 `None`。
 
 ## 故障排查
 
@@ -505,7 +515,13 @@ environment:
 
 ## Prerequisites
 
-- Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.11 and pip.
+The Telegram SDK is the Kurigram version pinned in `requirements.txt`, imported as `pyrogram`. Do not co-install Pyrogram, Pyrofork and Kurigram in one virtual environment. For an existing manual installation, recreate the virtual environment before installing the full requirements.
+
+Install main-service dependencies from `requirements.txt`, which explicitly pins the tested Starlette, Uvicorn and Pydantic versions. Filter expressions use the pinned Lark parser; PLY and generated `parsetab.py` files are no longer needed. Flask-Login, Requests and PyCryptodome are no longer required. Recreate an older virtual environment when upgrading so leftover packages cannot hide missing dependencies.
+
+Before starting this version for the first time, stop the service and back up `sessions/`, `config.yaml`, `data.yaml`, `downloads/` and `temp/`. Kurigram upgrades existing session databases in place. To roll back to the previous SDK, stop the service and restore the session backup from before migration. Task and `.parts/` checkpoint formats remain unchanged; offline migration tests do not replace real Telegram download acceptance checks.
+
+- Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.14 and pip.
 - Actual downloads require Telegram API credentials and access to the target messages. Mock development mode does not require Telegram login.
 - The project and image use `telegram-media-downloader`; the Compose service and container intentionally use `telegam-media-downloader`.
 - The prebuilt image is `ghcr.io/smilekevin/telegram-media-downloader`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`. The README Version badge follows the latest stable GitHub Release tag; its Python badge reads `python-version` from `.github/workflows/tests.yml`. Badge updates appear after caches refresh.
@@ -533,7 +549,7 @@ These steps apply to image, Docker Compose and manual deployments. Local mock de
 2. Follow the prompts to set the bot's name and username, then copy the complete Token returned by BotFather.
 3. Enter the Token in `config.yaml` as `bot_token` for the command and notification bot. See [Telegram's official instructions](https://core.telegram.org/bots/features#botfather).
 
-The main download client supports phone or Bot Token login. Setting `bot_token` in the configuration does not replace the main client's first login. When downloading as a bot, it must have access to the target messages. First login and login after session loss are described under each deployment method below. See [Pyrogram's authentication documentation](https://docs.pyrogram.org/start/auth) for background on both login methods.
+The main download client supports phone or Bot Token login. Setting `bot_token` in the configuration does not replace the main client's first login. When downloading as a bot, it must have access to the target messages. First login and login after session loss are described under each deployment method below. See [Kurigram's authentication documentation](https://docs.kurigram.icu/start/auth) for background on both login methods.
 
 ### Docker Image Deployment
 
@@ -662,7 +678,7 @@ Compose saves the session in the host's `sessions/` directory. `--rm` removes on
 ```bash
 git clone https://github.com/smilekevin/telegram-media-downloader.git
 cd telegram-media-downloader
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 
@@ -681,12 +697,12 @@ At `Enter phone number or bot token:`, enter your phone number with its country 
 
 ### Local Dev Mode
 
-From the repository root, use a Python 3.11 virtual environment. Only Flask and Werkzeug are required; Telegram credentials and the full downloader dependencies are unnecessary.
+From the repository root, use a Python 3.14 virtual environment. Only Flask and Werkzeug are required; Telegram credentials and the full downloader dependencies are unnecessary.
 
 ```bash
-python3.11 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
-python -m pip install Flask==2.2.2 Werkzeug==2.2.2
+python -m pip install Flask==3.1.3 Werkzeug==3.1.9
 # No Telegram account needed, mock data for WebUI debugging
 python run_local.py
 # Open http://localhost:5000
@@ -695,6 +711,8 @@ python run_local.py
 ---
 
 ## Configuration
+
+Download filters retain comparisons, arithmetic, `and` / `or`, `&&` / `||`, parentheses, single-quoted strings, `r'...'` regexes and `B` / `KB` / `MB` / `GB` / `TB` units. Dates require a full time (for example, `2024-01-01 00:00:00`). Regex comparisons use full matching and accept the regex on either side. Illegal characters now produce syntax errors instead of being skipped. Missing-field behavior and operator precedence retain the existing rules.
 
 ### config.yaml
 
@@ -953,9 +971,11 @@ After updating local source, run `docker-compose up -d --build`. See [Docker Com
 
 Keep every data mount when recreating containers. Migration must retain configuration, runtime data, task logs, sessions and part checkpoints. A custom host download directory replaces `./downloads/` in this table.
 
+When the main download account is a Bot, list the human operator's numeric Telegram user ID in `allowed_user_ids`. Numeric IDs do not depend on that Bot's peer cache. `me` refers to the main download account itself and does not automatically authorize a human operator. Startup help notifications are sent only to a human main account.
+
 ## Proxy Configuration
 
-Configure the Pyrogram connection to Telegram in `config.yaml`:
+Configure the Kurigram connection to Telegram in `config.yaml`:
 
 ```yaml
 proxy:
@@ -972,7 +992,7 @@ environment:
   - https_proxy=socks5://PROXY_IP:PORT
 ```
 
-Inside a container, `127.0.0.1` refers to the container itself. Use a reachable proxy host; `172.17.0.1` depends on the Docker or NAS network. Manual installations use a host reachable from the local machine. If no proxy is needed, set `proxy: {}` and remove or comment out the Compose proxy environment variables.
+Inside a container, `127.0.0.1` refers to the container itself. Use a reachable proxy host; `172.17.0.1` depends on the Docker or NAS network. Manual installations use a host reachable from the local machine. If no proxy is needed, set `proxy: {}` and remove or comment out the Compose proxy environment variables. Omitting `proxy` or setting it to `null` also disables the Telegram proxy. Both the main client and Bot client convert empty proxy configuration to the `None` value required by Kurigram.
 
 ## Troubleshooting
 

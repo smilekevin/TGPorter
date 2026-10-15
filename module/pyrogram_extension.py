@@ -9,14 +9,12 @@ import time
 from copy import deepcopy
 from datetime import datetime
 from functools import wraps
-from io import BytesIO, StringIO
-from mimetypes import MimeTypes
+from io import BytesIO
 from typing import Callable, Iterable, List, Optional, Tuple, Union
 
-import pyrogram
+from module.telegram import pyrogram
 from loguru import logger
 from pyrogram import enums, parser, types, utils
-from pyrogram.client import Cache
 from pyrogram.enums import MessageEntityType
 from pyrogram.file_id import (
     FILE_REFERENCE_FLAG,
@@ -26,7 +24,6 @@ from pyrogram.file_id import (
     b64_decode,
     rle_decode,
 )
-from pyrogram.mime_types import mime_types
 
 from module.app import (
     Application,
@@ -48,17 +45,16 @@ from utils.format import (
 )
 from utils.meta_data import MetaData
 
-_mimetypes = MimeTypes()
-_mimetypes.readfp(StringIO(mime_types))
-_download_cache = Cache(1024 * 1024 * 1024)
+_mimetypes = pyrogram.Client.mimetypes
+_download_cache = {}
 
 
 def remove_download_cache(chat_id, message_id, *, only_finished=False):
     """Remove a specific entry from download cache."""
     try:
-        if only_finished and _download_cache[(chat_id, message_id)] is DownloadStatus.Downloading:
+        if only_finished and _download_cache.get((chat_id, message_id)) is DownloadStatus.Downloading:
             return
-        _download_cache.store.pop((chat_id, message_id), None)
+        _download_cache.pop((chat_id, message_id), None)
     except Exception as e:
         logger.warning(f"Failed to remove download cache ({chat_id}, {message_id}): {e}")
 
@@ -980,7 +976,7 @@ def record_download_status(func):
         file_formats: dict,
         node: TaskNode,
     ):
-        if _download_cache[(node.chat_id, message.id)] is DownloadStatus.Downloading:
+        if _download_cache.get((node.chat_id, message.id)) is DownloadStatus.Downloading:
             return DownloadStatus.Downloading, None, ""
 
         _download_cache[(node.chat_id, message.id)] = DownloadStatus.Downloading
@@ -1626,10 +1622,10 @@ class HookClient(pyrogram.Client):
 
         super().__init__(name, **kwargs)
 
-    async def terminate(self):
+    async def terminate(self, clear_handlers=True):
         from module.download_connection import close_download_connections
         await close_download_connections(self)
-        await super().terminate()
+        await super().terminate(clear_handlers=clear_handlers)
 
     async def connect(
         self,
@@ -1653,6 +1649,8 @@ class HookClient(pyrogram.Client):
         self.session = HookSession(
             self,
             await self.storage.dc_id(),
+            await self.storage.server_address(),
+            await self.storage.port(),
             await self.storage.auth_key(),
             await self.storage.test_mode(),
         )
@@ -1661,41 +1659,17 @@ class HookClient(pyrogram.Client):
         await self.session.start()
 
         self.is_connected = True
+        is_ipv6_session = ":" in await self.storage.server_address()
+        if self.ipv6 != is_ipv6_session:
+            await self.set_dc(dc_id=await self.storage.dc_id())
 
         return bool(await self.storage.user_id())
 
-    async def start(self):
-        """
-        Starts the client by performing necessary initialization steps.
-
-        Returns:
-            The initialized client instance.
-        """
-        is_authorized = await self.connect()
-
-        try:
-            if not is_authorized:
-                await self.authorize()
-
-            if not await self.storage.is_bot() and self.takeout:
-                self.takeout_id = (
-                    await self.invoke(
-                        pyrogram.raw.functions.account.InitTakeoutSession()
-                    )
-                ).id
-                logger.warning(f"Takeout session {self.takeout_id} initiated")
-
-            await self.invoke(pyrogram.raw.functions.updates.GetState())
-        except (Exception, KeyboardInterrupt):
-            await self.disconnect()
-            raise
-        else:
-            self.me = await self.get_me()
-            await self.initialize()
-            await self.dispatcher.start()
-            self._download_connections_closing = False
-
-            return self
+    async def start(self, **kwargs):
+        """Let Kurigram migrate storage and initialize its dispatcher once."""
+        await super().start(**kwargs)
+        self._download_connections_closing = False
+        return self
 
 
 # pylint: disable=R0914,R0913

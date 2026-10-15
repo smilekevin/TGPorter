@@ -6,6 +6,7 @@ import time
 from enum import Enum
 
 from loguru import logger
+from module.telegram import pyrogram
 from pyrogram import Client
 
 from lang import _t

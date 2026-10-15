@@ -142,7 +142,7 @@ class WebLoginTests(unittest.TestCase):
         # Simulate reopening a browser with the persisted signed cookie.
         cookie = response.headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
         reopened = self.app.test_client()
-        reopened.set_cookie("localhost", "session", cookie)
+        reopened.set_cookie("session", cookie, domain="localhost")
         self.assertEqual(reopened.get("/").status_code, 200)
 
     def test_logout_revokes_access_and_shows_login_again(self):
@@ -175,7 +175,7 @@ class WebLoginTests(unittest.TestCase):
             forged_cookie = self.app.session_interface.get_signing_serializer(self.app).dumps({
                 "web_auth": valid_token,
             })
-        self.client.set_cookie("localhost", "session", forged_cookie)
+        self.client.set_cookie("session", forged_cookie, domain="localhost")
         self.assertEqual(self.client.get("/get_download_state").status_code, 401)
 
     def test_service_restart_signing_key_invalidates_existing_login(self):

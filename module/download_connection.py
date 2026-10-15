@@ -4,10 +4,27 @@ import asyncio
 from itertools import count
 
 from loguru import logger
-from pyrogram import Client
+from module.telegram import pyrogram
+from pyrogram import Client, raw
+from pyrogram.errors import AuthBytesInvalid
+from pyrogram.session import Auth, Session
 
 
 _connection_ids = count(1)
+
+
+class _MediaSession:
+    """Remember the redirect DC before Kurigram asks for its CDN session."""
+
+    def __init__(self, owner, session):
+        self.owner = owner
+        self.session = session
+
+    async def invoke(self, query, **kwargs):
+        result = await self.session.invoke(query, **kwargs)
+        if isinstance(result, raw.types.upload.FileCdnRedirect):
+            self.owner.cdn_dc_id = result.dc_id
+        return result
 
 
 class _DownloadClient:
@@ -16,7 +33,7 @@ class _DownloadClient:
     def __init__(self, client):
         self.client = client
         self.media_sessions = {}
-        self.media_sessions_lock = asyncio.Lock()
+        self.cdn_dc_id = None
         # Each worker downloads one part at a time. The SDK's shared semaphore
         # must not serialize workers or shrink a saved plan after restart.
         self.get_file_semaphore = asyncio.Semaphore(1)
@@ -26,6 +43,45 @@ class _DownloadClient:
 
     def __getattr__(self, name):
         return getattr(self.client, name)
+
+    async def get_session(self, dc_id, *, is_media=False, is_cdn=False, temporary=False):
+        """Own every media/CDN session, including one interrupted during startup."""
+        if is_cdn:
+            dc_id = self.cdn_dc_id or dc_id
+        key = (dc_id, is_cdn)
+        if not is_cdn and key in self.media_sessions:
+            return _MediaSession(self, self.media_sessions[key])
+        if is_cdn:
+            # Kurigram stops temporary CDN sessions after each range. Keep each
+            # one registered for interrupted cleanup, but never reuse it.
+            key = (dc_id, is_cdn, len(self.media_sessions))
+
+        option = await self.client.get_dc_option(
+            dc_id, is_media=is_media, ipv6=self.ipv6, is_cdn=is_cdn)
+        test_mode = await self.storage.test_mode()
+        current_dc = await self.storage.dc_id() == dc_id
+        if current_dc and not is_cdn:
+            auth_key = await self.storage.auth_key()
+        else:
+            auth_key = await Auth(self, dc_id, option.ip_address, option.port, test_mode).create()
+        session = Session(self, dc_id, option.ip_address, option.port, auth_key,
+                          test_mode, is_media=is_media, is_cdn=is_cdn)
+        # Register before start: cancellation must still stop its background tasks.
+        self.media_sessions[key] = session
+        await session.start()
+        if not current_dc and not is_cdn:
+            for _ in range(3):
+                exported = await self.client.invoke(raw.functions.auth.ExportAuthorization(dc_id=dc_id))
+                try:
+                    await session.invoke(raw.functions.auth.ImportAuthorization(
+                        id=exported.id, bytes=exported.bytes))
+                except AuthBytesInvalid:
+                    continue
+                else:
+                    break
+            else:
+                raise AuthBytesInvalid
+        return session if is_cdn else _MediaSession(self, session)
 
     def connection_factory(self, *args, **kwargs):
         connection = self.client.connection_factory(*args, **kwargs)

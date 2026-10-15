@@ -264,7 +264,8 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(download_stat.get_download_state(), download_stat.DownloadState.Downloading)
 
     async def test_shared_operations_need_neither_loopback_http_nor_flask_context(self):
-        with patch("requests.request", side_effect=AssertionError("MCP must not call HTTP")), \
+        with patch("httpx2.Client.request", side_effect=AssertionError("MCP must not call HTTP")), \
+                patch("httpx2.AsyncClient.request", side_effect=AssertionError("MCP must not call HTTP")), \
                 patch.dict(web.get_flask_app().view_functions,
                            web_get_download_state=Mock(side_effect=AssertionError("No Flask dispatch"))):
             async with Client(self.server) as client:

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import AsyncGenerator, Optional, Union
 
-import pyrogram
+from module.telegram import pyrogram
 
 # pylint: disable = W0611
 from pyrogram import raw, types, utils

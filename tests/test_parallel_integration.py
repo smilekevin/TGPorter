@@ -9,9 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-import pyrogram
+from module.telegram import pyrogram
 from pyrogram import enums, types
-from pyrogram.client import Cache
 from pyrogram.file_id import FileId, FileType
 
 import media_downloader as downloader
@@ -63,7 +62,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(download_stat, "_task_heartbeat", {}),
             patch.object(download_stat, "save_downloads", Mock()),
             patch.object(pyrogram_extension, "_unified_flood_wait", {"until": 0, "reason": ""}),
-            patch.object(pyrogram_extension, "_download_cache", Cache(1024)),
+            patch.object(pyrogram_extension, "_download_cache", {}),
             patch.object(downloader.asyncio, "sleep", short_sleep),
         ]
         for item in patches:
@@ -445,7 +444,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 tracker["active"] -= 1
         session = SimpleNamespace(invoke=invoke)
-        with patch("pyrogram.client.get_session", AsyncMock(return_value=session)):
+        with patch("module.download_connection._DownloadClient.get_session", AsyncMock(return_value=session)):
             await downloader.download_task(client, self.message, self.node)
         self.assertEqual((self.path / "saved.mp4").read_bytes(), self.data)
         self.assertGreater(tracker["peak"], 1)
