@@ -10,6 +10,7 @@ from weakref import WeakValueDictionary
 from loguru import logger
 
 from module.download_connection import DownloadConnection
+from module.retry_policy import network_backoff
 
 
 CHUNK_SIZE = 1024 * 1024
@@ -127,6 +128,17 @@ async def download_file(client, file_id, size, file_name, identity, parallelism,
         await asyncio.gather(work, control, return_exceptions=True)
 
 
+async def _wait_network_retry(seconds, wait_ready):
+    """Keep part backoff responsive to pause and cancellation controls."""
+    remaining = seconds
+    while remaining > 0:
+        await wait_ready()
+        interval = min(1, remaining)
+        await asyncio.sleep(interval)
+        remaining -= interval
+    await wait_ready()
+
+
 async def _download_file(client, file_id, size, file_name, identity, parallelism,
                          progress, wait_ready, part_size, request_started):
     if size <= 0 or parallelism < 1 or part_size < CHUNK_SIZE or part_size % CHUNK_SIZE:
@@ -234,15 +246,33 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
     logger.info("Downloading {} in {} part(s) with {} worker(s)", file_name, len(ranges), workers)
 
     async def worker(index):
-        async with DownloadConnection(client, f"{file_name} worker {index + 1}/{workers}") as connection:
-            while True:
-                await wait_ready()
-                try:
-                    part = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    return
-                await download_range(part, connection)
-                await asyncio.sleep(0)
+        part = None
+        failures = 0
+        while True:
+            try:
+                async with DownloadConnection(client, f"{file_name} worker {index + 1}/{workers}") as connection:
+                    while True:
+                        await wait_ready()
+                        if part is None:
+                            try:
+                                part = queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                return
+                        await download_range(part, connection)
+                        part = None
+                        failures = 0
+                        await asyncio.sleep(0)
+            except (ConnectionError, TimeoutError):
+                failures += 1
+                if part is None or failures >= 3 or getattr(client, "_download_connections_closing", False):
+                    raise
+                delay = network_backoff(10 * 2 ** (failures - 1))
+                logger.warning("{} part {}/{}: network attempt {}/3 failed; "
+                               "retrying with a fresh worker connection after {}s",
+                               file_name, part + 1, len(ranges), failures, delay)
+                # The failed context has closed its session before waiting. Other
+                # workers keep their connections and continue draining the queue.
+                await _wait_network_retry(delay, wait_ready)
 
     tasks = [asyncio.create_task(worker(index)) for index in range(workers)]
     try:

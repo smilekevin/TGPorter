@@ -37,7 +37,7 @@
 - **转发媒体下载** — 转发一条媒体消息给 Bot，自动从源频道下载
 - **断点续传** — 文件大小 ≥ 已下载大小即判定为已完成，跳过重复下载
 - **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
-- **3 次重试** — 每个文件最多重试 3 次，含指数退避（连接错误 10s/20s/40s）
+- **3 次重试** — 每个文件最多尝试 3 次，连接错误采用随机递增退避（10–15s / 30s / 30s）；分片网络错误先在该分片内最多尝试 3 次，失败后才消耗文件级次数；FLOOD_WAIT 等待不消耗尝试次数
 - **文件引用过期处理** — BadRequest 时自动 fetch_message 刷新引用
 - **临时文件清理** — 删除或取消正在下载的任务时清理其临时文件和分片目录；暂停、断网和程序退出保留断点
 
@@ -71,7 +71,7 @@
 
 - **非阻塞式等待** — 设置冷却时间戳，不 sleep，不卡死整个队列
 - **Pending 消费者限速** — get_messages 遇到 FloodWait 时全局冷却，任务保持 pending
-- **下载限速** — 累计 FloodWait > 600 秒则跳过该文件
+- **下载限速** — 单次 FLOOD_WAIT 超过 600 秒时暂停该文件并保留断点，不记为失败；需手动恢复，且仍须遵守服务端冷却时间
 - **消息编辑限速** — edit_message 遇到 FloodWait 时设置 node 级冷却
 - **用户通知** — 限速暂停时发送 Telegram 通知告知用户
 - **静默限速检测** — 检测 TG 静默限速（速度 < 200 KB/s 持续 120 秒），无 FloodWait 错误码也能识别，WebUI 横幅显示已限速时长 + TG 通知（触发和解除各一次）
@@ -368,7 +368,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 | **失败处理** | 仅日志 | 失败列表持久化 + 错误原因 + 源链接 + WebUI 重试 |
 | **停止任务** | 直接停止 | 未完成文件记入失败列表（手动终止），不留残留 |
 | **TCP 超时** | 10s（默认） | 900s，防止限速时 reconnect 风暴 |
-| **下载重试** | 3 次 5s 间隔 | 3 次，OSError 指数退避（10s/20s/40s） |
+| **下载重试** | 3 次 5s 间隔 | 最多尝试 3 次，连接错误随机退避（10–15s / 30s / 30s） |
 | **大小不匹配** | 直接覆盖 | 备份 .bak 后重下，成功删备份 |
 | **文件引用过期** | 日志记录 | 自动 fetch_message 刷新引用 |
 | **Queue 初始化** | 模块导入时 | 事件循环启动后，避免 loop 不匹配 |
@@ -426,7 +426,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Forwarded media** — forward a media message to the Bot, downloads from source channel
 - **Skip detection** — file size ≥ downloaded size = already complete, skip
 - **Size mismatch** — backs up existing file (.bak), re-downloads, deletes backup on success
-- **3 retries** — per file, with exponential backoff for connection errors (10s/20s/40s)
+- **Download retries** — up to 3 attempts, with randomized connection backoff (10–15s / 30s / 30s); part network errors get up to 3 local attempts before consuming a file attempt; FLOOD_WAIT waits without consuming attempts
 - **File reference refresh** — auto fetch_message on BadRequest
 - **Temp file cleanup** — deleting or cancelling an active download removes its staging files and part directory; pauses, network interruptions and process exit retain checkpoints
 
@@ -460,7 +460,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 - **Non-blocking** — sets a cooldown timestamp instead of sleeping, doesn't block the queue
 - **Pending consumer throttling** — get_messages FloodWait triggers global cooldown, task stays pending
-- **Download throttling** — cumulative FloodWait > 600s = skip file
+- **Download throttling** — a single FLOOD_WAIT over 600s pauses the file with checkpoints retained, without marking it failed; manual resume is required and still honors the server cooldown
 - **Message edit throttling** — edit_message FloodWait sets node-level cooldown
 - **User notification** — sends Telegram message when rate-limited
 - **Silent throttle detection** — detects TG silent rate-limiting (speed < 200 KB/s for 120s) without explicit FloodWait error, shows WebUI banner with elapsed timer + sends TG notification (trigger & recovery, once each)
@@ -757,7 +757,7 @@ Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegr
 | **Failure handling** | Log only | Failed list persisted + error reason + source link + WebUI retry |
 | **Stop task** | Direct stop | Incomplete files recorded as failed (manually stopped) |
 | **TCP timeout** | 10s (default) | 900s, prevents reconnect storm during throttling |
-| **Download retry** | 3x 5s interval | 3x, OSError exponential backoff (10s/20s/40s) |
+| **Download retry** | 3x 5s interval | Up to 3 attempts, randomized connection backoff (10–15s / 30s / 30s) |
 | **Size mismatch** | Overwrite | Backup .bak, re-download, delete backup on success |
 | **File reference** | Log only | Auto fetch_message to refresh |
 | **Queue init** | Module import time | After event loop starts, avoids loop mismatch |

@@ -92,6 +92,61 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.result[100][61]["progress"], 100.0)
         self.client.download_media.assert_not_called()
 
+    async def test_repeated_flood_waits_do_not_exhaust_attempts(self):
+        for error in (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait):
+            with self.subTest(error=error):
+                download = AsyncMock(side_effect=[error(900) for _ in range(4)] +
+                                     [str(self.path / "partial.mp4")])
+                async def complete(*args, **kwargs):
+                    result = await download()
+                    Path(result).write_bytes(self.data)
+                    return result
+                with patch.object(downloader, "_download_parallel_media", complete), patch.object(
+                        downloader, "_wait_download_flood", AsyncMock(return_value=True)) as wait:
+                    status, path, reason = await downloader.download_media(
+                        self.client, self.message, self.app.media_types,
+                        self.app.file_formats, self.node)
+                self.assertEqual(status, DownloadStatus.SuccessDownload)
+                self.assertEqual(wait.await_count, 4)
+                self.assertTrue(all(call.args[0] == 900 for call in wait.await_args_list))
+                Path(path).unlink()
+
+    async def test_flood_wait_publishes_cooldown_and_honors_cancellation(self):
+        self.node.is_stop_transmission = True
+        result = await downloader._wait_download_flood(900, 61, self.node, self.client)
+        self.assertFalse(result)
+        self.assertGreater(pyrogram_extension._unified_flood_wait["until"],
+                           downloader.time.time() + 899)
+        self.assertEqual(pyrogram_extension._unified_flood_wait["reason"], "FLOOD_WAIT")
+
+    async def test_long_flood_wait_stays_paused_until_manual_resume(self):
+        clock = SimpleNamespace(time=downloader.time.time,
+                                monotonic=Mock(side_effect=[0, 1000]))
+        with patch.object(downloader, "time", clock):
+            task = asyncio.create_task(downloader._wait_download_flood(
+                900, 61, self.node, self.client))
+            try:
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                    if download_stat.is_task_paused("100_61"):
+                        break
+                self.assertTrue(download_stat.is_task_paused("100_61"))
+                self.assertFalse(download_stat.is_task_paused(self.node.task_id))
+                self.assertFalse(task.done())
+                self.assertTrue(download_stat.resume_task("100_61"))
+                self.assertTrue(await asyncio.wait_for(task, 2))
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_600_second_flood_wait_does_not_require_manual_resume(self):
+        clock = SimpleNamespace(time=downloader.time.time,
+                                monotonic=Mock(side_effect=[0, 601]))
+        with patch.object(downloader, "time", clock):
+            self.assertTrue(await downloader._wait_download_flood(
+                600, 61, self.node, self.client))
+        self.assertFalse(download_stat.is_task_paused("100_61"))
+
     async def test_small_file_uses_one_range_and_skips_merge(self):
         self.app.download_part_size_mb = 16
         status, path, error = await downloader.download_media(

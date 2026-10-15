@@ -12,6 +12,7 @@ from pyrogram.types import Audio, Document, Photo, Video, VideoNote, Voice
 from rich.logging import RichHandler
 
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
+from module.retry_policy import network_backoff
 from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
@@ -648,6 +649,31 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
             logger.warning(f"Failed to complete task {node.task_id}: {e}")
 
 
+async def _wait_download_flood(seconds, message_id, node, client):
+    """Keep rate-limit waits visible and cancellable without shortening cooldowns."""
+    from module.download_stat import pause_task, wait_download_ready
+    from module.pyrogram_extension import _unified_flood_wait
+
+    _unified_flood_wait["until"] = max(
+        _unified_flood_wait["until"], time.time() + seconds + 5)
+    _unified_flood_wait["reason"] = "FLOOD_WAIT"
+    if seconds > 600:
+        # Pause only this file, not every file belonging to the range task.
+        pause_task(f"{node.chat_id}_{message_id}")
+        logger.info("Message[{}]: FLOOD_WAIT {}s; file paused until manually resumed",
+                    message_id, seconds)
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            await wait_download_ready(message_id, node, client)
+        except pyrogram.StopTransmission:
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return True
+        await asyncio.sleep(min(1, remaining))
+
+
 @record_download_status
 async def download_media(
     client: pyrogram.client.Client,
@@ -817,7 +843,7 @@ async def download_media(
                     )
                     if _is_network_err:
                         # Retry network resume errors indefinitely; only missing-message errors
-                        # fail the task. Cap backoff at 600 seconds to limit requests; zombie
+                        # fail the task. Cap backoff at 30 seconds to limit requests; zombie
                         # recovery can periodically requeue a stalled worker.
                         _net_retry = getattr(node, "_resume_net_retries", 0) + 1
                         node._resume_net_retries = _net_retry
@@ -830,19 +856,15 @@ async def download_media(
                         )
                         if _fw_m:
                             _fw = int(_fw_m.group(1) or _fw_m.group(2))
-                            _fw = min(_fw + 5, 3600)
                             logger.warning(
                                 f"Message[{message.id}] {ui_file_name}: "
                                 f"resume FloodWait {_fw}s — sleeping, no retry counted"
                             )
-                            _unified_flood_wait["until"] = time.time() + _fw + 5
-                            _unified_flood_wait["reason"] = (
-                                f'Resume FloodWait (message {message.id})'
-                            )
-                            await asyncio.sleep(_fw)
+                            if not await _wait_download_flood(_fw, message_id, node, client):
+                                return DownloadStatus.SkipDownload, None, ""
                             retry -= 1
                             continue
-                        _backoff = min(15 * (2 ** (_net_retry - 1)), 600)
+                        _backoff = network_backoff(min(15 * (2 ** (_net_retry - 1)), 30))
                         logger.warning(
                             f"Message[{message.id}] {ui_file_name}: "
                             f"resume network error (retry {_net_retry}), "
@@ -1013,23 +1035,10 @@ async def download_media(
                 error_message = 'File reference expired (failed after 3 retries)'
         except (pyrogram.errors.exceptions.flood_420.FloodWait,
                 pyrogram.errors.FloodPremiumWait) as wait_err:
-            # Catch both FloodWait and FloodPremiumWait, sibling Flood exceptions with .value
-            # wait durations, so premium throttling cannot fail the task through the generic
-            # handler. Preserve checkpoints; stop waiting once cumulative FloodWait exceeds 600
-            # seconds.
+            # Rate limits pause the task indefinitely without spending download attempts.
             total_wait += wait_err.value
-            if total_wait > 600:
-                logger.error(
-                    f"Message[{message.id}]: {_t('FloodWait total timeout exceeded, download skipped.')}"
-                )
-                error_message = f'Rate limit timeout; waited {total_wait} seconds in total'
-                break
-            # Set unified cooldown so edit_message and pending consumer pause too
-            from module.pyrogram_extension import _unified_flood_wait
-            _unified_flood_wait["until"] = time.time() + wait_err.value + 5
-            _unified_flood_wait["reason"] = f"download_media FloodWait {wait_err.value}s (msg {message.id})"
             # First FloodWait for this file: notify user so they know progress is paused
-            if total_wait == wait_err.value and node and node.bot and getattr(node, "from_user_id", ""):
+            if wait_err.value <= 600 and total_wait == wait_err.value and node and node.bot and getattr(node, "from_user_id", ""):
                 try:
                     notify_text = (
                         f"⏳ {_t('Telegram rate limit pause')}\n"
@@ -1040,10 +1049,11 @@ async def download_media(
                     await node.bot.send_message(int(node.from_user_id), notify_text)
                 except Exception:
                     pass
-            await asyncio.sleep(wait_err.value)
+            if not await _wait_download_flood(wait_err.value, message_id, node, client):
+                return DownloadStatus.SkipDownload, None, ""
+            retry -= 1
             logger.info("Message[{}]: FlowWait {}s, waiting (total={}s)", message.id, wait_err.value, total_wait)
             error_message = f'Rate limited; waiting {wait_err.value} seconds'
-            _check_timeout(retry, message.id)
             # Notify user that download has resumed after FloodWait
             if node and node.bot and getattr(node, "from_user_id", ""):
                 try:
@@ -1072,8 +1082,8 @@ async def download_media(
             # A connection timeout may indicate silent Telegram throttling without FloodWait.
             # Catch TimeoutError before OSError, its superclass.
             _cleanup_temp_file(temp_file_name)
-            # Increase backoff to 60, 120 and 300 seconds.
-            backoff = [60, 120, 300][min(retry, 2)]
+            # Apply the same bounded network backoff to timeouts.
+            backoff = network_backoff([60, 120, 300][min(retry, 2)])
             from module.pyrogram_extension import _unified_flood_wait
             _unified_flood_wait["until"] = time.time() + backoff + 5
             _unified_flood_wait["reason"] = f'Connection timeout, possibly rate limited (message {message.id})'
@@ -1110,15 +1120,12 @@ async def download_media(
             err_str = str(e).lower()
             if "timed out" in err_str or "timeout" in err_str:
                 # Treat apparent timeouts with a longer backoff and shared cooldown.
-                backoff = [60, 120, 300][min(retry, 2)]
+                backoff = network_backoff([60, 120, 300][min(retry, 2)])
                 _unified_flood_wait["until"] = time.time() + backoff + 5
                 _unified_flood_wait["reason"] = f'Connection timeout, possibly rate limited (message {message.id})'
             else:
-                # Use exponential backoff of 10, 60 and 300 seconds for ordinary connection
-                # errors. Proxy recovery can take minutes; the previous 40-second cap was too
-                # short. Let tasks wait during backoff; zombie recovery applies only after 30
-                # minutes.
-                backoff = [10, 60, 300][min(retry, 2)]
+                # Jitter spreads initial retries; later delays stop at the cap.
+                backoff = network_backoff([10, 60, 300][min(retry, 2)])
             _client_conn_errors["count"] += 1
             if await _maybe_reconnect_client():
                 backoff = 5  # Short backoff after reconnect
