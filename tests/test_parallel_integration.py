@@ -170,11 +170,28 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((self.path / "partial.mp4").exists())
         self.assertEqual(self.client.tracker["active"], 0)
 
+    async def test_web_cancel_without_file_deletion_preserves_resumable_parts(self):
+        task = await self.start_blocked_download()
+        self.web_request("/delete_task?task_id=100_61&delete_file=false")
+        status, _, _ = await asyncio.wait_for(task, 2)
+        self.assertEqual(status, DownloadStatus.SkipDownload)
+        directory = parts_path(str(self.path / "partial.mp4"))
+        self.assertTrue((directory / "manifest.json").exists())
+        self.assertGreater(sum(path.stat().st_size for path in directory.glob("*.part")), 0)
+        self.assertEqual(self.client.tracker["active"], 0)
+        # Retained data must still produce the original bytes on a new attempt.
+        self.node = TaskNode(chat_id=100, task_id=2, limit=1)
+        self.client.before_chunk = None
+        status, path, _ = await downloader.download_media(
+            self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+        self.assertEqual(status, DownloadStatus.SuccessDownload)
+        self.assertEqual(Path(path).read_bytes(), self.data)
+
     async def test_webpage_delete_cleans_temp_and_same_message_can_be_downloaded_again(self):
         completed = self.path / "other-completed.mp4"
         completed.write_bytes(b"keep completed download")
         task = await self.start_blocked_download()
-        self.web_request("/delete_task?task_id=100_61")
+        self.web_request("/delete_task?task_id=100_61&delete_file=true")
         status, _, _ = await asyncio.wait_for(task, 2)
         self.assertEqual(status, DownloadStatus.SkipDownload)
         self.assert_cancelled_temp_removed()
@@ -189,14 +206,14 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_web_api_delete_by_numeric_task_id_cleans_paused_temp(self):
         task = await self.start_blocked_download()
         download_stat.pause_task(self.node.task_id)
-        self.web_request(f"/delete_task?task_id={self.node.task_id}")
+        self.web_request(f"/delete_task?task_id={self.node.task_id}&delete_file=true")
         status, _, _ = await asyncio.wait_for(task, 2)
         self.assertEqual(status, DownloadStatus.SkipDownload)
         self.assert_cancelled_temp_removed()
 
     async def test_batch_web_api_delete_cleans_temp(self):
         task = await self.start_blocked_download()
-        result = self.web_request("/batch_delete", json={"task_ids": ["100_61"]})
+        result = self.web_request("/batch_delete", json={"task_ids": ["100_61"], "delete_file": True})
         self.assertEqual(result["deleted"], 1)
         status, _, _ = await asyncio.wait_for(task, 2)
         self.assertEqual(status, DownloadStatus.SkipDownload)
@@ -225,7 +242,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(blocked.wait(), 2)
                 while len(self.result.get(100, {})) < 2:
                     await asyncio.sleep(0)
-                self.web_request("/delete_task?task_id=100_61")
+                self.web_request("/delete_task?task_id=100_61&delete_file=true")
                 cancelled, _, _ = await asyncio.wait_for(tasks[0], 2)
                 self.assertEqual(cancelled, DownloadStatus.SkipDownload)
                 self.assertFalse(tasks[1].done())
@@ -245,7 +262,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await download_stat.update_download_status(
                 MB, len(self.data), self.message.id, str(self.path / "saved.mp4"),
                 0, self.node, self.client)
-            self.web_request("/delete_task?task_id=100_61")
+            self.web_request("/delete_task?task_id=100_61&delete_file=true")
             return None
 
         self.client.download_media.side_effect = serial
@@ -278,9 +295,9 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(0)
                 await asyncio.wait_for(entries_ready(), 2)
                 if numeric:
-                    self.web_request(f"/delete_task?task_id={self.node.task_id}")
+                    self.web_request(f"/delete_task?task_id={self.node.task_id}&delete_file=true")
                 else:
-                    result = self.web_request("/batch_delete", json={"task_ids": ["100_61", "100_62"]})
+                    result = self.web_request("/batch_delete", json={"task_ids": ["100_61", "100_62"], "delete_file": True})
                     self.assertEqual(result["deleted"], 2)
                 results = await asyncio.wait_for(asyncio.gather(*tasks), 2)
             finally:
@@ -306,7 +323,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             nonlocal deleted
             if delay == 0.5 and not deleted and (self.path / "partial.mp4").exists():
                 deleted = True
-                self.web_request("/delete_task?task_id=100_61")
+                self.web_request("/delete_task?task_id=100_61&delete_file=true")
             await real_sleep(0)
 
         with patch.object(downloader.asyncio, "sleep", sleep):
@@ -353,7 +370,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             scratch = self.path / "partial.mp4.temp"
             if not deleted and scratch.exists() and scratch.stat().st_size > 0:
                 deleted = True
-                self.web_request("/delete_task?task_id=100_61")
+                self.web_request("/delete_task?task_id=100_61&delete_file=true")
             await real_ready(message_id, node, client)
 
         with patch.object(download_stat, "wait_download_ready", ready):

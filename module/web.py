@@ -153,7 +153,7 @@ def login():
         if hmac.compare_digest(password.encode("utf-8"), _web_login_secret().encode("utf-8")):
             session.clear()
             session["web_auth"] = _login_token()
-            session.permanent = True
+            session.permanent = request.form.get("remember") == "on"
             _csrf_token()
             return redirect(url_for("index"))
         error = "密码错误，请重试。"
@@ -208,6 +208,15 @@ def _service_response(result):
         payload, status = result
         return jsonify(payload), status
     return jsonify(result) if isinstance(result, (dict, list)) else result
+
+
+@_flask_app.route("/submit_download", methods=["POST"])
+def web_submit_download():
+    """Accept one post link through the shared durable submission path."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(code="0", message="JSON object required"), 400
+    return _service_response(_download_service().submit_download(data.get("url")))
 
 
 @_flask_app.route("/get_completed_count")

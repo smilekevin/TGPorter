@@ -12,8 +12,6 @@ import utils
 from module.task_store import get_pending_tasks, remove_task
 from module.download_stat import (
     DownloadState,
-    batch_delete_failed,
-    batch_delete_tasks,
     delete_task,
     get_chat_title,
     get_download_result,
@@ -540,125 +538,74 @@ class DownloadService:
             return {"code": "1", "message": "resumed"}
         return {"code": "0", "message": "task not paused"}
 
+    def _task_files(self, task_id):
+        """Find exact recorded paths; failed rows are no longer in active results."""
+        for chat_id, messages in get_download_result().items():
+            for msg_id, value in messages.items():
+                if str(task_id) in (f"{chat_id}_{msg_id}", str(value.get("task_id", ""))):
+                    return value.get("file_name", ""), ""
+        for value in get_failed_downloads():
+            if str(value.get("task_id", "")) == str(task_id):
+                return value.get("file_name", ""), value.get("temp_file_name", "")
+        return "", ""
+
     def web_check_file_exists(self, task_id=None):
-        """Check if the local file for a completed task exists.
-        Returns: {code, exists, path, filename}"""
+        """Check recorded output and failed-task staging files."""
         if not task_id:
             return {"code": "0", "message": "task_id required"}
-
-        file_path = None
-        download_result = get_download_result()
-        for chat_id, messages in download_result.items():
-            for msg_id, value in messages.items():
-                composite_key = f"{chat_id}_{msg_id}"
-                if composite_key == str(task_id) or str(value.get("task_id", "")) == str(task_id):
-                    file_path = value.get("file_name", "")
-                    break
-            if file_path:
-                break
-
-        if not file_path:
-            return {"code": "1", "exists": False, "path": "", "filename": ""}
-
-        exists = os.path.isfile(file_path)
-        return {
-            "code": "1",
-            "exists": exists,
-            "path": file_path.replace("\\", "/"),
-            "filename": os.path.basename(file_path),
-        }
+        from module.parallel_download import has_parts
+        output, staging = self._task_files(task_id)
+        path = output or staging
+        exists = bool(output and os.path.isfile(output)) or bool(
+            staging and (os.path.isfile(staging) or os.path.isfile(staging + ".temp") or has_parts(staging)))
+        return {"code": "1", "exists": exists, "path": path.replace("\\", "/"),
+                "filename": os.path.basename(path)}
 
     def web_delete_task(self, task_id=None, delete_file=False):
-        """Delete a specific download task. If delete_file=true, also remove the local file."""
+        """Cancel/remove a task; writers clean staging only when explicitly requested."""
+        from module.parallel_download import discard_partial_download
         from module.pyrogram_extension import remove_download_cache
         if not task_id:
             return {"code": "0", "message": "task_id required"}
-
-        # Find file path before deleting (needed if delete_file=true)
-        file_path = None
-        download_result = get_download_result()
-        for chat_id, messages in download_result.items():
+        file_path, staging = self._task_files(task_id)
+        # Finished cache entries can be cleared; active attempts clear their own cache.
+        for chat_id, messages in get_download_result().items():
             for msg_id, value in messages.items():
-                composite_key = f"{chat_id}_{msg_id}"
-                if composite_key == str(task_id) or str(value.get("task_id", "")) == str(task_id):
-                    file_path = value.get("file_name", "")
-                    # The running attempt clears/updates its cache after closing its
-                    # writers; clearing it here could start a second writer too soon.
+                if str(task_id) in (f"{chat_id}_{msg_id}", str(value.get("task_id", ""))):
                     remove_download_cache(chat_id, msg_id, only_finished=True)
-
-        # Delete local file if requested
+        # Mark cancellation before touching files. Active writers own staging cleanup.
+        success = delete_task(task_id, discard_partial=delete_file)
+        failed = remove_failed_download(task_id)
+        if not success and not failed:
+            return {"code": "0", "message": "task not found"}
         file_deleted = False
         file_error = ""
-        if delete_file and file_path:
-            if os.path.isfile(file_path):
-                try:
+        if delete_file:
+            try:
+                if file_path and os.path.isfile(file_path):
                     os.remove(file_path)
                     file_deleted = True
-                except Exception as e:
-                    file_error = str(e)
-            else:
-                file_error = "file not found"
-
-        # Try active downloads first, then failed
-        success = delete_task(task_id)
-        if not success:
-            success = remove_failed_download(task_id)
-        if success:
-            return {
-                "code": "1",
-                "message": "deleted",
-                "file_deleted": file_deleted,
-                "file_error": file_error,
-            }
-        return {"code": "0", "message": "task not found"}
+                if failed and staging:
+                    discard_partial_download(staging)
+            except OSError as error:
+                file_error = str(error)
+        return {"code": "1", "message": "deleted", "file_deleted": file_deleted,
+                "file_error": file_error}
 
     def web_batch_delete(self, data=None):
-        """Batch delete tasks by task_ids. If delete_file=true in JSON body, also remove local files."""
-        if not data or "task_ids" not in data:
+        """Use the same cancellation and file policy for single and batch deletions."""
+        if not isinstance(data, dict) or "task_ids" not in data:
             return {"code": "0", "message": "task_ids required"}
-
-        task_ids = data["task_ids"]
-        if not isinstance(task_ids, list):
+        if not isinstance(data["task_ids"], list):
             return {"code": "0", "message": "task_ids must be a list"}
-
-        delete_file = data.get("delete_file", False)
-
-        # Collect file paths before deletion if delete_file is requested
-        files_deleted = 0
-        files_not_found = 0
-        if delete_file:
-            download_result = get_download_result()
-            for tid in task_ids:
-                file_path = None
-                for chat_id, messages in download_result.items():
-                    for msg_id, value in messages.items():
-                        composite_key = f"{chat_id}_{msg_id}"
-                        if composite_key == str(tid) or str(value.get("task_id", "")) == str(tid):
-                            file_path = value.get("file_name", "")
-                            break
-                    if file_path:
-                        break
-                if file_path:
-                    if os.path.isfile(file_path):
-                        try:
-                            os.remove(file_path)
-                            files_deleted += 1
-                        except Exception:
-                            files_not_found += 1
-                    else:
-                        files_not_found += 1
-
-        deleted_active = batch_delete_tasks(task_ids)
-        deleted_failed = batch_delete_failed(task_ids)
-        total = deleted_active + deleted_failed
-
-        return {
-            "code": "1",
-            "message": f"deleted {total} tasks",
-            "deleted": total,
-            "files_deleted": files_deleted,
-            "files_not_found": files_not_found,
-        }
+        deleted = files_deleted = files_not_found = 0
+        for task_id in dict.fromkeys(data["task_ids"]):
+            result = self.web_delete_task(task_id, delete_file=data.get("delete_file", False))
+            deleted += result["code"] == "1"
+            files_deleted += bool(result.get("file_deleted"))
+            files_not_found += bool(result.get("file_error"))
+        return {"code": "1", "message": f"deleted {deleted} tasks", "deleted": deleted,
+                "files_deleted": files_deleted, "files_not_found": files_not_found}
 
     def web_retry_task(self, task_id=None):
         """Retry a failed download task - re-download the file"""

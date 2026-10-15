@@ -128,6 +128,23 @@ class WebLoginTests(unittest.TestCase):
             self.assertNotEqual(session["web_csrf_token"], old_token)
             self.assertNotIn("test-password", str(dict(session)))
 
+    def test_remember_me_is_opt_in_and_survives_a_new_browser_session(self):
+        response = self.login()
+        self.assertNotIn("Expires=", response.headers["Set-Cookie"])
+        self.client.post("/logout", data={"csrf_token": self.csrf_token()})
+        self.client.get("/login")
+        response = self.client.post("/login", data={
+            "password": "test-password", "csrf_token": self.csrf_token(), "remember": "on",
+        })
+        self.assertIn("Expires=", response.headers["Set-Cookie"])
+        with self.client.session_transaction() as session:
+            self.assertTrue(session.permanent)
+        # Simulate reopening a browser with the persisted signed cookie.
+        cookie = response.headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
+        reopened = self.app.test_client()
+        reopened.set_cookie("localhost", "session", cookie)
+        self.assertEqual(reopened.get("/").status_code, 200)
+
     def test_logout_revokes_access_and_shows_login_again(self):
         self.login()
         response = self.client.post("/logout", data={"csrf_token": self.csrf_token()},

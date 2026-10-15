@@ -576,6 +576,7 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
     download_status, file_name, error_message = await download_media(
         client, message, app.media_types, app.file_formats, node
     )
+    temp_file_name = node.download_temp_paths.pop(message.id, "")
     # Backfill source_chat_title from cache (populated during download_media)
     if not node.source_chat_title and getattr(node, 'source_chat_id', 0):
         from module.download_stat import get_chat_title as _gct
@@ -618,6 +619,7 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
             msg_id=message.id if message else message_id,
             task_id=task_id_display,
             file_name=file_name or "",
+            temp_file_name=temp_file_name,
             error_message=error_message or "下载失败",
             total_size=file_size,
             source_link=source_link,
@@ -691,6 +693,8 @@ async def download_media(
             file_name, temp_file_name, file_format = await _get_media_meta(
                 node.chat_id, message, _media, _type
             )
+            # Keep the exact staging path for failed-task cleanup, including hidden filenames.
+            node.download_temp_paths[message.id] = temp_file_name
             media_size = getattr(_media, "file_size", 0)
             ui_file_name = file_name
             if app.hide_file_name:
@@ -1562,10 +1566,9 @@ async def download_all_chat(client: pyrogram.Client):
 
 
 async def run_until_all_task_finish():
-    """Normal download"""
+    """Keep accepting WebUI tasks until a restart is requested."""
     while True:
-        finish = all(value.need_check and value.total_task == value.finish_task for _, value in app.chat_download_config.items())
-        if (not app.bot_token and not getattr(app, "mcp_enabled", False) and finish) or app.restart_program:
+        if app.restart_program:
             break
         await asyncio.sleep(1)
 
@@ -1981,7 +1984,7 @@ def main():
         tasks.append(app.loop.create_task(_throttle_restart_loop(client)))
         if app.bot_token:
             app.loop.run_until_complete(start_download_bot(app, client, add_download_task, download_chat_task))
-        elif app.mcp_enabled:
+        else:
             app.loop.run_until_complete(start_download_backend(app, client, add_download_task, download_chat_task))
         _exec_loop()
     except KeyboardInterrupt:
@@ -1991,8 +1994,7 @@ def main():
     finally:
         app.is_running = False
         save_downloads()
-        if app.bot_token or app.mcp_enabled:
-            app.loop.run_until_complete(stop_download_bot())
+        app.loop.run_until_complete(stop_download_bot())
         app.loop.run_until_complete(stop_server(client))
         for task in tasks:
             task.cancel()

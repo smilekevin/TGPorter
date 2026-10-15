@@ -109,6 +109,16 @@
         </div>
     </header>
 
+    <form @submit.prevent="submitDownload()" class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap gap-2">
+        <label for="download-url" class="sr-only" x-text="t('Telegram 消息链接')"></label>
+        <input id="download-url" type="url" required maxlength="2048" x-model="downloadUrl"
+               placeholder="https://t.me/channel/123" :disabled="submitting"
+               class="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        <button type="submit" :disabled="submitting" class="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm disabled:opacity-50"
+                x-text="submitting ? t('正在提交...') : t('提交下载')"></button>
+        <p class="w-full text-xs text-gray-500" x-text="t('提交单条 Telegram 消息链接，使用服务端已登录的账号下载。')"></p>
+    </form>
+
     <!-- Tab Navigation (Desktop Only) -->
     <div class="hidden sm:block bg-white border-b border-gray-100 shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6">
@@ -855,10 +865,7 @@
                                             <p class="text-xs text-amber-600 mt-0.5 break-all" x-text="deleteModal.filePath"></p>
                                         </div>
                                     </div>
-                                    <label class="flex items-center gap-2 cursor-pointer pt-1">
-                                        <input type="checkbox" x-model="deleteModal.deleteFile" class="w-4 h-4 rounded border-amber-300 text-red-600 focus:ring-red-500">
-                                        <span class="text-sm text-amber-800"><span data-i18n="同时删除本地文件" x-text="t('同时删除本地文件')">同时删除本地文件</span></span>
-                                    </label>
+
                                 </div>
                             </template>
                             <template x-if="!deleteModal.fileExists">
@@ -873,6 +880,12 @@
                     </template>
                 </div>
             </template>
+
+            <label x-show="!deleteModal.isBatch" class="flex items-center gap-2 cursor-pointer mt-3">
+                <input type="checkbox" x-model="deleteModal.deleteFile" class="w-4 h-4 rounded text-red-600">
+                <span class="text-sm" x-text="t('同时删除本地文件')"></span>
+            </label>
+            <p class="text-xs text-gray-500 mt-2" x-text="t('勾选后清理本地文件和下载临时数据；取消勾选则保留。')"></p>
 
             <!-- Batch info -->
             <template x-if="deleteModal.isBatch">
@@ -961,6 +974,8 @@
             scrollListener: null,
             toast: { show: false, message: '', type: 'success' },
             pollTimer: null,
+            downloadUrl: '',
+            submitting: false,
             deleteModal: {
                 show: false,
                 loading: false,
@@ -1331,32 +1346,34 @@
                 }
             },
 
-            async batchDelete() {
-                if (this.selectedTasks.length === 0) return;
-                // If on completed tab, show confirmation modal with file check
-                if (this.activeTab === 'completed') {
-                    this.confirmBatchDelete();
-                    return;
-                }
-                // Other tabs: direct delete without file option
+            async submitDownload() {
+                if (this.submitting) return;
+                this.submitting = true;
                 try {
-                    const res = await authenticatedFetch('/batch_delete', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ task_ids: this.selectedTasks })
+                    const res = await authenticatedFetch('/submit_download', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({url: this.downloadUrl.trim()}),
                     });
                     const data = await res.json();
-                    if (data.code === '1') {
-                        this.showToast(WebI18n.t('已删除 ') + data.deleted + WebI18n.t(' 个任务'), 'success');
-                        this.selectedTasks = [];
-                        this.fetchActive().catch(() => {});
-                        this.fetchCompleted().catch(() => {});
-                    } else {
-                        this.showToast(data.message || WebI18n.t('删除失败'), 'error');
+                    if (data.code !== '1') {
+                        this.showToast(data.message || this.t('提交失败'), 'error');
+                        return;
                     }
-                } catch(e) {
-                    this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
+                    this.downloadUrl = '';
+                    this.showToast(this.t(data.duplicate ? '任务已存在' : '已提交到下载队列'), 'success');
+                    this.activeTab = 'pending';
+                    this.selectedTasks = [];
+                    this.fetchPending(true).catch(() => {});
+                    this.fetchActive().catch(() => {});
+                } catch (error) {
+                    this.showToast(this.t('提交失败'), 'error');
+                } finally {
+                    this.submitting = false;
                 }
+            },
+
+            async batchDelete() {
+                if (this.selectedTasks.length) this.confirmBatchDelete();
             },
 
             async batchRetry() {
@@ -1422,7 +1439,7 @@
                     checkFailed: false,
                     filename: '',
                     filePath: '',
-                    deleteFile: false,
+                    deleteFile: this.activeTab !== 'completed',
                     batchCount: 0,
                     batchFilesExist: 0,
                     batchFilesNotFound: 0,
@@ -1435,9 +1452,8 @@
                         this.deleteModal.fileExists = data.exists;
                         this.deleteModal.filename = data.filename || '';
                         this.deleteModal.filePath = data.path || '';
-                        this.deleteModal.deleteFile = data.exists;
                     } else {
-                        this.deleteModal.deleteFile = false;
+                        this.deleteModal.checkFailed = true;
                     }
                 } catch(e) {
                     // check_file_exists failed (e.g. network error or 500) —
@@ -1445,7 +1461,6 @@
                     console.error('check_file_exists failed:', e);
                     this.deleteModal.fileExists = false;
                     this.deleteModal.checkFailed = true;
-                    this.deleteModal.deleteFile = false;
                 }
                 this.deleteModal.loading = false;
             },
@@ -1460,7 +1475,7 @@
                     fileExists: false,
                     filename: '',
                     filePath: '',
-                    deleteFile: false,
+                    deleteFile: this.activeTab !== 'completed',
                     batchCount: taskIds.length,
                     batchFilesExist: 0,
                     batchFilesNotFound: 0,
@@ -1577,48 +1592,7 @@
             },
 
             async deleteTask(taskId) {
-                // If on completed tab, show confirmation modal
-                if (this.activeTab === 'completed') {
-                    this.confirmDeleteTask(taskId);
-                    return;
-                }
-                // Other tabs: direct delete
-                try {
-                    const res = await authenticatedFetch('/delete_task?task_id=' + encodeURIComponent(taskId), { method: 'POST' });
-                    const data = await res.json();
-                    if (data.code === '1') {
-                        this.showToast(WebI18n.t('任务已删除'), 'success');
-                        // Remove from local arrays immediately
-                        this.completedTasks = this.completedTasks.filter(t => t.task_id !== taskId);
-                        this.activeTasks = this.activeTasks.filter(t => t.task_id !== taskId);
-                        this.pendingTasks = this.pendingTasks.filter(t => t.task_id !== taskId);
-                        this.failedTasks = this.failedTasks.filter(t => t.task_id !== taskId);
-                        // Reload 1 new item to fill the gap
-                        if (this.completedHasMore) {
-                            const searchParam = this.completedSearch ? `&search=${encodeURIComponent(this.completedSearch)}` : '';
-                            authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=1${searchParam}`)
-                                .then(r => r.json()).then(d => {
-                                    const tasks = d.tasks || d;
-                                    const existingIds = new Set(this.completedTasks.map(t => t.task_id));
-                                    const fresh = tasks.filter(t => t.download_progress_raw >= 100 && !existingIds.has(t.task_id));
-                                    this.completedTasks = [...this.completedTasks, ...fresh];
-                                    this.completedOffset = this.completedTasks.length;
-                                    this.completedTotal = d.total || this.completedTotal;
-                                    this.completedLastTotal = this.completedTotal;
-                                }).catch(() => {});
-                        } else {
-                            this.completedOffset = this.completedTasks.length;
-                        }
-                        authenticatedFetch('/get_completed_count').then(r => r.json()).then(d => {
-                            this.completedTotal = d.total;
-                            this.completedLastTotal = this.completedTotal;
-                        }).catch(() => {});
-                    } else {
-                        this.showToast(data.message || WebI18n.t('删除失败'), 'error');
-                    }
-                } catch(e) {
-                    this.showToast(WebI18n.t('网络错误: ') + (e && e.message ? e.message : WebI18n.t('未知错误')), 'error');
-                }
+                return this.confirmDeleteTask(taskId);
             },
 
             async retryTask(taskId) {

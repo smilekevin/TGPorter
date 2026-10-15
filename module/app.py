@@ -138,6 +138,7 @@ class TaskNode:
         task_id_display: str = "",
     ):
         self.chat_id = chat_id
+        self.download_temp_paths = {}
         self.from_user_id = from_user_id
         self.upload_telegram_chat_id = upload_telegram_chat_id
         self.reply_message_id = reply_message_id

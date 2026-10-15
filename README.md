@@ -6,8 +6,8 @@
 
 <p align="center">
 <a href="https://github.com/smilekevin/telegram-media-downloader/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
-<a href="https://github.com/smilekevin/telegram-media-downloader/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue"></a>
-<a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue"></a>
+<a href="https://github.com/smilekevin/telegram-media-downloader/releases"><img alt="Version" src="https://img.shields.io/github/v/release/smilekevin/telegram-media-downloader?display_name=tag&amp;sort=date&amp;label=version&amp;color=blue"></a>
+<a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsmilekevin%2Ftelegram-media-downloader%2Fmaster%2F.github%2Fworkflows%2Ftests.yml&amp;query=%24..%5B%27python-version%27%5D&amp;label=python&amp;color=blue"></a>
 <a href="https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
@@ -87,7 +87,8 @@
 - **操作** — 暂停/恢复、删除（单个/批量）、重试（单个/批量）
 - **实时数据** — 总速度 = 所有活跃任务速度之和，3 秒无回调判为过期归零
 - **粘性导航栏** — 滚动时标签页固定在顶部
-- **密码登录** — 网页和 Web API 使用登录 Session，修改状态需 CSRF Token
+- **密码登录** — 网页和 Web API 使用登录 Session，可选记住登录 7 天，修改状态需 CSRF Token
+- **网页提交** — 提交单条 Telegram 消息链接，使用服务端已登录账号进入持久化下载队列
 
 ### Agent 接入
 
@@ -174,6 +175,7 @@ Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/` | GET | WebUI 主页 |
+| `/submit_download` | POST | 提交单条 HTTPS `t.me` 消息链接（JSON: `{"url": "https://t.me/channel/123"}`）；返回持久化入队结果，非下载完成 |
 | `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中） |
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
 | `/get_pending_list` | GET | Pending 队列 |
@@ -185,12 +187,12 @@ Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参
 | `/get_app_version` | GET | 应用版本 |
 | `/get_max_workers` | GET | 当前同时下载的文件数 |
 | `/set_max_workers` | POST | 设置同时下载的文件数（`n=1`–`6`） |
-| `/check_file_exists` | POST | 检查已完成任务的本地文件是否存在 |
+| `/check_file_exists` | POST | 检查任务的本地文件或失败断点是否存在 |
 | `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
 | `/pause_task` | POST | 暂停单个任务 |
 | `/resume_task` | POST | 恢复单个任务 |
-| `/delete_task` | POST | 删除任务（活跃或失败） |
-| `/batch_delete` | POST | 批量删除（JSON: `{"task_ids": [...]}`） |
+| `/delete_task` | POST | 删除任务（`task_id`，可选 `delete_file=true` 删除文件与临时数据） |
+| `/batch_delete` | POST | 批量删除（JSON: `{"task_ids": [...], "delete_file": false}`） |
 | `/retry_task` | POST | 重试失败任务 |
 | `/batch_retry` | POST | 批量重试（JSON: `{"task_ids": [...]}`） |
 | `/remove_pending` | POST | 移除 pending 任务 |
@@ -472,7 +474,8 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Actions** — pause/resume, delete (single/batch), retry (single/batch)
 - **Real-time** — total speed = sum of active task speeds, 3s stale check
 - **Sticky nav** — tabs stay visible while scrolling
-- **Password login** — WebUI and Web APIs use login sessions; state changes require a CSRF token
+- **Password login** — WebUI and Web APIs use login sessions with an optional seven-day remember-me cookie; state changes require a CSRF token
+- **Web submissions** — Submit one Telegram post link to the durable queue using the server’s existing account
 
 ### Agent Integration
 
@@ -559,6 +562,7 @@ The main service exposes typed tools, structured results and actionable errors a
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | WebUI page |
+| `/submit_download` | POST | Submit one HTTPS `t.me` post link (JSON: `{"url": "https://t.me/channel/123"}`); returns durable queue acceptance, not completion |
 | `/get_download_list` | GET | Download list (`already_down=true` completed, `false` active) |
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
 | `/get_pending_list` | GET | Pending queue |
@@ -570,12 +574,12 @@ The main service exposes typed tools, structured results and actionable errors a
 | `/get_app_version` | GET | App version |
 | `/get_max_workers` | GET | Current number of simultaneous file downloads |
 | `/set_max_workers` | POST | Set simultaneous file downloads (`n=1`–`6`) |
-| `/check_file_exists` | POST | Check if local file exists for a completed task |
+| `/check_file_exists` | POST | Check local output or failed-task partial data |
 | `/set_download_state` | POST | Global pause/resume (`state=pause` / `state=continue`) |
 | `/pause_task` | POST | Pause a task |
 | `/resume_task` | POST | Resume a task |
-| `/delete_task` | POST | Delete a task (active or failed) |
-| `/batch_delete` | POST | Batch delete (JSON: `{"task_ids": [...]}`) |
+| `/delete_task` | POST | Delete a task (`task_id`; optional `delete_file=true` removes files and partial data) |
+| `/batch_delete` | POST | Batch delete (JSON: `{"task_ids": [...], "delete_file": false}`) |
 | `/retry_task` | POST | Retry a failed task |
 | `/batch_retry` | POST | Batch retry (JSON: `{"task_ids": [...]}`) |
 | `/remove_pending` | POST | Remove a pending task |
