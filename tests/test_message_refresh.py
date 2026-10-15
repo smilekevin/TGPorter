@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from module.telegram import pyrogram
 from pyrogram import enums, types
-from pyrogram.client import Cache
 
 import media_downloader as downloader
 from module import bot as bot_module, pyrogram_extension as extension
@@ -48,7 +47,7 @@ class MessageRefreshTests(unittest.IsolatedAsyncioTestCase):
                 str(self.path / "saved.mp4"), str(self.path / "partial.mp4"), "mp4"))),
             patch.object(downloader, "_maybe_reconnect_client", AsyncMock(return_value=False)),
             patch.object(downloader, "_add_failed_download", Mock()),
-            patch.object(extension, "_download_cache", Cache(1024)),
+            patch.object(extension, "_download_cache", {}),
             patch.object(extension, "report_bot_status", AsyncMock()),
             patch.object(extension, "_unified_flood_wait", {"until": 0, "reason": ""}),
             patch.object(downloader.asyncio, "sleep", short_sleep),

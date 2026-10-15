@@ -400,25 +400,23 @@ async def send_media_group_v2(
     """
     see pyrogram
     """
-    quote_text, quote_entities = (
-        await utils.parse_text_entities(client, quote_text, parse_mode, quote_entities)
-    ).values()
-
     r = await client.invoke(
         raw.functions.messages.SendMultiMedia(
             peer=await client.resolve_peer(chat_id),
             multi_media=multi_media,
             silent=disable_notification or None,
-            reply_to=utils.get_reply_to(
-                reply_to_message_id=reply_to_message_id,
+            reply_to=await utils.get_reply_to(
+                client,
+                reply_parameters=types.ReplyParameters(
+                    message_id=reply_to_message_id,
+                    chat_id=reply_to_chat_id,
+                    story_id=reply_to_story_id,
+                    quote=quote_text,
+                    quote_parse_mode=parse_mode,
+                    quote_entities=quote_entities,
+                    quote_position=quote_offset,
+                ),
                 message_thread_id=message_thread_id,
-                reply_to_peer=await client.resolve_peer(reply_to_chat_id)
-                if reply_to_chat_id
-                else None,
-                reply_to_story_id=reply_to_story_id,
-                quote_text=quote_text,
-                quote_entities=quote_entities,
-                quote_offset=quote_offset,
             ),
             schedule_date=utils.datetime_to_timestamp(schedule_date),
             invert_media=show_above_text,
@@ -445,5 +443,6 @@ async def send_media_group_v2(
             ],
             users=r.users,
             chats=r.chats,
+            topics=getattr(r, "topics", []),
         ),
     )

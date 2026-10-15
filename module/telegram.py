@@ -1,9 +1,9 @@
-"""Import the pinned Telegram SDK without an implicit event-loop dependency."""
+"""Import Kurigram through its Pyrogram-compatible namespace without an implicit event-loop dependency."""
 
 import asyncio
 
 
-# Pyrogram captures a loop while wrapping its synchronous API during import.
+# Kurigram captures a loop while wrapping its synchronous API during import.
 # Python 3.14 no longer creates that loop implicitly. Keep this temporary loop
 # separate from the downloader loop, which Application owns and initializes.
 try:

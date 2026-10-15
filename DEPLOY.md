@@ -12,6 +12,10 @@ English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api
 
 ## 前置条件
 
+Telegram SDK 使用 `requirements.txt` 中固定版本的 Kurigram（仍通过 `pyrogram` 导入）。不要在同一虚拟环境中混装 Pyrogram、Pyrofork 和 Kurigram；从旧版本手动安装迁移时，请重新创建虚拟环境，再安装完整依赖。
+
+首次使用此版本前，先停止服务并备份 `sessions/`、`config.yaml`、`data.yaml`、`downloads/` 和 `temp/`。Kurigram 会原地升级旧 Session 数据库；回滚到旧 SDK 时，应停服并恢复升级前的 Session 备份。任务与 `.parts/` 检查点格式保持不变；离线迁移测试不替代真实 Telegram 下载验收。
+
 1. Docker 镜像部署需要 Docker；Compose 部署还需 Docker Compose。手动安装需要 Python 3.14 和 pip。
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
 3. 已创建 Bot Token（通过 @BotFather）
@@ -46,7 +50,7 @@ Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloa
 2. 按提示设置 Bot 名称和用户名，创建成功后复制 BotFather 返回的完整 Token。
 3. 将 Token 填入 `config.yaml` 的 `bot_token`，用于命令交互和通知 Bot。详见 [Telegram 官方说明](https://core.telegram.org/bots/features#botfather)。
 
-主下载客户端可以选择手机号或 Bot Token 登录；仅填写配置中的 `bot_token` 不会代替主下载客户端的首次登录。使用 Bot 身份下载时，下载范围取决于该 Bot 对目标消息的访问权限。各部署方式的首次登录和 session 丢失后的重新登录步骤见下文，两种登录方式的背景说明见 [Pyrogram 官方文档](https://docs.pyrogram.org/start/auth)。
+主下载客户端可以选择手机号或 Bot Token 登录；仅填写配置中的 `bot_token` 不会代替主下载客户端的首次登录。使用 Bot 身份下载时，下载范围取决于该 Bot 对目标消息的访问权限。各部署方式的首次登录和 session 丢失后的重新登录步骤见下文，两种登录方式的背景说明见 [Kurigram 文档](https://docs.kurigram.icu/start/auth)。
 
 ### Docker 镜像部署
 
@@ -473,7 +477,7 @@ docker-compose up -d
 
 ## 代理配置
 
-Pyrogram 连接 Telegram 使用 `config.yaml` 中的 `proxy`：
+Kurigram 连接 Telegram 使用 `config.yaml` 中的 `proxy`：
 
 ```yaml
 proxy:
@@ -505,6 +509,10 @@ environment:
 
 ## Prerequisites
 
+The Telegram SDK is the Kurigram version pinned in `requirements.txt`, imported as `pyrogram`. Do not co-install Pyrogram, Pyrofork and Kurigram in one virtual environment. For an existing manual installation, recreate the virtual environment before installing the full requirements.
+
+Before starting this version for the first time, stop the service and back up `sessions/`, `config.yaml`, `data.yaml`, `downloads/` and `temp/`. Kurigram upgrades existing session databases in place. To roll back to the previous SDK, stop the service and restore the session backup from before migration. Task and `.parts/` checkpoint formats remain unchanged; offline migration tests do not replace real Telegram download acceptance checks.
+
 - Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.14 and pip.
 - Actual downloads require Telegram API credentials and access to the target messages. Mock development mode does not require Telegram login.
 - The project and image use `telegram-media-downloader`; the Compose service and container intentionally use `telegam-media-downloader`.
@@ -533,7 +541,7 @@ These steps apply to image, Docker Compose and manual deployments. Local mock de
 2. Follow the prompts to set the bot's name and username, then copy the complete Token returned by BotFather.
 3. Enter the Token in `config.yaml` as `bot_token` for the command and notification bot. See [Telegram's official instructions](https://core.telegram.org/bots/features#botfather).
 
-The main download client supports phone or Bot Token login. Setting `bot_token` in the configuration does not replace the main client's first login. When downloading as a bot, it must have access to the target messages. First login and login after session loss are described under each deployment method below. See [Pyrogram's authentication documentation](https://docs.pyrogram.org/start/auth) for background on both login methods.
+The main download client supports phone or Bot Token login. Setting `bot_token` in the configuration does not replace the main client's first login. When downloading as a bot, it must have access to the target messages. First login and login after session loss are described under each deployment method below. See [Kurigram's authentication documentation](https://docs.kurigram.icu/start/auth) for background on both login methods.
 
 ### Docker Image Deployment
 
@@ -955,7 +963,7 @@ Keep every data mount when recreating containers. Migration must retain configur
 
 ## Proxy Configuration
 
-Configure the Pyrogram connection to Telegram in `config.yaml`:
+Configure the Kurigram connection to Telegram in `config.yaml`:
 
 ```yaml
 proxy:

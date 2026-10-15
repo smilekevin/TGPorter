@@ -1,5 +1,5 @@
-# Keep the project-specific Pyrogram fork reproducible.
-https://github.com/tangyoha/pyrogram/archive/51a100c5e2745471ee89c1dd96dd69962973108b.zip
+# Kurigram provides the pyrogram import namespace. Do not co-install Pyrogram.
+Kurigram==2.2.26
 PyYAML==6.0.3
 rich==15.0.0
 PyTgCrypto==1.2.12

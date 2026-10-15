@@ -110,7 +110,7 @@
 
 - **多语言** — Bot 与网页共用 `lang/` JSON 词典，英语只保存词条列表，其他语言保存翻译映射，支持简体中文 / 繁体中文 / 英语 / 日语 / 西班牙语 / 法语 / 俄语 / 乌克兰语；网页自动匹配浏览器并记住选择，Bot 由 `language` 独立配置。源码、配置示例注释和 PWA 应用名称使用英语，测试可保留必要的语言数据。新增语言见[语言包指南](docs/languages.md)，配置见[部署指南](DEPLOY.md)
 - **rclone 云盘上传** — 下载完成后可选上传到云盘
-- **代理支持** — Pyrogram 原生代理 + Docker 环境变量代理
+- **代理支持** — Kurigram 原生代理 + Docker 环境变量代理
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
 - **日志分离** — `tdl.log`（主日志）+ `download.log`（下载日志），10MB 轮转，保留 30 天
 
@@ -124,7 +124,7 @@
 |----------|------|----------|
 | Docker 镜像 | 直接运行预构建镜像，适合服务器 / NAS | [镜像部署](./DEPLOY.md#docker-镜像部署) |
 | Docker Compose | 使用仓库中的 Compose 文件管理服务 | [Compose 部署](./DEPLOY.md#docker-compose-部署) |
-| 手动安装 | 使用 Python 3.14 运行 | [手动安装](./DEPLOY.md#手动安装) |
+| 手动安装 | 使用 Python 3.14 与 Kurigram 运行 | [手动安装](./DEPLOY.md#手动安装) |
 | 本地开发 | 使用 Mock 数据调试 WebUI，无需 Telegram 账号 | [本地开发模式](./DEPLOY.md#本地开发模式) |
 | Agent / MCP | 用 MCP Token 提交和管理下载任务 | [MCP 配置与部署](./DEPLOY.md#mcp-agent-接入) |
 
@@ -209,7 +209,7 @@ flowchart TB
 
     subgraph Container["Docker 容器"]
         direction TB
-        Bot["Bot 命令与媒体入口<br/>Pyrogram"]
+        Bot["Bot 命令与媒体入口<br/>Kurigram"]
         subgraph HTTP["统一 HTTP 服务<br/>Uvicorn / ASGI，web_port 默认 5000"]
             API["页面 / Web API<br/>Flask"]
             MCP["MCP /mcp<br/>Streamable HTTP"]
@@ -262,7 +262,7 @@ flowchart TB
 ### 核心流程
 
 1. **用户提交单条下载** → Bot handler 创建 TaskNode → `save_task()` 保存 Pending → Consumer 取得消息 → `add_download_task()` 入队
-2. **Worker 从队列取任务** → `download_task()` → `download_media()` → Pyrogram 下载
+2. **Worker 从队列取任务** → `download_task()` → `download_media()` → Kurigram 下载
 3. **进度回调** → `update_download_status()` 更新 `_download_result` → 20% 里程碑触发 Bot 通知
 4. **下载完成** → `complete_task()` 从持久化移除 → `save_downloads()` 写入历史
 5. **下载失败** → `add_failed_download()` 记入失败列表 → WebUI 可重试
@@ -291,7 +291,7 @@ flowchart TB
 
 ### TCP 超时补丁
 
-Pyrogram 默认 `TCP.TIMEOUT=10s`，在 TG 限速时导致连接拆除 + MTProto 重新握手，产生大量上传流量。补丁改为 900 秒：
+Kurigram 默认 `TCP.TIMEOUT=10s`，在 TG 限速时导致连接拆除 + MTProto 重新握手，产生大量上传流量。补丁改为 900 秒：
 
 ```python
 from pyrogram.connection.transport.tcp import TCP as _TCP
@@ -396,7 +396,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 ## 致谢
 
 - 原项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
-- Pyrogram：[pyrogram](https://github.com/pyrogram/pyrogram)
+- Telegram SDK：[Kurigram](https://github.com/kurigram-org/kurigram)（提供 `pyrogram` 导入命名空间）
 
 </details>
 <!-- END CHINESE README -->
@@ -497,7 +497,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 - **Multilingual** — Bot and WebUI share JSON catalogs in `lang/`; English lists each key once and other languages map keys to translations: Simplified Chinese / Traditional Chinese / English / Japanese / Spanish / French / Russian / Ukrainian. WebUI matches browser preferences and remembers selection; configure the Bot independently with `language`. Source code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. See the [catalog guide](docs/languages.md) and [deployment guide](DEPLOY.md)
 - **rclone cloud upload** — optional post-download cloud drive upload
-- **Proxy** — Pyrogram native proxy + Docker environment variable proxy
+- **Proxy** — Kurigram native proxy + Docker environment variable proxy
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
 - **Log separation** — `tdl.log` + `download.log`, 10MB rotation, 30-day retention
 
@@ -511,7 +511,7 @@ Use this fork's prebuilt image, `ghcr.io/smilekevin/telegram-media-downloader:la
 |--------|----------|-------|
 | Docker image | Run a prebuilt image on a server or NAS | [Image deployment](./DEPLOY.md#docker-image-deployment) |
 | Docker Compose | Manage the service with the repository Compose file | [Compose deployment](./DEPLOY.md#docker-compose-deployment) |
-| Manual install | Run with Python 3.14 | [Manual install](./DEPLOY.md#manual-install) |
+| Manual install | Run with Python 3.14 and Kurigram | [Manual install](./DEPLOY.md#manual-install) |
 | Local development | Debug WebUI with mock data, without a Telegram account | [Local dev mode](./DEPLOY.md#local-dev-mode) |
 | Agent / MCP | Submit and manage downloads through token-authenticated MCP tools | [MCP configuration and deployment](./DEPLOY.md#mcp-agent-integration) |
 
@@ -596,7 +596,7 @@ flowchart TB
 
     subgraph Container["Docker Container"]
         direction TB
-        Bot["Bot commands and media<br/>Pyrogram"]
+        Bot["Bot commands and media<br/>Kurigram"]
         subgraph HTTP["Single HTTP service<br/>Uvicorn / ASGI, web_port defaults to 5000"]
             API["Pages / Web API<br/>Flask"]
             MCP["MCP /mcp<br/>Streamable HTTP"]
@@ -649,7 +649,7 @@ Solid edges show requests, task and media processing. Dashed edges show persiste
 ### Core Flow
 
 1. **User submits a single download** → Bot handler creates TaskNode → `save_task()` persists Pending → consumer fetches message → `add_download_task()` enqueues
-2. **Worker dequeues** → `download_task()` → `download_media()` → Pyrogram download
+2. **Worker dequeues** → `download_task()` → `download_media()` → Kurigram download
 3. **Progress callback** → `update_download_status()` updates `_download_result` → 20% milestone triggers Bot notification
 4. **Download complete** → `complete_task()` removes from store → `save_downloads()` writes history
 5. **Download failed** → `add_failed_download()` records to failed list → WebUI retry available
@@ -678,7 +678,7 @@ Active workers and fetching/queued reservations share the concurrency limit; eac
 
 ### TCP Timeout Patch
 
-Pyrogram's default `TCP.TIMEOUT=10s` causes reconnect storms when Telegram throttles downloads. Patched to 900s:
+Kurigram's default `TCP.TIMEOUT=10s` causes reconnect storms when Telegram throttles downloads. Patched to 900s:
 
 ```python
 from pyrogram.connection.transport.tcp import TCP as _TCP
@@ -783,4 +783,4 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 ## Acknowledgements
 
 - Upstream: [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
-- Pyrogram: [pyrogram](https://github.com/pyrogram/pyrogram)
+- Telegram SDK: [Kurigram](https://github.com/kurigram-org/kurigram) (provides the `pyrogram` import namespace)
