@@ -20,7 +20,7 @@ English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api
 
 项目、仓库和 GHCR 镜像统一使用 **Telegram Media Downloader** 名称；Compose 服务/容器名使用 `telegam-media-downloader`。
 
-镜像发布规则：本仓库 PR、合并/推送 master 或手动运行 CI 后，测试通过即发布 `:sha-完整提交号`，Summary 提供可复制的拉取命令和 Compose 配置，不更新 `latest`。**Build Release Docker Image** 只在发布 GitHub Release 后运行，发布同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。
+镜像发布规则：本仓库 PR、合并/推送 master 或手动运行 CI 后，测试通过即发布 `:sha-完整提交号`，Summary 提供可复制的拉取命令和 Compose 配置，不更新 `latest`。**Build Release Docker Image** 只在发布 GitHub Release 后运行，发布同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。README 的 Version 徽章自动跟随最新正式 GitHub Release 标签，Python 徽章自动读取 `.github/workflows/tests.yml` 中的 `python-version`，徽章缓存刷新后生效。
 
 Release 镜像推送成功后，工作流会自动在对应 Release notes 中补充版本拉取命令、digest 地址和支持的平台。原有说明会保留，重新运行时更新同一区块。
 
@@ -314,7 +314,7 @@ proxy:
 每个文件启动最多 `file_download_concurrency` 个 worker；每个 worker 下载完一片后从队列领取下一片，直到全部完成，再按切片顺序合并。
 每个 worker 使用独立的 Telegram 下载 TCP 连接，并在连续下载后续切片时沿用自己的连接；不同 worker 和文件不共用下载连接。
 暂停时保留连接，完成、取消或客户端重启时关闭连接。
-通过网页、Web API 或 Bot 取消正在下载的任务时，先关闭连接，再清理该文件在 `temp/` 中的临时文件和 `.parts/` 目录；已完成文件按原来的“同时删除本地文件”选项处理。
+取消下载先关闭连接，再按文件删除选项处理该文件在 `temp/` 中的临时文件和 `.parts/` 目录。网页取消和删除失败任务默认勾选“同时删除本地文件”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
 同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 个 worker 时，最多有 20 个并发下载 worker，没有额外的总并发配置。
 切片大小和 worker 数在文件首次开始时保存，暂停、重试和程序重启后继续使用该计划，不重复下载已完成切片。
 进度条汇总所有切片的已下载字节，续传恢复的已有字节不计入新传输速度。
@@ -331,7 +331,9 @@ proxy:
 
 浏览器打开 `http://你的服务器IP:5000`
 
-配置了非空的 `web_login_secret` 时，会先显示登录页，输入配置的密码后进入控制面板。首页和所有下载接口都会校验访问凭据；右上角可退出。登录有效期为 7 天，重启服务或修改密码后需要重新登录。
+配置了非空的 `web_login_secret` 时，会先显示登录页，输入配置的密码后进入控制面板。首页和所有下载接口都会校验访问凭据；右上角可退出。登录页可选勾选“记住我（7 天）”，默认不勾选。勾选后通过持久化 Cookie 保持登录，关闭并重新打开浏览器无需再次输入密码；不勾选时使用浏览器会话 Cookie（浏览器恢复会话时可能保留）。两者最长有效期均为 7 天；重启服务或修改密码后需要重新登录。
+
+控制面板支持提交单条 HTTPS `t.me` 消息链接（公开、私有和话题消息）。使用服务端已有 Telegram 登录，无需在网页重新登录 Telegram；账号需有访问权限。提交后先持久化入队，再由现有消费者下载；重复未完成链接复用任务。未配置 `bot_token` 且未开启 MCP 时，也会启动任务后台，配置下载结束后服务继续运行以接收网页任务。
 
 Web API 与网页共用密码登录 Session，修改状态时还需提供当前 Session 的 CSRF Token，WebUI 会自动携带。Web API 不接受 Bearer Token；Agent 使用下节的 `/mcp` 和独立 MCP Token。
 
@@ -504,7 +506,7 @@ environment:
 - Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.11 and pip.
 - Actual downloads require Telegram API credentials and access to the target messages. Mock development mode does not require Telegram login.
 - The project and image use `telegram-media-downloader`; the Compose service and container intentionally use `telegam-media-downloader`.
-- The prebuilt image is `ghcr.io/smilekevin/telegram-media-downloader`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`.
+- The prebuilt image is `ghcr.io/smilekevin/telegram-media-downloader`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`. The README Version badge follows the latest stable GitHub Release tag; its Python badge reads `python-version` from `.github/workflows/tests.yml`. Badge updates appear after caches refresh.
 - For PR or master verification, use the SHA tag or digest from **CI image for verification** in the [CI Summary](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml). The [Release workflow](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml) adds pull commands, digests and platforms to Release notes after a successful image push, preserving the existing description and updating the same section on reruns. Package visibility must be Public for unauthenticated pulls.
 
 The commands below use `docker-compose`; replace it with `docker compose` if you use the Compose plugin.
@@ -799,8 +801,7 @@ all parts are complete, then the parts are merged in order. Each worker owns an 
 TCP connection and uses it for successive parts; different workers and files do not share download connections.
 Pauses retain connections; completion, cancellation and client restart close them. `max_download_task` limits
 simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
-Cancelling an active download through WebUI, the Web API or the bot closes its connections before removing
-its staging files and `.parts/` directory in `temp/`. Completed files still follow the existing option to delete local files.
+Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `temp/`. WebUI checks the file option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
 The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
 Progress sums downloaded bytes across all parts; resumed bytes do not count toward new transfer speed.
 Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
@@ -816,7 +817,9 @@ with its file and worker number; the matching `Closed independent download conne
 
 ## WebUI Login
 
-Open `http://SERVER_IP:5000`. A non-empty `web_login_secret` protects the dashboard and download APIs. Enter that password on the login page; use the top-right action to log out. Login lasts seven days and must be renewed after a service restart or password change. State-changing requests using browser sessions also require the session's CSRF token; the WebUI supplies it automatically. The Web API accepts only browser login sessions, not bearer tokens. Agents use `/mcp` with a separate MCP token.
+Open `http://SERVER_IP:5000`. A non-empty `web_login_secret` protects the dashboard and download APIs. Enter that password on the login page; use the top-right action to log out. The login page offers an unchecked “Remember me (7 days)” option. Selecting it stores a persistent cookie so reopening the browser does not require another password; otherwise it uses a browser-session cookie (browser session restore may retain it). Both expire after at most seven days and require login again after a service restart or password change. State-changing requests using browser sessions also require the session's CSRF token; the WebUI supplies it automatically. The Web API accepts only browser login sessions, not bearer tokens. Agents use `/mcp` with a separate MCP token.
+
+The dashboard accepts one HTTPS `t.me` post link (public, private or topic). It uses the existing server Telegram login and requires access to the chat. Submission persists before the existing consumer fetches media; unfinished duplicate posts reuse their task. With no `bot_token` and MCP disabled, the same backend still starts and the service stays running after configured downloads finish to accept WebUI tasks.
 
 Set `web_login_secret: ""` to disable password login and restart the service after changing configuration. Existing deployments must use an image containing the login implementation; changing an older image's configuration alone does not enable it.
 

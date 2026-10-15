@@ -201,6 +201,26 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.done_file.exists())
             self.assertNotIn(2, download_stat.get_download_result()[100])
 
+    async def test_failed_file_and_partial_deletion_via_mcp(self):
+        failed_file = self.path / "failed.mp4"
+        failed_file.write_bytes(b"partial output")
+        staging = self.path / "failed-staging.mp4"
+        parts = Path(str(staging) + ".parts")
+        parts.mkdir()
+        (parts / "manifest.json").write_text("{}")
+        download_stat._failed_downloads[0].update(
+            file_name=str(failed_file), temp_file_name=str(staging))
+        async with Client(self.server) as client:
+            checked = self.assert_success(await client.call_tool("check_task_file", {"task_id": "failed-1"}))
+            self.assertTrue(checked["exists"])
+            deleted = self.assert_success(await client.call_tool("delete_task", {
+                "task_id": "failed-1", "delete_file": True,
+            }))
+            self.assertTrue(deleted["file_deleted"])
+            self.assertFalse(failed_file.exists())
+            self.assertFalse(parts.exists())
+            self.assertTrue(self.done_file.exists())
+
     async def test_explicit_file_deletion_and_pending_removal(self):
         async with Client(self.server) as client:
             deleted = self.assert_success(await client.call_tool("batch_delete_tasks", {

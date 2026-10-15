@@ -19,7 +19,7 @@ TaskIds = Annotated[list[TaskId], Field(min_length=1, max_length=100)]
 Offset = Annotated[int, Field(strict=True, ge=0)]
 Limit = Annotated[int, Field(strict=True, ge=1, le=500)]
 WorkerCount = Annotated[int, Field(strict=True, ge=1, le=6)]
-DeleteFile = Annotated[bool, Field(strict=True, description="Also delete the local downloaded file; default false.")]
+DeleteFile = Annotated[bool, Field(strict=True, description="Also delete local downloaded files and partial data; default false.")]
 
 READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
@@ -168,12 +168,12 @@ def create_server(service, *, read_only: bool = False) -> MCPServer:
 
     @server.tool(annotations=DELETE)
     async def delete_task(task_id: TaskId, delete_file: DeleteFile = False) -> dict[str, Any]:
-        """Cancel/remove one task and its temporary data. Optionally also delete its downloaded file."""
+        """Cancel/remove one task. Set delete_file to remove its downloaded file and partial data."""
         return await execute(service.web_delete_task, task_id, delete_file=delete_file)
 
     @server.tool(annotations=DELETE)
     async def batch_delete_tasks(task_ids: TaskIds, delete_file: DeleteFile = False) -> dict[str, Any]:
-        """Cancel/remove up to 100 tasks and temporary data; delete_file also removes downloaded files."""
+        """Cancel/remove up to 100 tasks; delete_file removes downloaded files and partial data."""
         return await execute(service.web_batch_delete, {"task_ids": task_ids, "delete_file": delete_file})
 
     @server.tool(annotations=DELETE)

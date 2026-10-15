@@ -107,6 +107,28 @@ class MCPSubmitDownloadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pending["tasks"][0]["task_id"], result["pending_task_id"])
             self.assertEqual(pending["tasks"][0]["chat_title"], "Offline channel")
 
+    async def test_web_submission_uses_durable_backend_with_mcp_disabled(self):
+        self.app.mcp_enabled = False
+        def submit_from_browser():
+            client = web.get_flask_app().test_client()
+            client.get("/login")
+            with client.session_transaction() as session:
+                token = session["web_csrf_token"]
+            client.post("/login", data={"password": "browser-secret", "csrf_token": token})
+            with client.session_transaction() as session:
+                token = session["web_csrf_token"]
+            return client.post("/submit_download", json={"url": "https://t.me/channel_name/123"},
+                               headers={"X-CSRF-Token": token}).get_json()
+        with patch.object(web, "_app", self.app):
+            result = await asyncio.to_thread(submit_from_browser)
+            self.assertEqual(result["code"], "1")
+            self.assertEqual(result["status"], "pending")
+            self.assertEqual(str(task_store.get_pending_tasks()[0]["task_id"]), result["pending_task_id"])
+            self.telegram.get_messages.assert_not_awaited()
+            duplicate = await asyncio.to_thread(submit_from_browser)
+            self.assertTrue(duplicate["duplicate"])
+            self.assertEqual(len(task_store.get_pending_tasks()), 1)
+
     async def test_public_private_and_topic_links_use_same_consumer(self):
         async with Client(self.server) as client:
             result = self.success(await self.submit(client, "https://t.me/c/123456/77/123"))
@@ -282,7 +304,7 @@ class MCPSubmitDownloadTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((self.path / "bot.yaml").exists())
             self.assertTrue(task_store.get_downloading_tasks())  # Shutdown preserves recovery data.
 
-    async def test_mcp_mode_stays_alive_after_configured_downloads_finish(self):
+    async def test_web_and_mcp_modes_stay_alive_after_configured_downloads_finish(self):
         with patch.object(downloader, "app", self.app):
             running = asyncio.create_task(downloader.run_until_all_task_finish())
             try:
@@ -292,6 +314,14 @@ class MCPSubmitDownloadTests(unittest.IsolatedAsyncioTestCase):
                 running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
             self.app.mcp_enabled = False
+            running = asyncio.create_task(downloader.run_until_all_task_finish())
+            try:
+                await asyncio.sleep(.01)
+                self.assertFalse(running.done())
+            finally:
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+            self.app.restart_program = True
             await asyncio.wait_for(downloader.run_until_all_task_finish(), timeout=.1)
 
 
