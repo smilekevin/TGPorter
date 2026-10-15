@@ -107,7 +107,7 @@
 
 ### 其他
 
-- **多语言** — 中文 / 英文 / 俄语 / 乌克兰语
+- **多语言** — 网页支持中文 / 英文 / 俄语 / 乌克兰语，自动匹配浏览器语言并记住手动切换；Bot 默认语言由 `language` 独立配置
 - **rclone 云盘上传** — 下载完成后可选上传到云盘
 - **代理支持** — Pyrogram 原生代理 + Docker 环境变量代理
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
@@ -492,7 +492,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Other
 
-- **Multilingual** — Chinese / English / Russian / Ukrainian
+- **Multilingual** — WebUI matches browser language and remembers manual selection: Chinese / English / Russian / Ukrainian; configure the Bot independently with `language`
 - **rclone cloud upload** — optional post-download cloud drive upload
 - **Proxy** — Pyrogram native proxy + Docker environment variable proxy
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed

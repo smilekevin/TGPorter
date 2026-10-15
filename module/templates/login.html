@@ -4,12 +4,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#2563eb">
-    <title>登录 - Telegram Downloader</title>
+    <title>登录 - Telegram Media Downloader</title>
     <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}" type="image/png">
+    <script src="{{ url_for('static', filename='web_i18n.js') }}"></script>
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: #f9fafb; color: #111827; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         main { width: 100%; max-width: 400px; padding: 32px; background: white; border: 1px solid #e5e7eb; border-radius: 16px; box-shadow: 0 8px 24px rgb(0 0 0 / 5%); }
+        .language-switch { float: right; }
         .logo { width: 44px; height: 44px; padding: 10px; border-radius: 12px; color: white; background: linear-gradient(135deg, #3b82f6, #4f46e5); }
         h1 { margin: 20px 0 8px; font-size: 22px; }
         p { margin: 0 0 24px; color: #6b7280; font-size: 14px; line-height: 1.6; }
@@ -26,17 +28,20 @@
 </head>
 <body>
     <main>
+        <select data-language-switch aria-label="Language" class="language-switch" style="max-width: 110px; padding: 6px; border: 1px solid #d1d5db; border-radius: 8px; background: white; color: #374151; font-size: 13px;">
+                        <option value="zh">中文</option><option value="en">English</option><option value="ru">Русский</option><option value="uk">Українська</option>
+                    </select>
         <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
         </svg>
-        <h1>登录控制面板</h1>
-        <p>Telegram Downloader</p>
+        <h1><span data-i18n="登录控制面板">登录控制面板</span></h1>
+        <p>Telegram Media Downloader</p>
         <form action="{{ url_for('login') }}" method="post">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label for="password">访问密码</label>
+            <label for="password"><span data-i18n="访问密码">访问密码</span></label>
             <input id="password" name="password" type="password" autocomplete="current-password" required autofocus{% if error %} aria-invalid="true" aria-describedby="login-error"{% endif %}>
-            {% if error %}<p id="login-error" class="error" role="alert">{{ error }}</p>{% endif %}
-            <button type="submit">登录</button>
+            {% if error %}<p data-i18n="{{ error }}" id="login-error" class="error" role="alert">{{ error }}</p>{% endif %}
+            <button type="submit"><span data-i18n="登录">登录</span></button>
         </form>
     </main>
 </body>

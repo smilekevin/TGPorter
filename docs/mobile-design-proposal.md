@@ -1,4 +1,4 @@
-# Telegram Downloader WebUI 移动端设计方案
+# Telegram Media Downloader WebUI 移动端设计方案
 
 ## 现状分析
 
@@ -33,7 +33,7 @@
 
 ```json
 {
-  "name": "Telegram Downloader",
+  "name": "Telegram Media Downloader",
   "short_name": "TG Downloader",
   "description": "Telegram Media Downloader",
   "start_url": "/",
