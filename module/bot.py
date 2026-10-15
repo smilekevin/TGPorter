@@ -2581,6 +2581,11 @@ async def stop_task(
     task_type: TaskType,
 ):
     """Stop task"""
+    label = {
+        TaskType.Download: "download",
+        TaskType.Forward: "Forward",
+        TaskType.ListenForward: "Listen for forwarded messages",
+    }[task_type]
     if query.data == queryHandler:
         buttons: List[InlineKeyboardButton] = []
         temp_buttons: List[InlineKeyboardButton] = []
@@ -2609,7 +2614,7 @@ async def stop_task(
             await client.edit_message_text(
                 query.message.from_user.id,
                 query.message.id,
-                f"{_t('Stop')} {_t(task_type.name)}...",
+                f"{_t('Stop')} {_t(label)}...",
                 reply_markup=InlineKeyboardMarkup(buttons),
             )
         else:
@@ -2623,7 +2628,7 @@ async def stop_task(
         await client.edit_message_text(
             query.message.from_user.id,
             query.message.id,
-            f"{_t('Stop')} {_t(task_type.name)}...",
+            f"{_t('Stop')} {_t(label)}...",
         )
         _bot.stop_task(task_id)
 

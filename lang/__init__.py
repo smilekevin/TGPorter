@@ -23,6 +23,12 @@ def load_catalogs(directory=None):
             raise ValueError(f'Invalid language name in {path.name}')
         if not isinstance(data['aliases'], list) or not all(isinstance(a, str) for a in data['aliases']):
             raise ValueError(f'Invalid language aliases in {path.name}')
+        # English lists canonical keys once; translated catalogs map keys to values.
+        if code == 'en' and isinstance(data['messages'], list):
+            keys = data['messages']
+            if not all(isinstance(key, str) and key for key in keys) or len(set(keys)) != len(keys):
+                raise ValueError(f'Invalid English keys in {path.name}')
+            data['messages'] = {key: key for key in keys}
         if not isinstance(data['messages'], dict) or not all(
             isinstance(k, str) and isinstance(v, str) and v
             for k, v in data['messages'].items()
@@ -40,8 +46,28 @@ def load_catalogs(directory=None):
 
 
 CATALOGS, ALIASES = load_catalogs()
-SOURCE_KEYS = CATALOGS['en'].get('source_keys', {})
-MESSAGE_PATTERNS = CATALOGS['en'].get('patterns', [])
+
+
+def _message_patterns(keys):
+    """Recognize current English messages rendered from named templates."""
+    rules = []
+    for key in keys:
+        fields = list(re.finditer(r'\{(\w+)\}', key))
+        if not fields:
+            continue
+        pattern = '^'
+        end = 0
+        for field in fields:
+            pattern += re.escape(key[end:field.start()]) + '(.*?)'
+            end = field.end()
+        pattern += re.escape(key[end:]) + '$'
+        names = [field[1] for field in fields]
+        rules.append({'pattern': pattern, 'key': key, 'fields': names,
+                      'translate_fields': ['reason'] if 'reason' in names else []})
+    return rules
+
+
+MESSAGE_PATTERNS = _message_patterns(CATALOGS['en']['messages'])
 # Preserve import and enum member compatibility while discovering new languages.
 _members = {code.upper().replace('-', '_'): code for code in CATALOGS}
 _members.update({alias.upper().replace('-', '_'): code for alias, code in ALIASES.items()})
@@ -77,8 +103,8 @@ def set_language(language):
 
 def translate(text, language='en', **values):
     """Resolve a shared key, falling back to English then the original text."""
-    key = SOURCE_KEYS.get(text, text)
-    if isinstance(text, str) and key == text and key not in CATALOGS['en']['messages']:
+    key = text
+    if isinstance(text, str) and key not in CATALOGS['en']['messages']:
         for rule in MESSAGE_PATTERNS:
             match = re.fullmatch(rule['pattern'], text, re.DOTALL)
             if match:
@@ -104,4 +130,4 @@ def template_context():
     catalogs = {code: {'name': data['name'], 'messages': data['messages']}
                 for code, data in CATALOGS.items()}
     return {'language_catalogs': catalogs, 'language_aliases': ALIASES,
-            'language_source_keys': SOURCE_KEYS, 'language_patterns': MESSAGE_PATTERNS}
+            'language_patterns': MESSAGE_PATTERNS}

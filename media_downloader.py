@@ -1008,7 +1008,7 @@ async def download_media(
                     await asyncio.sleep(RETRY_TIME_OUT)
             if _check_timeout(retry, message.id):
                 logger.error(
-                    f"Message[{message.id}]: {_t('file reference expired for 3 retries, download skipped.')}"
+                    f"Message[{message.id}]: {_t('file reference expired for 3 retries, download skipped')}"
                 )
                 error_message = 'File reference expired (failed after 3 retries)'
         except (pyrogram.errors.exceptions.flood_420.FloodWait,
@@ -1065,7 +1065,7 @@ async def download_media(
             await asyncio.sleep(RETRY_TIME_OUT)
             if _check_timeout(retry, message.id):
                 logger.error(
-                    f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped.')}"
+                    f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped')}"
                 )
                 error_message = 'Download timed out (failed after 3 retries)'
         except TimeoutError as e:
@@ -1968,7 +1968,7 @@ def main():
         app.loop.run_until_complete(stop_server(client))
         for task in tasks:
             task.cancel()
-        logger.info(_t("Stopped!"))
+        logger.info(_t("Stopped"))
         logger.info(f"{_t('update config')}......")
         app.update_config()
         logger.success(

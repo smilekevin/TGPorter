@@ -1,7 +1,7 @@
 /* Browser language is independent of the Bot's process-wide language. */
 (() => {
     'use strict';
-    const {catalogs, aliases, sourceKeys, patterns} = JSON.parse(document.getElementById('language-catalogs').textContent);
+    const {catalogs, aliases, patterns} = JSON.parse(document.getElementById('language-catalogs').textContent);
     const supported = Object.keys(catalogs);
     const storageKey = 'web_language';
     const isLoginPage = document.title === 'Sign in - Telegram Media Downloader';
@@ -30,8 +30,8 @@
         language: detectLanguage(),
         t(text, language = api.language, values = {}) {
             if (text == null) return '';
-            let key = sourceKeys[text] || text;
-            if (typeof text === 'string' && key === text && !Object.hasOwn(catalogs.en.messages, key)) {
+            let key = text;
+            if (typeof text === 'string' && !Object.hasOwn(catalogs.en.messages, key)) {
                 for (const rule of patterns) {
                     const match = text.match(new RegExp(rule.pattern, 's'));
                     if (match) {

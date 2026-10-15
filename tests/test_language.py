@@ -44,14 +44,22 @@ class LanguageTests(unittest.TestCase):
         # Both entry points resolve the same key instead of keeping separate dictionaries.
         for code in lang.CATALOGS:
             set_language(code)
-            self.assertEqual(_t('下载中'), lang.translate('Downloading', code))
+            self.assertEqual(_t('Downloading'), lang.translate('Downloading', code))
         self.assertEqual(lang.translate('Retry failed: {error}', 'fr', error='{count}<file>'),
                          'Échec de la nouvelle tentative : {count}<file>')
 
     def test_missing_translation_falls_back_and_unknown_text_stays_literal(self):
         with patch.dict(lang.CATALOGS['fr']['messages'], clear=True):
-            self.assertEqual(lang.translate('暂停', 'fr'), 'Pause')
+            self.assertEqual(lang.translate('Pause', 'fr'), 'Pause')
         self.assertEqual(lang.translate('<filename>{unknown}', 'fr'), '<filename>{unknown}')
+
+    def test_english_catalog_lists_each_key_once(self):
+        data = json.loads((ROOT / 'lang/en.json').read_text())
+        self.assertIsInstance(data['messages'], list)
+        self.assertEqual(len(data['messages']), len(set(data['messages'])))
+        self.assertNotIn('source_keys', data)
+        self.assertNotIn('patterns', data)
+        self.assertEqual(set(data['messages']), set(lang.CATALOGS['en']['messages']))
 
     def test_new_catalog_discovery_and_conflicting_alias_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -77,14 +85,14 @@ class LanguageTests(unittest.TestCase):
         for path in paths:
             self.assertIsNone(re.search(r'[\u3400-\u9fff]', path.read_text()), path.name)
 
-    def test_legacy_and_english_failure_reasons_use_complete_translations(self):
+    def test_current_english_reasons_translate_and_old_text_stays_literal(self):
         key = 'Retry failed: client unavailable'
-        legacy = next(source for source, target in lang.SOURCE_KEYS.items() if target == key)
+        legacy = '重试失败: client不可用'
         for code in ('zh-cn', 'zh-tw', 'ja', 'es', 'fr'):
             with self.subTest(code=code):
                 expected = lang.CATALOGS[code]['messages'][key]
                 self.assertEqual(lang.translate(key, code), expected)
-                self.assertEqual(lang.translate(legacy, code), expected)
+                self.assertEqual(lang.translate(legacy, code), legacy)
                 self.assertEqual(lang.translate('Resume failed: <error>{count}', code),
                                  lang.translate('Resume failed: {error}', code, error='<error>{count}'))
         self.assertEqual(lang.translate('Download returned no file (failed after 3 retries)', 'es'),
@@ -112,7 +120,7 @@ class LanguageTests(unittest.TestCase):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                         and node.func.id == '_t' and node.args
                         and isinstance(node.args[0], ast.Constant)):
-                    key = lang.SOURCE_KEYS.get(node.args[0].value, node.args[0].value)
+                    key = node.args[0].value
                     self.assertIn(key, lang.CATALOGS['en']['messages'], (path.name, key))
 
 

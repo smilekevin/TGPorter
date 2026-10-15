@@ -525,18 +525,18 @@ class DownloadService:
     def web_pause_task(self, task_id=None):
         """Pause a specific download task"""
         if not task_id:
-            return {"code": "0", "message": "task_id required"}
+            return {"code": "0", "message": "Task ID required"}
         pause_task(task_id)
         return {"code": "1", "message": "paused"}
 
     def web_resume_task(self, task_id=None):
         """Resume a specific download task"""
         if not task_id:
-            return {"code": "0", "message": "task_id required"}
+            return {"code": "0", "message": "Task ID required"}
         success = resume_task(task_id)
         if success:
             return {"code": "1", "message": "resumed"}
-        return {"code": "0", "message": "task not paused"}
+        return {"code": "0", "message": "Task not paused"}
 
     def _task_files(self, task_id):
         """Find exact recorded paths; failed rows are no longer in active results."""
@@ -552,7 +552,7 @@ class DownloadService:
     def web_check_file_exists(self, task_id=None):
         """Check recorded output and failed-task staging files."""
         if not task_id:
-            return {"code": "0", "message": "task_id required"}
+            return {"code": "0", "message": "Task ID required"}
         from module.parallel_download import has_parts
         output, staging = self._task_files(task_id)
         path = output or staging
@@ -566,7 +566,7 @@ class DownloadService:
         from module.parallel_download import discard_partial_download
         from module.pyrogram_extension import remove_download_cache
         if not task_id:
-            return {"code": "0", "message": "task_id required"}
+            return {"code": "0", "message": "Task ID required"}
         file_path, staging = self._task_files(task_id)
         # Finished cache entries can be cleared; active attempts clear their own cache.
         for chat_id, messages in get_download_result().items():
@@ -577,7 +577,7 @@ class DownloadService:
         success = delete_task(task_id, discard_partial=delete_file)
         failed = remove_failed_download(task_id)
         if not success and not failed:
-            return {"code": "0", "message": "task not found"}
+            return {"code": "0", "message": "Task not found"}
         file_deleted = False
         file_error = ""
         if delete_file:
@@ -595,9 +595,9 @@ class DownloadService:
     def web_batch_delete(self, data=None):
         """Use the same cancellation and file policy for single and batch deletions."""
         if not isinstance(data, dict) or "task_ids" not in data:
-            return {"code": "0", "message": "task_ids required"}
+            return {"code": "0", "message": "Task IDs required"}
         if not isinstance(data["task_ids"], list):
-            return {"code": "0", "message": "task_ids must be a list"}
+            return {"code": "0", "message": "Task IDs must be a list"}
         deleted = files_deleted = files_not_found = 0
         for task_id in dict.fromkeys(data["task_ids"]):
             result = self.web_delete_task(task_id, delete_file=data.get("delete_file", False))
@@ -610,7 +610,7 @@ class DownloadService:
     def web_retry_task(self, task_id=None):
         """Retry a failed download task - re-download the file"""
         if not task_id:
-            return {"code": "0", "message": "task_id required"}
+            return {"code": "0", "message": "Task ID required"}
 
         # Find the failed entry to get chat_id + msg_id
         failed_list = get_failed_downloads()
@@ -621,14 +621,14 @@ class DownloadService:
                 break
 
         if not target:
-            return {"code": "0", "message": "task not found in failed list"}
+            return {"code": "0", "message": "Task not found in failed list"}
 
         chat_id = target.get("chat_id")
         msg_id = target.get("msg_id")
         from_user_id = target.get("from_user_id", "") or ""
         source_link = target.get("source_link", "") or ""
         if not chat_id or not msg_id:
-            return {"code": "0", "message": "incomplete task data (missing chat_id/msg_id)"}
+            return {"code": "0", "message": "Incomplete task data (missing chat_id/msg_id)"}
 
         # Remove from failed list first
         remove_failed_download(task_id)
@@ -648,11 +648,11 @@ class DownloadService:
     def web_batch_retry(self, data=None):
         """Batch retry multiple failed downloads"""
         if not data or "task_ids" not in data:
-            return {"code": "0", "message": "task_ids required"}
+            return {"code": "0", "message": "Task IDs required"}
 
         task_ids = data["task_ids"]
         if not isinstance(task_ids, list):
-            return {"code": "0", "message": "task_ids must be a list"}
+            return {"code": "0", "message": "Task IDs must be a list"}
 
         failed_list = get_failed_downloads()
         queued = 0
@@ -808,7 +808,7 @@ class DownloadService:
     def web_remove_pending(self, task_id=None):
         """Remove a pending task from the queue"""
         if not task_id:
-            return {"code": "0", "message": "task_id required"}
+            return {"code": "0", "message": "Task ID required"}
         # Try int conversion since task_store uses int task_ids
         try:
             task_id_int = int(task_id)
