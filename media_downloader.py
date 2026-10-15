@@ -684,7 +684,7 @@ async def download_media(
             file_name, temp_file_name, file_format = await _get_media_meta(
                 node.chat_id, message, _media, _type
             )
-            # Keep the exact staging path for failed-task cleanup, including hidden filenames.
+            # Keep the exact staging path for active checks and failed-task cleanup.
             node.download_temp_paths[message.id] = temp_file_name
             media_size = getattr(_media, "file_size", 0)
             ui_file_name = file_name

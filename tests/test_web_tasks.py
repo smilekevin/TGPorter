@@ -105,6 +105,13 @@ class WebTaskTests(unittest.TestCase):
         self.assertTrue(completed['output_exists'])
         self.assertFalse(completed['cache_exists'])
 
+    def test_active_task_reports_its_recorded_staging_cache(self):
+        self.file.unlink()
+        download_stat._download_result[1][2]['temp_file_name'] = str(self.staging)
+        result = self.post('/check_file_exists?task_id=task-1').json
+        self.assertTrue(result['cache_exists'])
+        self.assertEqual(result['cache_paths'], [str(self.parts)])
+
     def test_no_files_reports_no_cache(self):
         self.file.unlink()
         shutil.rmtree(self.parts)
