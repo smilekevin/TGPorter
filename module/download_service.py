@@ -553,13 +553,18 @@ class DownloadService:
         """Check recorded output and failed-task staging files."""
         if not task_id:
             return {"code": "0", "message": "Task ID required"}
-        from module.parallel_download import has_parts
         output, staging = self._task_files(task_id)
-        path = output or staging
-        exists = bool(output and os.path.isfile(output)) or bool(
-            staging and (os.path.isfile(staging) or os.path.isfile(staging + ".temp") or has_parts(staging)))
-        return {"code": "1", "exists": exists, "path": path.replace("\\", "/"),
-                "filename": os.path.basename(path)}
+        output_exists = bool(output and os.path.isfile(output))
+        cache_paths = []
+        if staging:
+            cache_paths = [path for path in (staging, staging + ".temp", staging + ".parts")
+                           if os.path.exists(path)]
+        # Show paths that actually exist, rather than a missing final destination.
+        path = output if output_exists else (cache_paths[0] if cache_paths else output or staging)
+        return {"code": "1", "exists": output_exists or bool(cache_paths),
+                "output_exists": output_exists, "cache_exists": bool(cache_paths),
+                "cache_paths": [path.replace("\\", "/") for path in cache_paths],
+                "path": path.replace("\\", "/"), "filename": os.path.basename(path)}
 
     def web_delete_task(self, task_id=None, delete_file=False):
         """Cancel/remove a task; writers clean staging only when explicitly requested."""

@@ -120,7 +120,7 @@
     "Loading...": "載入中...",
     "Cancel": "取消",
     "Clear selection": "取消選擇",
-    "Also delete local files": "同時刪除本地檔案",
+    "Also delete local files and cache": "同時刪除本地檔案和快取",
     "Failed ": "失敗於 ",
     "Failed downloads will appear here": "失敗的下載會在這裡顯示",
     "Completed ": "完成於 ",
@@ -154,7 +154,7 @@
     "No pending tasks": "暫無待下載任務",
     "No matching tasks": "未找到匹配的任務",
     "Unknown error": "未知錯誤",
-    "Local file no longer exists": "本地檔案已不存在",
+    "No local files or cache found": "未找到本地檔案或快取",
     "items": "條",
     "Checking files...": "正在檢查檔案...",
     "Fetching file information...": "正在獲取檔案資訊...",
@@ -331,6 +331,8 @@
     "get_messages connection timeout, possibly rate limited; chat {chat}, message {message}, attempt {count}": "get_messages 連線超時疑似限速 chat {chat} msg {message} (第{count}次)",
     "get_messages network error; chat {chat}, message {message}, attempt {count}": "get_messages 網路錯誤 chat {chat} msg {message} (第{count}次)",
     "Connection timeout, possibly rate limited (message {message})": "連線超時疑似限速 (msg {message})",
-    "Resume FloodWait (message {message})": "續傳 FloodWait (msg {message})"
+    "Resume FloodWait (message {message})": "續傳 FloodWait (msg {message})",
+    "Cache files (partial downloads)": "快取檔案（未完成下載）",
+    "Local file": "本地檔案"
   }
 }

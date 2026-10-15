@@ -316,7 +316,7 @@ proxy:
 每个文件启动最多 `file_download_concurrency` 个 worker；每个 worker 下载完一片后从队列领取下一片，直到全部完成，再按切片顺序合并。
 每个 worker 使用独立的 Telegram 下载 TCP 连接，并在连续下载后续切片时沿用自己的连接；不同 worker 和文件不共用下载连接。
 暂停时保留连接，完成、取消或客户端重启时关闭连接。
-取消下载先关闭连接，再按文件删除选项处理该文件在 `temp/` 中的临时文件和 `.parts/` 目录。网页取消和删除失败任务默认勾选“同时删除本地文件”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
+取消下载先关闭连接，再按文件删除选项处理该文件在 `temp/` 中的临时文件和 `.parts/` 目录。删除确认会显示已找到的缓存文件（临时文件或分片目录）及实际路径；仅在文件和已记录路径的缓存均不存在时提示未找到。网页取消和删除失败任务默认勾选“同时删除本地文件和缓存”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
 同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 个 worker 时，最多有 20 个并发下载 worker，没有额外的总并发配置。
 切片大小和 worker 数在文件首次开始时保存，暂停、重试和程序重启后继续使用该计划，不重复下载已完成切片。
 进度条汇总所有切片的已下载字节，续传恢复的已有字节不计入新传输速度。
@@ -805,7 +805,7 @@ all parts are complete, then the parts are merged in order. Each worker owns an 
 TCP connection and uses it for successive parts; different workers and files do not share download connections.
 Pauses retain connections; completion, cancellation and client restart close them. `max_download_task` limits
 simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
-Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `temp/`. WebUI checks the file option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
+Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `temp/`. The deletion dialog identifies cache files (staging files or part directories) and shows an existing path; it reports no files only when neither output nor cache at recorded paths exists. WebUI checks the file and cache option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
 The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
 Progress sums downloaded bytes across all parts; resumed bytes do not count toward new transfer speed.
 Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
