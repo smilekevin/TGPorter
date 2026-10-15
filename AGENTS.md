@@ -9,6 +9,7 @@ These instructions apply to the entire repository. Read this file, relevant sour
 - Choose a compliant name before creating a branch. Run `git branch --show-current` before each commit, push, and PR creation. If the current branch violates the naming rule, move the task's changes to a compliant new branch before committing or pushing.
 - Normally start from the target repository's latest `master`. If the current checkout contains another task or uncommitted changes, use an isolated checkout. Do not overwrite, stage, or commit unrelated user changes.
 - This fork's PR target is `smilekevin/telegram-media-downloader`. The local `fork` remote normally points there, while `origin` normally points to upstream `MangoIsIllegal/hermes-telegram-downloader`. Verify the actual URLs with `git remote -v` before pushing; do not infer the target from the remote name alone.
+- Write all PR titles and descriptions in English.
 - Keep each PR focused on one problem. Commit messages and PR titles should describe the resulting behavior; prefixes such as `feat:`, `fix:`, and `docs:` are appropriate. Describe the reason for the change, validation results, and anything not verified in the PR body.
 - When the user asks for a PR, complete the relevant commit, push, and PR creation. Merge or publish a Release only within the user's authorization; a request to create a PR does not automatically authorize merging it.
 
