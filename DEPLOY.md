@@ -300,12 +300,14 @@ proxy:
 | `mcp_read_only` | MCP 仅暴露查询工具，不影响独立的网页登录会话 | `false` |
 | `mcp_allowed_hosts` | 额外允许的 Host，域名或 IP，可带端口；默认已允许 localhost / loopback | `[]` |
 | `allowed_user_ids` | 允许使用 Bot 的用户 ID（`'me'` = 自己） | `[]` |
-| `language` | 界面语言（`ZH` / `EN` / `RU` / `UA`） | `EN` |
+| `language` | Bot 默认语言及已翻译日志（`ZH` / `EN` / `RU` / `UA`），独立于网页语言 | `EN` |
 | `proxy` | 代理配置（scheme / hostname / port） | `{}` |
 | `log_level` | 日志级别 | `INFO` |
 | `hide_file_name` | 隐藏文件名（UI 显示 `****.mp4`） | `false` |
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `date_format` | 日期目录格式 | `%Y_%m` |
+
+网页（含登录页）支持中文、英语、俄语和乌克兰语，可在语言选择框中随时切换。首次访问按浏览器语言偏好（如 `zh-CN`、`en-US`、`ru-RU`、`uk-UA`）依次匹配，不支持的语言回退英语；手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页语言互不影响。
 
 文件按 `download_part_size_mb` 切成固定大小的切片，最后一片为剩余大小。
 例如每片 64 MiB 时，40 MiB 文件为 1 片，100 MiB 为 2 片，500 MiB 为 8 片。
@@ -375,7 +377,7 @@ docker compose restart telegam-media-downloader
 ```json
 {
   "mcpServers": {
-    "telegram-downloader": {
+    "telegram-media-downloader": {
       "url": "https://nas.example.com/mcp",
       "headers": {
         "Authorization": "Bearer paste-the-token-from-config.yaml"
@@ -781,12 +783,14 @@ Defaults apply when an option is omitted and may differ from the example configu
 | `mcp_read_only` | Expose only MCP query tools without restricting separate browser sessions | `false` |
 | `mcp_allowed_hosts` | Additional allowed Host values: domain/IP with optional port; localhost/loopback already allowed | `[]` |
 | `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
-| `language` | UI language (`ZH` / `EN` / `RU` / `UA`) | `EN` |
+| `language` | Default Bot language and translated logs (`ZH` / `EN` / `RU` / `UA`), independent of WebUI | `EN` |
 | `proxy` | Proxy config (scheme / hostname / port) | `{}` |
 | `log_level` | Log level | `INFO` |
 | `hide_file_name` | Hide filenames in UI | `false` |
 | `enable_download_txt` | Save text-only messages as .txt | `false` |
 | `date_format` | Date directory format | `%Y_%m` |
+
+The WebUI, including sign-in, supports Chinese, English, Russian and Ukrainian through its language selector. On first visit it matches browser language preferences (such as `zh-CN`, `en-US`, `ru-RU`, `uk-UA`) in order, falling back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. The Bot’s `language` setting is independent of the WebUI language.
 
 Files are split into fixed-size parts using `download_part_size_mb`; the final part contains the remaining bytes.
 At 64 MiB per part, a 40 MiB file has one part, a 100 MiB file has two and a 500 MiB file has eight.
@@ -856,7 +860,7 @@ Connect through Streamable HTTP at the server’s `/mcp` URL. Clients supporting
 ```json
 {
   "mcpServers": {
-    "telegram-downloader": {
+    "telegram-media-downloader": {
       "url": "https://nas.example.com/mcp",
       "headers": {
         "Authorization": "Bearer paste-the-token-from-config.yaml"
