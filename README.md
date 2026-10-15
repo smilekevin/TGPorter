@@ -1,14 +1,14 @@
-<h1 align="center">Telegram Media Downloader</h1>
+<h1 align="center">TG Porter</h1>
 
 <p align="center">
 <strong>Telegram media download / forward / listen tool with task persistence, crash recovery, and modern WebUI</strong>
 </p>
 
 <p align="center">
-<a href="https://github.com/smilekevin/telegram-media-downloader/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
-<a href="https://github.com/smilekevin/telegram-media-downloader/releases"><img alt="Version" src="https://img.shields.io/github/v/release/smilekevin/telegram-media-downloader?display_name=tag&amp;sort=date&amp;label=version&amp;color=blue"></a>
-<a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsmilekevin%2Ftelegram-media-downloader%2Fmaster%2F.github%2Fworkflows%2Ftests.yml&amp;query=%24..%5B%27python-version%27%5D&amp;label=python&amp;color=blue"></a>
-<a href="https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
+<a href="https://github.com/smilekevin/TGPorter/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+<a href="https://github.com/smilekevin/TGPorter/releases"><img alt="Version" src="https://img.shields.io/github/v/release/smilekevin/TGPorter?display_name=tag&amp;sort=date&amp;label=version&amp;color=blue"></a>
+<a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsmilekevin%2FTGPorter%2Fmaster%2F.github%2Fworkflows%2Ftests.yml&amp;query=%24..%5B%27python-version%27%5D&amp;label=python&amp;color=blue"></a>
+<a href="https://github.com/smilekevin/TGPorter/actions/workflows/docker-build.yml"><img alt="Docker: GHCR" src="https://img.shields.io/badge/docker-GHCR-blue"></a>
 </p>
 
 <!-- BEGIN CHINESE README -->
@@ -120,7 +120,7 @@
 
 ## 快速开始
 
-推荐使用本 fork 的预构建镜像 `ghcr.io/smilekevin/telegram-media-downloader:latest`，由 GitHub Release 发布流程更新。准备 Telegram API 凭据与 Bot Token，配置下载参数和 WebUI 密码，首次在终端登录后切换为后台运行。
+推荐使用本 fork 的预构建镜像 `ghcr.io/smilekevin/tgporter:latest`，由 GitHub Release 发布流程更新。准备 Telegram API 凭据与 Bot Token，配置下载参数和 WebUI 密码，首次在终端登录后切换为后台运行。
 
 | 运行方式 | 说明 | 操作指南 |
 |----------|------|----------|
@@ -323,7 +323,7 @@ _TCP.TIMEOUT = 900
 - **依赖安装**：将上游的 `PyTgCrypto==1.2.6` 更新为 `PyTgCrypto==1.2.12`，提供 Python 3.14 的 Alpine x86_64 和 ARM64 安装包。
 - **Bot 媒体身份与引用刷新**：Bot 私聊媒体使用 Bot 身份下载和刷新引用；新任务保存消息所属身份，旧私聊任务、重启恢复和 WebUI 重试也使用正确身份。空消息返回会正常记录失败原因，避免 `NoneType.id` 异常。
 
-分支验证：本仓库的 PR 会自动运行 **Telegram Media Downloader CI**，也可在 Actions 手动选择分支运行 CI。成功后从 Summary 的 **CI image for verification** 复制 `docker pull` 命令或 Compose 的 `image:` 配置。CI 只发布 SHA 标签，`latest` 仅由 Release 工作流更新。
+分支验证：本仓库的 PR 会自动运行 **TG Porter CI**，也可在 Actions 手动选择分支运行 CI。成功后从 Summary 的 **CI image for verification** 复制 `docker pull` 命令或 Compose 的 `image:` 配置。CI 只发布 SHA 标签，`latest` 仅由 Release 工作流更新。
 
 #### 回归测试
 
@@ -509,7 +509,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ## Quick Start
 
-Use this fork's prebuilt image, `ghcr.io/smilekevin/telegram-media-downloader:latest`, updated by GitHub Releases. Prepare Telegram API credentials and a Bot Token, configure download settings and a WebUI password, then complete interactive login before starting in the background.
+Use this fork's prebuilt image, `ghcr.io/smilekevin/tgporter:latest`, updated by GitHub Releases. Prepare Telegram API credentials and a Bot Token, configure download settings and a WebUI password, then complete interactive login before starting in the background.
 
 | Method | Use case | Guide |
 |--------|----------|-------|
@@ -712,7 +712,7 @@ Upstream already provides task persistence, a Pending queue and a worker pool. T
 - **Dependencies**: update the upstream `PyTgCrypto==1.2.6` pin to `PyTgCrypto==1.2.12`, which includes Python 3.14 Alpine wheels for x86_64 and ARM64.
 - **Bot media identity and reference refresh**: download and refresh Bot inbox media with the Bot account, persist ownership for new tasks, and restore it for legacy inbox tasks and WebUI retries. Empty responses record a normal failure reason instead of raising `NoneType.id`.
 
-For branch verification, this repository's PRs automatically run **Telegram Media Downloader CI**. You can also select a branch and run CI manually in Actions. After success, copy the `docker pull` command or Compose `image:` configuration from **CI image for verification** in the Summary. CI publishes only SHA tags; only the Release workflow updates `latest`.
+For branch verification, this repository's PRs automatically run **TG Porter CI**. You can also select a branch and run CI manually in Actions. After success, copy the `docker pull` command or Compose `image:` configuration from **CI image for verification** in the Summary. CI publishes only SHA tags; only the Release workflow updates `latest`.
 
 #### Regression Tests
 

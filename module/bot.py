@@ -1106,7 +1106,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
         str: The help string that was sent.
 
     Note:
-        The help string includes information about the Telegram Media Downloader bot,
+        The help string includes information about the TG Porter bot,
         its version, and the available commands.
     """
 
@@ -1115,7 +1115,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
             [
                 InlineKeyboardButton(
                     "Github",
-                    url="https://github.com/tangyoha/telegram_media_downloader/releases",
+                    url="https://github.com/smilekevin/TGPorter/releases",
                 ),
                 InlineKeyboardButton(
                     "Join us", url="https://t.me/TeegramMediaDownload"
@@ -1136,7 +1136,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
     #     latest_release_str = ""
 
     msg = (
-            f"`\n🤖 {_t('Telegram Media Downloader')}\n"
+            f"`\n🤖 {_t('TG Porter')}\n"
             f"🌐 {_t('Version')}: {utils.__version__}`\n"
             f"{latest_release_str}\n"
             f"{_t('Available commands:')}\n"

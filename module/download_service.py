@@ -310,7 +310,7 @@ class DownloadService:
         return "pause" if get_download_state() is DownloadState.Downloading else "continue"
 
     def get_app_version(self):
-        """Get telegram_media_downloader version"""
+        """Get TG Porter version"""
         return utils.__version__
 
     def get_max_workers(self):

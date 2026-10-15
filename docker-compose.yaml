@@ -1,7 +1,7 @@
 services:
-  telegam-media-downloader:
-    image: ghcr.io/smilekevin/telegram-media-downloader:latest
-    container_name: telegam-media-downloader
+  tgporter:
+    image: ghcr.io/smilekevin/tgporter:latest
+    container_name: tgporter
     network_mode: bridge
     stdin_open: true
     tty: true

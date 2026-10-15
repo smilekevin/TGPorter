@@ -1,4 +1,4 @@
-name: Telegram Media Downloader CI
+name: TG Porter CI
 
 on:
   pull_request:
@@ -10,12 +10,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: telegram-media-downloader-ci-${{ github.ref }}
+  group: tgporter-ci-${{ github.ref }}
   queue: max
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/smilekevin/telegram-media-downloader
+  IMAGE: ghcr.io/smilekevin/tgporter
 
 jobs:
   tests:
@@ -103,7 +103,7 @@ jobs:
           build-args: |
             APP_VERSION=sha-${{ steps.version.outputs.sha }}
           labels: |
-            org.opencontainers.image.title=Telegram Media Downloader
+            org.opencontainers.image.title=TG Porter
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.version.outputs.sha }}
             org.opencontainers.image.licenses=MIT
@@ -128,7 +128,7 @@ jobs:
             echo "Source commit: ${SHA}"
             echo
             if [[ "$PUBLISHED" == "true" ]]; then
-              echo 'Package: [telegram-media-downloader](https://github.com/users/smilekevin/packages/container/telegram-media-downloader)'
+              echo 'Package: [tgporter](https://github.com/users/smilekevin/packages/container/tgporter)'
               echo
               echo 'Published image tags:'
               while IFS= read -r tag; do

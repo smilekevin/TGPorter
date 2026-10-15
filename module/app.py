@@ -374,7 +374,7 @@ class Application:
         application_name: str = "UndefineApp",
     ):
         """
-        Init and update telegram media downloader config
+        Init and update TG Porter config
 
         Parameters
         ----------

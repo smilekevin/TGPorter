@@ -1,4 +1,4 @@
-# Telegram Media Downloader - 部署指南 / Deployment Guide
+# TG Porter - 部署指南 / Deployment Guide
 
 安装、配置、登录和运维步骤统一维护在本文件。功能介绍、Bot 命令、Web API 和架构见 [README 中文说明](./README.md#功能特性)。
 
@@ -24,9 +24,11 @@ WebUI 使用原生 HTML/CSS/JS，无需安装 Node.js 或运行 npm 构建；CI 
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
 3. 已创建 Bot Token（通过 @BotFather）
 
-本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/telegram-media-downloader:latest`，支持 amd64/arm64。[CI 验证镜像](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml) / [Build Release Docker Image](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
+本 fork 提供自动构建的预构建镜像：`ghcr.io/smilekevin/tgporter:latest`，支持 amd64/arm64。[CI 验证镜像](https://github.com/smilekevin/TGPorter/actions/workflows/tests.yml) / [Build Release Docker Image](https://github.com/smilekevin/TGPorter/actions/workflows/docker-build.yml)。上游 MangoIsIllegal 项目不提供预构建镜像。
 
-项目、仓库和 GHCR 镜像统一使用 **Telegram Media Downloader** 名称；Compose 服务/容器名使用 `telegam-media-downloader`。
+项目展示名为 **TG Porter**，仓库名为 `TGPorter`；GHCR 镜像、Compose 服务和容器名使用小写 `tgporter`。
+
+升级已有部署时，先停止旧容器，保留并复用原有数据挂载，再使用新服务名启动，避免两个实例同时访问 Session 和任务数据。GitHub 仓库需完成远端重命名，新 GHCR 镜像需由 CI 或 Release 工作流发布后才能拉取。
 
 镜像发布规则：本仓库 PR、合并/推送 master 或手动运行 CI 后，测试通过即发布 `:sha-完整提交号`，Summary 提供可复制的拉取命令和 Compose 配置，不更新 `latest`。**Build Release Docker Image** 只在发布 GitHub Release 后运行，发布同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。README 的 Version 徽章自动跟随最新正式 GitHub Release 标签，Python 徽章自动读取 `.github/workflows/tests.yml` 中的 `python-version`，徽章缓存刷新后生效。
 
@@ -36,7 +38,7 @@ Release 镜像推送成功后，工作流会自动在对应 Release notes 中补
 
 ## 快速开始
 
-Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloader:latest`，由 GitHub Release 发布流程更新。
+Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/tgporter:latest`，由 GitHub Release 发布流程更新。
 
 ### 部署前准备：API 凭据与 Bot Token
 
@@ -63,11 +65,11 @@ Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/telegram-media-downloa
 1. **准备配置和数据目录**：从本仓库下载 [config.yaml.example](./config.yaml.example)，复制为 `config.yaml`，并创建运行数据文件和持久化目录。下面的命令会保留已有的 `config.yaml` 和 `data.yaml`。
 
 ```bash
-mkdir -p telegram-media-downloader
-cd telegram-media-downloader
+mkdir -p tgporter
+cd tgporter
 mkdir -p downloads log sessions temp
 
-curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/master/config.yaml.example \
+curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/master/config.yaml.example \
   -o config.yaml.example
 [ -f config.yaml ] || cp config.yaml.example config.yaml
 [ -f data.yaml ] || printf '{}\n' > data.yaml
@@ -78,10 +80,10 @@ curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/
 3. **拉取镜像并首次启动**：挂载配置、运行数据、下载、日志、session 和临时目录，以交互模式完成 Telegram 登录。
 
 ```bash
-docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
+docker pull ghcr.io/smilekevin/tgporter:latest
 
 docker run -it \
-  --name telegam-media-downloader \
+  --name tgporter \
   --restart unless-stopped \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
@@ -91,7 +93,7 @@ docker run -it \
   -v "$PWD/log:/app/log" \
   -v "$PWD/sessions:/app/sessions" \
   -v "$PWD/temp:/app/temp" \
-  ghcr.io/smilekevin/telegram-media-downloader:latest
+  ghcr.io/smilekevin/tgporter:latest
 ```
 
 4. **首次登录（或需要重新登录时，比如 session 失效）**：**此处登录的账号为实际下载用户**，程序以该 Telegram 用户或 Bot 账号的身份访问并下载消息，下载权限取决于该账号。在终端出现 `Enter phone number or bot token:` 时，选择一种方式输入，并在确认提示时输入 `y`：
@@ -104,8 +106,8 @@ docker run -it \
 5. **后台启动并访问 WebUI**：执行以下命令，停止容器后用 [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) 在后台启动已有容器：
 
 ```bash
-docker stop telegam-media-downloader
-docker start telegam-media-downloader
+docker stop tgporter
+docker start tgporter
 ```
 
 启动后，在浏览器中访问 `http://服务器IP:5000`，使用配置的密码登录，见 [WebUI 登录](#webui-登录)。
@@ -115,8 +117,8 @@ docker start telegam-media-downloader
 使用仓库中提供的 `docker-compose.yaml` 部署：
 
 ```bash
-git clone https://github.com/smilekevin/telegram-media-downloader.git
-cd telegram-media-downloader
+git clone https://github.com/smilekevin/TGPorter.git
+cd TGPorter
 
 # 创建配置和持久化目录，保留已有配置与数据
 [ -f config.yaml ] || cp config.yaml.example config.yaml
@@ -129,9 +131,9 @@ mkdir -p downloads log sessions temp
 
 ```yaml
 services:
-  telegam-media-downloader:
-    image: ghcr.io/smilekevin/telegram-media-downloader:latest
-    container_name: telegam-media-downloader
+  tgporter:
+    image: ghcr.io/smilekevin/tgporter:latest
+    container_name: tgporter
     network_mode: bridge
     stdin_open: true
     tty: true
@@ -163,8 +165,8 @@ services:
 ```bash
 # 拉取已发布的 Release 镜像
 docker-compose pull
-docker-compose stop telegam-media-downloader
-docker-compose run --rm telegam-media-downloader
+docker-compose stop tgporter
+docker-compose run --rm tgporter
 ```
 
 出现 `Enter phone number or bot token:` 时，输入带国家区号的手机号或完整 Bot Token，并在确认提示时输入 `y`。手机号登录还需输入验证码，以及两步验证密码（如已启用）；Bot Token 登录无需手机号验证码。登录成功后按 `Ctrl+C` 停止此次前台运行，再启动后台服务：
@@ -181,8 +183,8 @@ Compose 将 session 保存在宿主机的 `sessions/`；`--rm` 只删除一次�
 ### 手动安装
 
 ```bash
-git clone https://github.com/smilekevin/telegram-media-downloader.git
-cd telegram-media-downloader
+git clone https://github.com/smilekevin/TGPorter.git
+cd TGPorter
 python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -380,7 +382,7 @@ mcp_allowed_hosts: ["nas.example.com"]
 更新到包含此功能的主镜像后，修改配置并重启现有容器即可：
 
 ```bash
-docker compose restart telegam-media-downloader
+docker compose restart tgporter
 ```
 
 首次部署、更新镜像和从源码构建仍使用前文的主服务步骤。无需额外镜像、容器、端口、环境变量或依赖文件；本地安装只需 `pip install -r requirements.txt`。已有持久化挂载保持不变。
@@ -392,7 +394,7 @@ docker compose restart telegam-media-downloader
 ```json
 {
   "mcpServers": {
-    "telegram-media-downloader": {
+    "TGPorter": {
       "url": "https://nas.example.com/mcp",
       "headers": {
         "Authorization": "Bearer paste-the-token-from-config.yaml"
@@ -444,10 +446,10 @@ docker-compose ps
 使用 `docker run` 创建的容器可用以下命令管理：
 
 ```bash
-docker logs -f telegam-media-downloader
-docker restart telegam-media-downloader
-docker stop telegam-media-downloader
-docker start telegam-media-downloader
+docker logs -f tgporter
+docker restart tgporter
+docker stop tgporter
+docker start tgporter
 ```
 
 更新镜像时需使用新镜像重新创建容器，并保留原来的配置、端口和数据挂载；仅重启旧容器不会切换镜像。镜像选择见 [前置条件](#前置条件)。
@@ -456,13 +458,13 @@ docker start telegam-media-downloader
 
 旧 package `ghcr.io/smilekevin/hermes-telegram-downloader` 保留历史镜像。迁移时将 Compose 的 `image` 改为新地址，使用新构建的版本或 digest；历史 digest 仍需搭配旧地址。
 
-如需从当前本地源码构建，先克隆仓库并完成配置，将 Compose 服务的 `image` 改为 `telegram-media-downloader:local` 并添加 `build: .`，然后执行：
+如需从当前本地源码构建，先克隆仓库并完成配置，将 Compose 服务的 `image` 改为 `tgporter:local` 并添加 `build: .`，然后执行：
 
 ```bash
 docker-compose build
 # 首次登录前停止已有后台服务
-docker-compose stop telegam-media-downloader
-docker-compose run --rm telegam-media-downloader
+docker-compose stop tgporter
+docker-compose run --rm tgporter
 # 登录成功后 Ctrl+C 退出，再启动后台服务
 docker-compose up -d
 ```
@@ -528,15 +530,16 @@ Before starting this version for the first time, stop the service and back up `s
 
 - Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.14 and pip.
 - Actual downloads require Telegram API credentials and access to the target messages. Mock development mode does not require Telegram login.
-- The project and image use `telegram-media-downloader`; the Compose service and container intentionally use `telegam-media-downloader`.
-- The prebuilt image is `ghcr.io/smilekevin/telegram-media-downloader`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`. The README Version badge follows the latest stable GitHub Release tag; its Python badge reads `python-version` from `.github/workflows/tests.yml`. Badge updates appear after caches refresh.
-- For PR or master verification, use the SHA tag or digest from **CI image for verification** in the [CI Summary](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/tests.yml). The [Release workflow](https://github.com/smilekevin/telegram-media-downloader/actions/workflows/docker-build.yml) adds pull commands, digests and platforms to Release notes after a successful image push, preserving the existing description and updating the same section on reruns. Package visibility must be Public for unauthenticated pulls.
+- The display name is **TG Porter**, the repository name is `TGPorter`, and the GHCR image, Compose service and container use lowercase `tgporter`.
+- When upgrading, stop the old container and reuse its existing data mounts before starting the renamed service, so two instances cannot access the same sessions and task data. Rename the GitHub repository separately; the new GHCR image must be published by CI or a Release workflow before it can be pulled.
+- The prebuilt image is `ghcr.io/smilekevin/tgporter`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`. The README Version badge follows the latest stable GitHub Release tag; its Python badge reads `python-version` from `.github/workflows/tests.yml`. Badge updates appear after caches refresh.
+- For PR or master verification, use the SHA tag or digest from **CI image for verification** in the [CI Summary](https://github.com/smilekevin/TGPorter/actions/workflows/tests.yml). The [Release workflow](https://github.com/smilekevin/TGPorter/actions/workflows/docker-build.yml) adds pull commands, digests and platforms to Release notes after a successful image push, preserving the existing description and updating the same section on reruns. Package visibility must be Public for unauthenticated pulls.
 
 The commands below use `docker-compose`; replace it with `docker compose` if you use the Compose plugin.
 
 ## Quick Start
 
-Docker deployment uses this fork's `ghcr.io/smilekevin/telegram-media-downloader:latest` image, updated when GitHub Releases are published.
+Docker deployment uses this fork's `ghcr.io/smilekevin/tgporter:latest` image, updated when GitHub Releases are published.
 
 ### Before You Deploy: API Credentials and Bot Token
 
@@ -563,11 +566,11 @@ With Docker installed on your server or NAS, run this fork's prebuilt image dire
 1. **Prepare configuration and persistent data**: download [config.yaml.example](./config.yaml.example) from this repository, copy it to `config.yaml`, and create the runtime data file and persistent directories. These commands preserve existing `config.yaml` and `data.yaml` files.
 
 ```bash
-mkdir -p telegram-media-downloader
-cd telegram-media-downloader
+mkdir -p tgporter
+cd tgporter
 mkdir -p downloads log sessions temp
 
-curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/master/config.yaml.example \
+curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/master/config.yaml.example \
   -o config.yaml.example
 [ -f config.yaml ] || cp config.yaml.example config.yaml
 [ -f data.yaml ] || printf '{}\n' > data.yaml
@@ -578,10 +581,10 @@ curl -fL https://raw.githubusercontent.com/smilekevin/telegram-media-downloader/
 3. **Pull the image and start it for the first time**: mount configuration, runtime data, downloads, logs, sessions and temporary files, and use interactive mode for Telegram login.
 
 ```bash
-docker pull ghcr.io/smilekevin/telegram-media-downloader:latest
+docker pull ghcr.io/smilekevin/tgporter:latest
 
 docker run -it \
-  --name telegam-media-downloader \
+  --name tgporter \
   --restart unless-stopped \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
@@ -591,7 +594,7 @@ docker run -it \
   -v "$PWD/log:/app/log" \
   -v "$PWD/sessions:/app/sessions" \
   -v "$PWD/temp:/app/temp" \
-  ghcr.io/smilekevin/telegram-media-downloader:latest
+  ghcr.io/smilekevin/tgporter:latest
 ```
 
 4. **First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. When `Enter phone number or bot token:` appears in the terminal, choose either option and confirm with `y` when prompted:
@@ -604,8 +607,8 @@ After login succeeds, press `Ctrl+C` to stop the current foreground run. The ses
 5. **Start in the background and access WebUI**: run the following commands to stop the container and use [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) to start the existing container in the background:
 
 ```bash
-docker stop telegam-media-downloader
-docker start telegam-media-downloader
+docker stop tgporter
+docker start tgporter
 ```
 
 Once started, open `http://SERVER_IP:5000` and enter your configured password. See [WebUI Login](#webui-login).
@@ -615,8 +618,8 @@ Once started, open `http://SERVER_IP:5000` and enter your configured password. S
 Deploy with the repository's `docker-compose.yaml`:
 
 ```bash
-git clone https://github.com/smilekevin/telegram-media-downloader.git
-cd telegram-media-downloader
+git clone https://github.com/smilekevin/TGPorter.git
+cd TGPorter
 
 # Preserve existing configuration and runtime data.
 [ -f config.yaml ] || cp config.yaml.example config.yaml
@@ -629,9 +632,9 @@ Create configuration bind-mount sources as files before starting Docker. The rep
 
 ```yaml
 services:
-  telegam-media-downloader:
-    image: ghcr.io/smilekevin/telegram-media-downloader:latest
-    container_name: telegam-media-downloader
+  tgporter:
+    image: ghcr.io/smilekevin/tgporter:latest
+    container_name: tgporter
     network_mode: bridge
     stdin_open: true
     tty: true
@@ -663,8 +666,8 @@ You can change the host download directory to `/your/download/path:/app/download
 ```bash
 # Pull a published Release image.
 docker-compose pull
-docker-compose stop telegam-media-downloader
-docker-compose run --rm telegam-media-downloader
+docker-compose stop tgporter
+docker-compose run --rm tgporter
 ```
 
 At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. After login succeeds, press `Ctrl+C` to stop this foreground run, then start the background service:
@@ -681,8 +684,8 @@ Compose saves the session in the host's `sessions/` directory. `--rm` removes on
 ### Manual Install
 
 ```bash
-git clone https://github.com/smilekevin/telegram-media-downloader.git
-cd telegram-media-downloader
+git clone https://github.com/smilekevin/TGPorter.git
+cd TGPorter
 python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -879,7 +882,7 @@ Use `mcp_allowed_hosts` for additional allowed domains/IPs, such as `["nas.examp
 After updating the main image to a version containing this feature, edit the configuration and restart the existing container:
 
 ```bash
-docker compose restart telegam-media-downloader
+docker compose restart tgporter
 ```
 
 Initial deployment, image updates and source builds use the main-service instructions above. No additional image, container, port, environment variables or dependency file is needed. Local installs use `pip install -r requirements.txt`. Existing persistence mounts remain unchanged.
@@ -891,7 +894,7 @@ Connect through Streamable HTTP at the server’s `/mcp` URL. Clients supporting
 ```json
 {
   "mcpServers": {
-    "telegram-media-downloader": {
+    "TGPorter": {
       "url": "https://nas.example.com/mcp",
       "headers": {
         "Authorization": "Bearer paste-the-token-from-config.yaml"
@@ -939,10 +942,10 @@ docker-compose ps
 For a container created with `docker run`:
 
 ```bash
-docker logs -f telegam-media-downloader
-docker restart telegam-media-downloader
-docker stop telegam-media-downloader
-docker start telegam-media-downloader
+docker logs -f tgporter
+docker restart tgporter
+docker stop tgporter
+docker start tgporter
 ```
 
 To update an image, recreate the container with the new image while preserving configuration, ports and mounts. Restarting the existing container does not change its image.
@@ -951,13 +954,13 @@ To update an image, recreate the container with the new image while preserving c
 
 The old `ghcr.io/smilekevin/hermes-telegram-downloader` package retains historical images. For migration, change Compose's `image` to the new package and select a newly built version or digest. Historical digests still require the old package address.
 
-To build local source, clone the repository and prepare configuration, set `image: telegram-media-downloader:local` and add `build: .` to the Compose service, then run:
+To build local source, clone the repository and prepare configuration, set `image: tgporter:local` and add `build: .` to the Compose service, then run:
 
 ```bash
 docker-compose build
 # Stop any background service before first login.
-docker-compose stop telegam-media-downloader
-docker-compose run --rm telegam-media-downloader
+docker-compose stop tgporter
+docker-compose run --rm tgporter
 # After login, press Ctrl+C and start in the background.
 docker-compose up -d
 ```

@@ -113,7 +113,7 @@ def resume_task():
 if __name__ == "__main__":
     port = 5000
     print("=" * 50)
-    print("  Telegram Media Downloader - Dev Mode")
+    print("  TG Porter - Dev Mode")
     print(f"  Browser: http://localhost:{port}")
     print("  Refresh after editing frontend files")
     print("=" * 50)
