@@ -721,7 +721,7 @@ class DownloadService:
             "errors": errors,
         }
 
-    def web_get_pending_list(self, offset=0, limit=100):
+    def web_get_pending_list(self, offset=0, limit=100, search=""):
         """Get list of pending tasks (received but not started downloading)"""
         import time as _time
         pending = get_pending_tasks()
@@ -800,6 +800,12 @@ class DownloadService:
                 "wait_time": wait_time,
                 "queue_label": queue_label,
             })
+
+        # Search the complete queue before pagination, including display IDs.
+        query = search.strip().lower()
+        if query:
+            result = [task for task in result if query in
+                      f"{task['task_id']} {task['task_id_display']} {task['filename']}".lower()]
 
         # Sort by created_at ascending (earliest first)
         result.sort(key=lambda x: x.get("created_ts", 0))

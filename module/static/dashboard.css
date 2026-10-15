@@ -1,0 +1,41 @@
+/* The dashboard keeps native controls and the existing utility layout. */
+body.bg-gray-50 { background: #f3f6fb; color: #17243b; -webkit-font-smoothing: antialiased; }
+.dashboard-header { background: #fff; box-shadow: 0 4px 24px rgb(31 51 86 / 5%); }
+.dashboard-header header { border-top: 3px solid #2563eb; box-shadow: none; }
+.dashboard-header h1 { letter-spacing: -.035em; }
+.submission-panel { background: #fff; }
+.submission-panel input { background: #f8fafc; min-height: 44px; border-color: #dbe3f0; border-radius: 12px; }
+.submission-panel button { border-radius: 12px; font-weight: 600; box-shadow: 0 3px 8px rgb(37 99 235 / 16%); }
+.dashboard-main .card-hover { border-radius: 16px; box-shadow: 0 2px 6px rgb(31 51 86 / 3%); transition: box-shadow .15s ease, border-color .15s ease; }
+.dashboard-main .card-hover:hover { box-shadow: 0 6px 20px rgb(31 51 86 / 7%); }
+.dashboard-main .progress-bar { background-image: linear-gradient(90deg, #2563eb, #38bdf8); }
+button, a, input, select { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
+@media (max-width: 639px) {
+    .dashboard-header header > div > div { flex-wrap: wrap; gap: 12px; }
+    .dashboard-header header > div > div > div:last-child { flex: 1; justify-content: flex-end; }
+    .submission-panel input { flex-basis: 60%; }
+    .dashboard-toast { bottom: calc(5rem + env(safe-area-inset-bottom)); left: 16px; right: 16px; text-align: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+.task-search { display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid #dbe3f0; border-radius: 12px; background: #fff; }
+.task-search:focus-within { border-color: #2563eb; box-shadow: 0 0 0 3px rgb(37 99 235 / 10%); }
+.task-search > svg { flex: none; width: 18px; height: 18px; color: #94a3b8; }
+.task-search input { width: 100%; min-width: 0; min-height: 44px; background: transparent; font-size: 14px; border: 0; outline: none; }
+.task-search input:focus-visible { outline: none; }
+.task-search button { flex: none; font-size: 12px; color: #2563eb; padding: 8px 0; }
+
+.batch-bar > div, .batch-bar > div > div { flex-wrap: wrap; gap: 8px; }
+
+.task-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.task-tools .task-search { flex: 1 1 220px; }
+.status-filter select { min-height: 46px; padding: 0 32px 0 12px; border: 1px solid #dbe3f0; border-radius: 12px; background-color: #fff; font-size: 14px; color: #475569; }
+.batch-bar button:disabled { cursor: not-allowed; }
+
+.selection-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.selection-shortcut { padding: 6px 10px; border: 1px solid #dbe3f0; border-radius: 8px; background: #fff; color: #475569; font-size: 12px; }
+.selection-shortcut:hover:not(:disabled) { border-color: #93c5fd; color: #1d4ed8; }
+.selection-shortcut:disabled { opacity: .45; cursor: not-allowed; }
