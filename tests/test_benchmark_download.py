@@ -49,6 +49,9 @@ class BenchmarkTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(output.read_bytes(), data)
 
     async def test_two_rounds_use_real_engine_and_save_matching_hashes_and_timings(self):
+        ramp = patch("module.parallel_download.CONNECTION_START_INTERVAL", 0)
+        ramp.start()
+        self.addCleanup(ramp.stop)
         with tempfile.TemporaryDirectory() as directory:
             data = b"".join(bytes([i]) * MB for i in range(4)) + b"tail"
             file_id = FileId(file_type=FileType.DOCUMENT, dc_id=2, media_id=123,

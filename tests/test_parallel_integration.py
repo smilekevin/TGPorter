@@ -14,8 +14,8 @@ from pyrogram import enums, types
 from pyrogram.file_id import FileId, FileType
 
 import media_downloader as downloader
-from module import bot, download_stat, pyrogram_extension, web
-from module.app import Application, DownloadStatus, TaskNode, TaskType
+from module import bot, download_stat, parallel_download, pyrogram_extension, web
+from module.app import Application, DownloadStatus, ForwardStatus, TaskNode, TaskType
 from module.parallel_download import parts_path
 from test_parallel_download import FakeClient, MB
 
@@ -48,6 +48,8 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await real_sleep(min(delay, 0.001))
 
         patches = [
+            patch("module.parallel_download.CONNECTION_START_INTERVAL", 0),
+            patch("module.parallel_download._wait_network_retry", AsyncMock()),
             patch.object(downloader, "app", self.app),
             patch.object(downloader, "_get_media_meta", AsyncMock(return_value=(
                 str(self.path / "saved.mp4"), str(self.path / "partial.mp4"), "mp4"))),
@@ -119,10 +121,12 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                            downloader.time.time() + 899)
         self.assertEqual(pyrogram_extension._unified_flood_wait["reason"], "FLOOD_WAIT")
 
-    async def test_long_flood_wait_stays_paused_until_manual_resume(self):
+    async def test_manual_pause_survives_flood_cooldown_expiry(self):
         clock = SimpleNamespace(time=downloader.time.time,
                                 monotonic=Mock(side_effect=[0, 1000]))
-        with patch.object(downloader, "time", clock):
+        download_stat.pause_task("100_61")
+        with patch.object(downloader, "time", clock), patch.object(
+                pyrogram_extension, "get_flood_wait_remaining", return_value=0):
             task = asyncio.create_task(downloader._wait_download_flood(
                 900, 61, self.node, self.client))
             try:
@@ -142,10 +146,93 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_600_second_flood_wait_does_not_require_manual_resume(self):
         clock = SimpleNamespace(time=downloader.time.time,
                                 monotonic=Mock(side_effect=[0, 601]))
-        with patch.object(downloader, "time", clock):
+        with patch.object(downloader, "time", clock), patch.object(
+                pyrogram_extension, "get_flood_wait_remaining", return_value=0):
             self.assertTrue(await downloader._wait_download_flood(
                 600, 61, self.node, self.client))
         self.assertFalse(download_stat.is_task_paused("100_61"))
+
+    async def test_long_flood_wait_automatically_resumes(self):
+        clock = SimpleNamespace(time=downloader.time.time,
+                                monotonic=Mock(side_effect=[0, 1000]))
+        with patch.object(downloader, "time", clock), patch.object(
+                pyrogram_extension, "get_flood_wait_remaining", return_value=0):
+            self.assertTrue(await downloader._wait_download_flood(
+                900, 61, self.node, self.client))
+        self.assertFalse(download_stat.is_task_paused("100_61"))
+
+    async def test_real_pool_resumes_after_long_shared_cooldown_without_manual_action(self):
+        now = [0]
+        clock = SimpleNamespace(time=lambda: now[0], monotonic=lambda: now[0])
+        failed = False
+
+        async def before(_):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise pyrogram.errors.FloodWait(900)
+
+        self.client.before_chunk = before
+        with patch.object(downloader, "time", clock), patch.object(
+                pyrogram_extension, "time", clock), patch.object(parallel_download, "time", clock):
+            task = asyncio.create_task(downloader._download_parallel_media(
+                self.client, self.message, str(self.path / "partial.mp4"), len(self.data),
+                self.node, "partial.mp4", 0, 3, 2 * MB))
+            try:
+                for _ in range(50):
+                    await asyncio.sleep(0.001)
+                    if pyrogram_extension._unified_flood_wait["until"]:
+                        break
+                self.assertEqual(pyrogram_extension._unified_flood_wait["until"], 905)
+                self.assertFalse(download_stat.is_task_paused("100_61"))
+                now[0] = 904
+                await asyncio.sleep(0.01)
+                self.assertEqual(len(self.client.calls), 1)
+                self.assertFalse(task.done())
+                now[0] = 905
+                path = await asyncio.wait_for(task, 2)
+                self.assertEqual(Path(path).read_bytes(), self.data)
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_pool_exhaustion_does_not_restart_file_or_mislabel_bad_request(self):
+        async def before(_):
+            raise pyrogram.errors.AuthBytesInvalid()
+        self.client.before_chunk = before
+        status, _, reason = await downloader.download_media(
+            self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+        self.assertEqual(status, DownloadStatus.FailedDownload)
+        self.assertEqual(len(self.client.calls), 5)
+        self.assertIn("AuthBytesInvalid", reason)
+        self.assertNotIn("File reference expired", reason)
+        self.owner.get_messages.assert_not_awaited()
+        downloader._maybe_reconnect_client.assert_not_awaited()
+
+    async def test_upload_flood_cannot_shorten_existing_download_cooldown(self):
+        downloader._publish_download_flood(900)
+        deadline = pyrogram_extension._unified_flood_wait["until"]
+        with patch.object(pyrogram_extension, "_upload_telegram_chat_message", AsyncMock(
+                side_effect=[pyrogram.errors.FloodWait(2), ForwardStatus.SuccessForward])):
+            result = await pyrogram_extension.upload_telegram_chat_message(
+                self.client, self.client, self.app, self.node, self.message, "offline.mp4")
+        self.assertEqual(result, ForwardStatus.SuccessForward)
+        self.assertEqual(pyrogram_extension._unified_flood_wait["until"], deadline)
+
+    async def test_reference_refresh_rejects_replaced_media_without_mixing_parts(self):
+        self.app.file_download_concurrency = 1
+        self.owner.get_messages.return_value.video.file_unique_id = "replacement"
+
+        async def before(index):
+            if index == 1:
+                raise pyrogram.errors.FileReferenceExpired()
+        self.client.before_chunk = before
+        status, _, reason = await downloader.download_media(
+            self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+        self.assertEqual(status, DownloadStatus.FailedDownload)
+        self.assertIn("different file", reason)
+        self.assertFalse((self.path / "saved.mp4").exists())
+        self.assertEqual((parts_path(str(self.path / "partial.mp4")) / "0.part").stat().st_size, MB)
 
     async def test_small_file_uses_one_range_and_skips_merge(self):
         self.app.download_part_size_mb = 16

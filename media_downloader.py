@@ -18,7 +18,8 @@ from module.download_stat import load_downloads, save_downloads, set_chat_title,
 from module.download_stat import add_failed_download as _add_failed_download
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
-from module.parallel_download import download_file, has_parts, discard_partial_download
+from module.parallel_download import (download_file, has_parts, discard_partial_download,
+                                      DownloadWorkersExhausted)
 from module.language import _t
 from module.pyrogram_extension import (
     HookClient,
@@ -242,10 +243,32 @@ async def _download_parallel_media(client, message, temp_file_name, media_size,
     async def wait_ready():
         await wait_download_ready(message.id, node, client)
 
+    async def refresh_file_id():
+        nonlocal message
+        refreshed = await fetch_message(client, message)
+        if refreshed is None:
+            raise ValueError("Message missing or inaccessible to this account")
+        fresh_media = next((getattr(refreshed, kind, None) for kind in (
+            "video", "document", "audio", "photo", "voice", "video_note", "animation"
+        ) if getattr(refreshed, kind, None) is not None), None)
+        if fresh_media is None:
+            raise ValueError("Refreshed message has no downloadable media")
+        fresh_id = FileId.decode(fresh_media.file_id)
+        fresh_identity = getattr(fresh_media, "file_unique_id", None) or f"{fresh_id.dc_id}:{fresh_id.media_id}"
+        if fresh_identity != identity or fresh_media.file_size != media_size:
+            raise ValueError("Refreshed message contains a different file")
+        message = refreshed
+        return fresh_id
+
+    from module.pyrogram_extension import get_flood_wait_remaining
+
     return await download_file(client, file_id, media_size, temp_file_name,
                                identity, parallelism,
                                progress, wait_ready, part_size,
-                               discard_requested=lambda: is_download_discarded(message.id, node))
+                               discard_requested=lambda: is_download_discarded(message.id, node),
+                               refresh_file_id=refresh_file_id,
+                               flood_wait=_publish_download_flood,
+                               flood_remaining=get_flood_wait_remaining)
 
 
 async def _resume_download_from_temp(
@@ -649,26 +672,28 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
             logger.warning(f"Failed to complete task {node.task_id}: {e}")
 
 
-async def _wait_download_flood(seconds, message_id, node, client):
-    """Keep rate-limit waits visible and cancellable without shortening cooldowns."""
-    from module.download_stat import pause_task, wait_download_ready
+def _publish_download_flood(seconds):
+    """Share download cooldowns without manually pausing healthy connections."""
     from module.pyrogram_extension import _unified_flood_wait
 
     _unified_flood_wait["until"] = max(
         _unified_flood_wait["until"], time.time() + seconds + 5)
     _unified_flood_wait["reason"] = "FLOOD_WAIT"
-    if seconds > 600:
-        # Pause only this file, not every file belonging to the range task.
-        pause_task(f"{node.chat_id}_{message_id}")
-        logger.info("Message[{}]: FLOOD_WAIT {}s; file paused until manually resumed",
-                    message_id, seconds)
+
+
+async def _wait_download_flood(seconds, message_id, node, client):
+    """Automatically resume rate-limit waits while honoring manual controls."""
+    from module.download_stat import wait_download_ready
+    from module.pyrogram_extension import get_flood_wait_remaining
+
+    _publish_download_flood(seconds)
     deadline = time.monotonic() + seconds
     while True:
         try:
             await wait_download_ready(message_id, node, client)
         except pyrogram.StopTransmission:
             return False
-        remaining = deadline - time.monotonic()
+        remaining = max(deadline - time.monotonic(), get_flood_wait_remaining())
         if remaining <= 0:
             return True
         await asyncio.sleep(min(1, remaining))
@@ -985,6 +1010,12 @@ async def download_media(
             if is_download_discarded(message_id, node) and (not use_parallel or temp_download_path):
                 discard_partial_download(temp_file_name)
             return DownloadStatus.SkipDownload, None, ""
+        except DownloadWorkersExhausted as exhausted:
+            # The pool already applied the last connection's three-attempt
+            # budget. Retrying the file here would multiply that budget by three.
+            error_message = str(exhausted)
+            logger.error("Message[{}]: {}", message_id, error_message)
+            break
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
             # Preserve .temp, refresh the message reference and resume the checkpoint.
             logger.warning(
@@ -1085,7 +1116,7 @@ async def download_media(
             # Apply the same bounded network backoff to timeouts.
             backoff = network_backoff([60, 120, 300][min(retry, 2)])
             from module.pyrogram_extension import _unified_flood_wait
-            _unified_flood_wait["until"] = time.time() + backoff + 5
+            _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + backoff + 5)
             _unified_flood_wait["reason"] = f'Connection timeout, possibly rate limited (message {message.id})'
             _client_conn_errors["count"] += 1
             if await _maybe_reconnect_client():
@@ -1121,7 +1152,7 @@ async def download_media(
             if "timed out" in err_str or "timeout" in err_str:
                 # Treat apparent timeouts with a longer backoff and shared cooldown.
                 backoff = network_backoff([60, 120, 300][min(retry, 2)])
-                _unified_flood_wait["until"] = time.time() + backoff + 5
+                _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + backoff + 5)
                 _unified_flood_wait["reason"] = f'Connection timeout, possibly rate limited (message {message.id})'
             else:
                 # Jitter spreads initial retries; later delays stop at the cap.

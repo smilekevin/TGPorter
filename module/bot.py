@@ -2278,7 +2278,7 @@ async def _consume_one_pending():
                 consecutive = _pending_timeout_counts[task_id]
                 from module.pyrogram_extension import _unified_flood_wait
                 backoff = min(60 * consecutive, 600)  # Increase from 60 seconds up to a 600-second cap.
-                _unified_flood_wait["until"] = time.time() + backoff + 5
+                _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + backoff + 5)
                 _unified_flood_wait["reason"] = f'get_messages timeout, possibly rate limited; chat {cid}, message {msg_id}, attempt {consecutive}'
                 if consecutive % 5 == 1:
                     logger.warning(
@@ -2291,7 +2291,7 @@ async def _consume_one_pending():
                 # Don't move to failed list — keep pending, set unified cooldown
                 wait_val = getattr(e, "value", 60)
                 from module.pyrogram_extension import _unified_flood_wait
-                _unified_flood_wait["until"] = time.time() + wait_val + 5
+                _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + wait_val + 5)
                 _unified_flood_wait["reason"] = f"FloodWait {wait_val}s on get_messages chat {cid} msg {msg_id}"
                 logger.warning(
                     f"Pending consumer: FLOOD_WAIT {wait_val}s on get_messages "
@@ -2318,7 +2318,7 @@ async def _consume_one_pending():
                     consecutive = _pending_timeout_counts[task_id]
                     backoff = min(60 * consecutive, 600)
                     from module.pyrogram_extension import _unified_flood_wait
-                    _unified_flood_wait["until"] = time.time() + backoff + 5
+                    _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + backoff + 5)
                     _unified_flood_wait["reason"] = f'get_messages connection timeout, possibly rate limited; chat {cid}, message {msg_id}, attempt {consecutive}'
                     if consecutive % 5 == 1:
                         logger.warning(
@@ -2346,7 +2346,7 @@ async def _consume_one_pending():
                     consecutive = _pending_timeout_counts[task_id]
                     backoff = min(60 * consecutive, 180)
                     from module.pyrogram_extension import _unified_flood_wait
-                    _unified_flood_wait["until"] = time.time() + backoff + 5
+                    _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + backoff + 5)
                     _unified_flood_wait["reason"] = (
                         f'get_messages network error; chat {cid}, message {msg_id}, attempt {consecutive}'
                     )
