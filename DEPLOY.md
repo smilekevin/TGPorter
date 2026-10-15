@@ -494,7 +494,7 @@ environment:
   - https_proxy=socks5://你的代理IP:端口
 ```
 
-容器中 `127.0.0.1` 指向容器自身，代理地址必须可从容器访问；`172.17.0.1` 需根据 Docker / NAS 网络实际情况调整。手动安装使用本机可访问的地址。无需代理时设置 `proxy: {}`，并删除或注释 Compose 中的代理环境变量。
+容器中 `127.0.0.1` 指向容器自身，代理地址必须可从容器访问；`172.17.0.1` 需根据 Docker / NAS 网络实际情况调整。手动安装使用本机可访问的地址。无需代理时设置 `proxy: {}`，并删除或注释 Compose 中的代理环境变量。省略 `proxy` 或设为 `null` 也表示不使用 Telegram 代理；主客户端和 Bot 客户端都会将空配置转换为 Kurigram 所需的 `None`。
 
 ## 故障排查
 
@@ -980,7 +980,7 @@ environment:
   - https_proxy=socks5://PROXY_IP:PORT
 ```
 
-Inside a container, `127.0.0.1` refers to the container itself. Use a reachable proxy host; `172.17.0.1` depends on the Docker or NAS network. Manual installations use a host reachable from the local machine. If no proxy is needed, set `proxy: {}` and remove or comment out the Compose proxy environment variables.
+Inside a container, `127.0.0.1` refers to the container itself. Use a reachable proxy host; `172.17.0.1` depends on the Docker or NAS network. Manual installations use a host reachable from the local machine. If no proxy is needed, set `proxy: {}` and remove or comment out the Compose proxy environment variables. Omitting `proxy` or setting it to `null` also disables the Telegram proxy. Both the main client and Bot client convert empty proxy configuration to the `None` value required by Kurigram.
 
 ## Troubleshooting
 

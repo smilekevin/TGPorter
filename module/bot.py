@@ -739,7 +739,7 @@ class DownloadBot:
             api_id=app.api_id,
             bot_token=app.bot_token,
             workdir=app.session_file_path,
-            proxy=app.proxy,
+            proxy=app.proxy or None,
         )
 
         # Command list
