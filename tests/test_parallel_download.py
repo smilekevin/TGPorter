@@ -125,6 +125,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
             task = asyncio.current_task()
             if index == 0 and healthy is None:
                 healthy = task
+            if task is healthy and index == 1:
                 await failed_both.wait()
             if task is not healthy:
                 failed.add(task)
@@ -149,13 +150,57 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.retry_wait.await_count, 2)
         self.assertTrue(parts_path(str(self.path)).exists())
 
+    async def test_first_valid_block_is_required_before_next_connection(self):
+        started = []
+        grants = [asyncio.Event() for _ in range(3)]
+        release = asyncio.Event()
+        healthy_progress = asyncio.Event()
+        async def before(index):
+            task = asyncio.current_task()
+            if task not in started:
+                position = len(started)
+                started.append(task)
+                await grants[position].wait()
+            elif task is started[0] and index == 1:
+                await healthy_progress.wait()
+            else:
+                await release.wait()
+        self.client.before_chunk = before
+        task = asyncio.create_task(self.download(count=3))
+        try:
+            await self.until(lambda: len(started) >= 1)
+            await asyncio.sleep(0.02)
+            self.assertEqual(len(self.client.calls), 1)
+            grants[0].set()
+            await self.until(lambda: len(started) >= 2)
+            self.assertEqual((parts_path(str(self.path)) / "0.part").stat().st_size, MB)
+            healthy_progress.set()
+            await self.until(lambda: (parts_path(str(self.path)) / "0.part").stat().st_size == 2 * MB)
+            await asyncio.sleep(0.02)
+            self.assertEqual(len(self.client.calls), 2)
+            grants[1].set()
+            await self.until(lambda: len(started) >= 3)
+            self.assertEqual(self.client.tracker["active"], 3)
+        finally:
+            release.set()
+            healthy_progress.set()
+            for grant in grants:
+                grant.set()
+            await task
+        self.assert_file()
+
     async def test_connections_start_gradually(self):
         starts = []
         blocked = asyncio.Event()
 
+        seen = set()
         async def before(_):
-            starts.append(asyncio.get_running_loop().time())
-            await blocked.wait()
+            task = asyncio.current_task()
+            if task not in seen:
+                seen.add(task)
+                starts.append(asyncio.get_running_loop().time())
+            else:
+                await blocked.wait()
 
         self.client.before_chunk = before
         with patch("module.parallel_download.CONNECTION_START_INTERVAL", 0.04):
@@ -191,6 +236,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
             nonlocal healthy
             if index == 0 and healthy is None:
                 healthy = asyncio.current_task()
+            if asyncio.current_task() is healthy and index == 1:
                 await release.wait()
             if asyncio.current_task() is not healthy:
                 raise pyrogram.errors.FloodWait(1)
@@ -224,7 +270,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
 
         async def before(index):
             task = asyncio.current_task()
-            if task not in failed:
+            if index in (1, 4) and task not in failed:
                 failed.add(task)
                 if len(failed) == 1:
                     await second.wait()
@@ -341,7 +387,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         release_first = asyncio.Event()
 
         async def before(index):
-            if index == 0:
+            if index == 1:
                 await release_first.wait()
             if index == 3:
                 release_first.set()
@@ -358,19 +404,19 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
 
         async def before(index):
-            if index == 0:
+            if index == 1:
                 await release.wait()
         self.client.before_chunk = before
-        task = asyncio.create_task(self.download(count=2, part_size=MB))
+        task = asyncio.create_task(self.download(count=2, part_size=2 * MB))
         try:
-            await self.until(lambda: len(self.client.calls) == 9
+            await self.until(lambda: len(self.client.calls) == 5
                              and self.client.tracker["active"] == 1)
-            self.assertEqual([offset for offset, _ in self.client.calls], list(range(9)))
+            self.assertEqual([offset for offset, _ in self.client.calls], list(range(0, 9, 2)))
             self.assertEqual(self.client.tracker["peak"], 2)
             plan = json.loads((parts_path(str(self.path)) / "manifest.json").read_text())
             self.assertEqual(plan["workers"], 2)
-            self.assertEqual(plan["ranges"], [[i * MB, min((i + 1) * MB, len(self.data))]
-                                             for i in range(9)])
+            self.assertEqual(plan["ranges"], [[i * 2 * MB, min((i + 1) * 2 * MB, len(self.data))]
+                                             for i in range(5)])
         finally:
             release.set()
             await task
@@ -380,8 +426,9 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         tracker = {"active": 0, "peak": 0}
         clients = [FakeClient(self.data, tracker) for _ in range(2)]
         release = asyncio.Event()
-        async def block(_):
-            await release.wait()
+        async def block(index):
+            if index % 2:
+                await release.wait()
         for client in clients:
             client.before_chunk = block
         tasks = []
@@ -532,7 +579,7 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
             with self.assertRaises(Stopped):
                 await asyncio.wait_for(second, 2)
             self.assertFalse(first.done())
-            self.assertEqual(len(self.client.calls), 3)
+            self.assertEqual(len(self.client.calls), 1)
         finally:
             release.set()
             await first

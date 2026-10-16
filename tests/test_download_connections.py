@@ -47,6 +47,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.active = set()
         self.start_gate = None
         self.request_gate = None
+        self.block_after_first = False
         self.stop_gate = None
         self.ready_gate = asyncio.Event()
         self.ready_gate.set()
@@ -72,6 +73,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 self.client = client
                 self.dc_id = dc_id
                 self.auth_key = auth_key
+                self.sent_data = False
                 self.server_address = server_address
                 self.is_cdn = is_cdn
                 self.connection = client.connection_factory(dc_id=dc_id, media=True)
@@ -95,7 +97,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 owner.rpc_options.append(kwargs)
                 if isinstance(query, raw.functions.auth.ImportAuthorization):
                     return True
-                if owner.request_gate:
+                if owner.request_gate and (not owner.block_after_first or self.sent_data):
                     await owner.request_gate.wait()
                 if isinstance(query, raw.functions.upload.GetFile) and owner.cdn:
                     return raw.types.upload.FileCdnRedirect(
@@ -106,6 +108,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                         owner.network_failure = False
                     raise ConnectionError("Offline interrupted transfer")
                 chunk = owner.data[query.offset:query.offset + MB]
+                self.sent_data = True
                 if isinstance(query, raw.functions.upload.GetCdnFile):
                     return raw.types.upload.CdnFile(bytes=chunk)
                 if isinstance(query, raw.functions.upload.GetCdnFileHashes):
@@ -239,6 +242,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         # A shared SDK semaphore must not silently turn ranges into one TCP stream.
         self.client.get_file_semaphore = asyncio.Semaphore(1)
         self.request_gate = asyncio.Event()
+        self.block_after_first = True
         second = self.path.with_name("second.bin")
         tasks = [asyncio.create_task(self.download(path)) for path in (self.path, second)]
         try:
@@ -257,7 +261,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancel_hung_request_closes_all_connections_and_keeps_parts(self):
         self.request_gate = asyncio.Event()
         task = asyncio.create_task(self.download())
-        await self.until(lambda: len(self.active) == 4)
+        await self.until(lambda: len(self.active) == 1)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await asyncio.wait_for(task, 2)
@@ -270,7 +274,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(download_file(
             self.client, self.file_id, len(self.data), str(self.path), "identity", 4,
             self.progress, self.ready, 2 * MB, discard_requested=lambda: discard))
-        await self.until(lambda: len(self.active) == 4)
+        await self.until(lambda: len(self.active) == 1)
         self.path.write_bytes(b"staged output")
         Path(str(self.path) + ".temp").write_bytes(b"merge scratch")
         completed = self.path.with_name("completed.bin")
@@ -292,10 +296,12 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pause_keeps_the_same_four_connections(self):
         self.request_gate = asyncio.Event()
+        self.block_after_first = True
+        allow_pause = False
         paused = asyncio.Event()
 
         async def progress(current, total):
-            if current and not paused.is_set():
+            if current and allow_pause and not paused.is_set():
                 self.ready_gate.clear()
                 paused.set()
 
@@ -304,6 +310,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         try:
             await self.until(lambda: len(self.active) == 4)
             original = {id(session.connection) for session in self.active}
+            allow_pause = True
             self.request_gate.set()
             await asyncio.wait_for(paused.wait(), 2)
             await asyncio.sleep(0.02)
@@ -331,10 +338,28 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(path.read_bytes() == self.data for path in paths))
         self.assert_closed()
 
+    async def test_failed_start_does_not_expand_until_connections_finish_closing(self):
+        self.network_failure = True
+        self.stop_gate = asyncio.Event()
+        task = asyncio.create_task(self.download())
+        try:
+            await self.until(lambda: self.sessions and self.sessions[0].stop_started)
+            await asyncio.sleep(0.02)
+            self.assertEqual(len(self.sessions), 1)
+            self.assertEqual(len(self.active), 1)
+            self.stop_gate.set()
+            with self.assertRaises(DownloadWorkersExhausted):
+                await asyncio.wait_for(task, 2)
+            self.assert_closed()
+        finally:
+            self.stop_gate.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_cancel_during_session_start_closes_partially_started_connections(self):
         self.start_gate = asyncio.Event()
         task = asyncio.create_task(self.download())
-        await self.until(lambda: len(self.active) == 4)
+        await self.until(lambda: len(self.active) == 1)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await asyncio.wait_for(task, 2)
@@ -344,7 +369,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.request_gate = asyncio.Event()
         self.stop_gate = asyncio.Event()
         task = asyncio.create_task(self.download())
-        await self.until(lambda: len(self.active) == 4)
+        await self.until(lambda: len(self.active) == 1)
         task.cancel()
         await self.until(lambda: all(session.stop_started for session in self.sessions))
         task.cancel()
@@ -380,7 +405,8 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_client_restart_releases_connections_and_file_can_retry(self):
         self.request_gate = asyncio.Event()
         task = asyncio.create_task(self.download())
-        await self.until(lambda: len(self.active) == 4)
+        await self.until(lambda: len(self.active) == 1)
+        previous = list(self.sessions)
         await close_download_connections(self.client)
         with self.assertRaises(ConnectionError):
             await task
@@ -390,7 +416,8 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.client._download_connections_closing = False
         self.request_gate.set()
         await self.download()
-        self.assertEqual(len(self.sessions), 8)
+        self.assertGreater(len(self.sessions), len(previous))
+        self.assertTrue(all(session.closed for session in previous))
         self.assertEqual(self.path.read_bytes(), self.data)
         self.assert_closed()
 
@@ -421,7 +448,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_hook_terminate_closes_downloads_before_account_shutdown(self):
         self.request_gate = asyncio.Event()
         task = asyncio.create_task(self.download())
-        await self.until(lambda: len(self.active) == 4)
+        await self.until(lambda: len(self.active) == 1)
 
         async def terminate(**kwargs):
             self.assert_closed()
@@ -449,10 +476,11 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(create=self.auth)
         self.auth_factory.side_effect = auth
         await self.download()
-        self.assertEqual(len(self.sessions), 4)
-        self.assertEqual(self.auth.await_count, 4)
+        self.assertGreater(len(self.sessions), 1)
+        self.assertLessEqual(len(self.sessions), 4)
+        self.assertEqual(self.auth.await_count, len(self.sessions))
         self.assertTrue(all(session.server_address == "198.51.100.2" for session in self.sessions))
-        self.assertEqual(len({id(session.connection) for session in self.sessions}), 4)
+        self.assertEqual(len({id(session.connection) for session in self.sessions}), len(self.sessions))
         self.assertEqual(self.path.read_bytes(), self.data)
         self.assert_closed()
 
@@ -478,9 +506,11 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.file_id.dc_id = 5
         cancelled = 0
         active = 0
+        peak = 0
         async def blocked_auth():
-            nonlocal cancelled, active
+            nonlocal cancelled, active, peak
             active += 1
+            peak = max(peak, active)
             try:
                 await asyncio.Event().wait()
             finally:
@@ -492,6 +522,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(self.download(), 2)
         self.assertGreater(cancelled, 0)
         self.assertEqual(active, 0)
+        self.assertEqual(peak, 1)
         self.assertTrue((parts_path(str(self.path)) / "manifest.json").exists())
         self.assert_closed()
         self.auth.side_effect = None
@@ -526,9 +557,10 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_foreign_dc_authorizes_each_independent_session(self):
         self.file_id.dc_id = 4
         await self.download()
-        self.assertEqual(len(self.sessions), 4)
-        self.assertEqual(self.auth.await_count, 4)
-        self.assertEqual(self.client.invoke.await_count, 4)
+        self.assertGreater(len(self.sessions), 1)
+        self.assertLessEqual(len(self.sessions), 4)
+        self.assertEqual(self.auth.await_count, len(self.sessions))
+        self.assertEqual(self.client.invoke.await_count, len(self.sessions))
         self.assertTrue(all(call.kwargs["sleep_threshold"] == 0
                             for call in self.client.invoke.await_args_list))
         self.assertTrue(all(options.get("sleep_threshold") == 0 for options in self.rpc_options))
@@ -538,7 +570,9 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_cdn_download_keeps_hash_validation_and_closes_both_session_types(self):
         self.cdn = True
         await self.download()
-        self.assertEqual(len(self.sessions), 9)
+        media_sessions = [session for session in self.sessions if not session.is_cdn]
+        self.assertGreaterEqual(len(media_sessions), 1)
+        self.assertLessEqual(len(media_sessions), 4)
         self.assertEqual(sum(session.is_cdn for session in self.sessions), 5)
         self.assertTrue(all(session.dc_id == 4 for session in self.sessions if session.is_cdn))
         self.assertTrue(all(session.dc_id == 2 for session in self.sessions if not session.is_cdn))

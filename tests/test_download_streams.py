@@ -17,7 +17,7 @@ class DownloadStreamTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = str(Path(self.temp.name) / 'file.bin')
-        self.data = b'a' * (3 * MB)
+        self.data = b'a' * (6 * MB)
         self.client = FakeClient(self.data)
         self.count = stat.get_active_download_streams
         for item in (
@@ -34,7 +34,7 @@ class DownloadStreamTests(unittest.IsolatedAsyncioTestCase):
     async def download(self, workers=3, progress=None):
         return await download_file(
             self.client, 'file', len(self.data), self.path, 'identity', workers,
-            progress or AsyncMock(), AsyncMock(), MB,
+            progress or AsyncMock(), AsyncMock(), 2 * MB,
             stream_context=lambda: stat.track_download_stream(100, 61, 'owner'))
 
     async def until(self, predicate):
@@ -76,7 +76,8 @@ class DownloadStreamTests(unittest.IsolatedAsyncioTestCase):
     async def test_idle_connections_and_merge_do_not_count_as_streams(self):
         gates = [asyncio.Event() for _ in range(3)]
         async def before(index):
-            await gates[index].wait()
+            if index % 2:
+                await gates[index // 2].wait()
         self.client.before_chunk = before
         counts = []
         async def progress(current, total):
@@ -102,10 +103,11 @@ class DownloadStreamTests(unittest.IsolatedAsyncioTestCase):
         fail = asyncio.Event()
         hold = asyncio.Event()
         async def before(index):
-            if index == 0:
+            if index == 1:
                 await fail.wait()
                 raise ConnectionError('offline')
-            await hold.wait()
+            if index % 2:
+                await hold.wait()
         self.client.before_chunk = before
         task = asyncio.create_task(self.download())
         try:
@@ -132,7 +134,8 @@ class DownloadStreamTests(unittest.IsolatedAsyncioTestCase):
     async def test_resume_uses_saved_worker_count_and_never_restores_live_counts(self):
         hold = asyncio.Event()
         async def before(index):
-            await hold.wait()
+            if index % 2:
+                await hold.wait()
         self.client.before_chunk = before
         task = asyncio.create_task(self.download(workers=2))
         try:
@@ -142,8 +145,8 @@ class DownloadStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.count(), 0)
         task = asyncio.create_task(self.download(workers=6))
         try:
-            await self.until(lambda: self.count() == 2)
-            self.assertEqual(self.client.tracker['active'], 2)
+            await self.until(lambda: self.count() == 1)
+            self.assertEqual(self.client.tracker['active'], 1)
             hold.set()
             await task
             self.assertEqual(Path(self.path).read_bytes(), self.data)

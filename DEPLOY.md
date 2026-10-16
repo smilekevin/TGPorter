@@ -327,7 +327,7 @@ proxy:
 
 文件按 `download_part_size_mb` 切成固定大小的切片，最后一片为剩余大小。
 例如每片 64 MiB 时，40 MiB 文件为 1 片，100 MiB 为 2 片，500 MiB 为 8 片。
-每个文件从一个连接开始，每秒增加至多一个连接，最多达到 `file_download_concurrency` 个 worker；每个 worker 下载完一片后从队列领取下一片，直到全部完成，再按切片顺序合并。
+每个文件从一个连接开始，当前新连接收到并写入首块有效数据后，才允许启动下一个连接，且启动间隔至少一秒，最多达到 `file_download_concurrency` 个 worker。握手或首块数据卡住时不会继续扩展连接；启动失败后必须先关闭该连接并将未完成分片交回队列，再按现有失败预算逐个尝试；已有健康连接继续下载，不必等整片完成才扩展。每个 worker 下载完一片后从队列领取下一片，直到全部完成，再按切片顺序合并。
 每个 worker 使用独立的 Telegram 下载 TCP 连接，并在连续下载后续切片时沿用自己的连接；不同 worker 和文件不共用下载连接。
 暂停时保留连接，完成、取消或客户端重启时关闭连接。
 取消下载先关闭连接，再按文件删除选项处理该文件在 `temp/` 中的临时文件和 `.parts/` 目录。活动和失败任务的删除确认只提示是否存在缓存文件（临时文件或分片目录），不列出缓存路径；仅在文件和已记录路径的缓存均不存在时提示未找到。网页取消和删除失败任务默认勾选“同时删除本地文件和缓存”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
@@ -344,7 +344,7 @@ Bot 在内容变化时约每 10 秒编辑原进度消息，不再等待 20% 里�
 多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
 离线验证和真实下载验收步骤见 [分片下载测试说明](docs/parallel-download-testing.md)。
 普通媒体下载跨 DC 时，先通过目标 DC 的普通端点创建密钥，再建立 worker 独立媒体连接；当前账号主 DC 继续复用已保存的密钥，CDN 继续使用自己的端点。密钥创建最多等待 60 秒，超时会关闭该连接并保留断点，交给现有连接重试机制；此上限不限制正常文件传输。DEBUG 日志包含媒体端点和密钥协商端点的地址、端口及 CDN 标记，不记录密钥或授权内容。
-应用仅写入 `log/tdl.log`，每个日志文件达到 10MB 时轮转，保留 30 天；不再生成 `download.log`，已有旧日志不会自动删除。其中的 `Waiting for first data` 记录独立下载连接开始等待数据，包含文件名、worker 编号和 DC；`Opened independent download connection #…` 表示已收到首块数据，`Closed independent download connection #…` 表示连接资源已关闭。首块数据前取消也会记录资源释放。设置 `log_level: DEBUG` 可查看 DC 解析、存储读取、密钥创建、会话启动、授权导出/导入和首个媒体请求阶段；等待期间每 30 秒输出当前阶段及该阶段已等待秒数的 WARNING，不改变请求超时或重试策略。SDK 日志级别独立于此设置，应用诊断日志不输出授权内容。
+应用仅写入 `log/tdl.log`，每个日志文件达到 10MB 时轮转，保留 30 天；不再生成 `download.log`，已有旧日志不会自动删除。其中的 `Waiting for first data` 记录独立下载连接开始等待数据，包含文件名、worker 编号和 DC；`Opened independent download connection #…` 表示已收到首块数据，`Confirmed independent download startup` 表示首块有效数据已写入，允许增加下一个连接；`Closed independent download connection #…` 表示连接资源已关闭。首块数据前取消也会记录资源释放。设置 `log_level: DEBUG` 可查看 DC 解析、存储读取、密钥创建、会话启动、授权导出/导入和首个媒体请求阶段；等待期间每 30 秒输出当前阶段及该阶段已等待秒数的 WARNING，不改变请求超时或重试策略。SDK 日志级别独立于此设置，应用诊断日志不输出授权内容。
 
 ---
 
@@ -836,7 +836,7 @@ To add a language, copy a translated catalog such as `lang/fr.json` to a new lan
 
 Files are split into fixed-size parts using `download_part_size_mb`; the final part contains the remaining bytes.
 At 64 MiB per part, a 40 MiB file has one part, a 100 MiB file has two and a 500 MiB file has eight.
-Each file starts with one connection and adds at most one per second, up to `file_download_concurrency` workers. Finished workers take the next queued part until
+Each file starts with one connection. A new connection must receive and write its first valid block before the next connection may start, with starts at least one second apart, up to `file_download_concurrency` workers. A blocked handshake or first response prevents expansion. A failed start closes its connection and requeues its unfinished part before another attempt, using the existing failure budget. Healthy connections continue downloading; confirming startup does not require finishing a whole part. Finished workers take the next queued part until
 all parts are complete, then the parts are merged in order. Each worker owns an independent Telegram download
 TCP connection and uses it for successive parts; different workers and files do not share download connections.
 Pauses retain connections; completion, cancellation and client restart close them. `max_download_task` limits
@@ -857,7 +857,7 @@ temporarily require twice the file size in disk space; a single part is moved wi
 See the [download test guide](docs/parallel-download-testing.md) for offline and live acceptance checks.
 For cross-DC regular media downloads, create the auth key through the target DC's regular endpoint before opening the worker-owned media connection. The account's home DC still reuses its stored key; CDN connections retain their own endpoints. Auth-key creation has a 60-second limit; a timeout closes that connection and preserves checkpoints for the existing connection retry policy. This limit does not cap normal file transfers. DEBUG logs include media/auth endpoint addresses, ports and CDN flags, without key or authorization payloads.
 The application writes only `log/tdl.log`, rotating at 10MB and retaining logs for 30 days. It no longer creates `download.log`; existing historical logs are left in place. In this log, `Waiting for first data` identifies the file, worker and DC before data arrives.
-`Opened independent download connection #…` means the first block has arrived; `Closed independent download connection #…` records resource cleanup. Cancellation before any data also logs resource release.
+`Opened independent download connection #…` means the first block has arrived; `Confirmed independent download startup` confirms that a valid block was written and allows another connection to start. `Closed independent download connection #…` records resource cleanup. Cancellation before any data also logs resource release.
 Set `log_level: DEBUG` to trace DC resolution, storage reads, auth-key creation, session startup, authorization export/import and the first media request. While waiting for first data, a WARNING reports the current stage and time spent in that stage every 30 seconds, without changing request timeouts or retries. SDK log levels are separate; application diagnostics omit authorization payloads.
 
 ---

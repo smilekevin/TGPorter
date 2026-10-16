@@ -30,7 +30,7 @@
 
 ### 下载
 
-- **单文件多流并行加速下载** — 从一个连接开始，每秒逐步增加一个，最多达到配置的并发数；连接复用下载后续分片，支持暂停和中断续传，进度统一汇总
+- **单文件多流并行加速下载** — 从一个连接开始，每个新连接收到并写入首块有效数据后才允许增加下一个，启动间隔至少一秒，最多达到配置的并发数；连接复用下载后续分片，支持暂停和中断续传，进度统一汇总
 - **多类型媒体下载** — audio / document / photo / video / voice / animation / video_note
 - **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
 - **单条下载** — 直接发送 `t.me` 链接给 Bot 即可下载
@@ -428,7 +428,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Download
 
-- **Parallel streams for faster single-file downloads** — start with one connection and add at most one per second up to the configured limit; connections handle successive parts with pause/resume, interruption recovery and aggregate progress
+- **Parallel streams for faster single-file downloads** — start with one connection and confirm its first valid block on disk before starting the next, at least one second apart, up to the configured limit; connections handle successive parts with pause/resume, interruption recovery and aggregate progress
 - **Multi-type media** — audio / document / photo / video / voice / animation / video_note
 - **Batch download** — specify message ID range `[start, end]` with optional filter
 - **Single download** — send a `t.me` link to the Bot
