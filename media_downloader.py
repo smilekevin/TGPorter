@@ -81,61 +81,70 @@ _throttle_state = {
     "restarts": 0,          # Consecutive restarts reset when progress returns.
 }
 
-# Resize the worker pool immediately when WebUI changes max_download_task.
+# Worker creation and queue access stay on the downloader loop. The lock only
+# protects the live count read by WebUI request threads.
 import threading as _threading
 _worker_pool_lock = _threading.Lock()
-_live_workers = 0          # Live workers: increment at startup and decrement on exit.
-_worker_exit_signal = False  # Surplus workers exit before taking another task when shrinking the pool.
+_live_workers = 0
 
 
-async def _spawn_one_worker(client):
-    """Create one worker on the main event loop via run_coroutine_threadsafe."""
-    import asyncio as _aio
-    _aio.get_running_loop().create_task(worker(client))
+class _DownloadQueue(asyncio.Queue):
+    """Start file workers only for queued work and await them during shutdown."""
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+        self.workers = set()
+        self._wake_scheduled = False
+        self._closing = False
+
+    def put_nowait(self, item):
+        super().put_nowait(item)
+        # Defer until the submitting coroutine yields, so retries release their
+        # active slot before demand is measured. Batch consecutive submissions.
+        if not self._wake_scheduled and not self._closing:
+            self._wake_scheduled = True
+            asyncio.get_running_loop().call_soon(self.ensure_workers)
+
+    def ensure_workers(self):
+        """Reserve scheduled workers before they run to bound burst submissions."""
+        self._wake_scheduled = False
+        if self._closing or not app.is_running:
+            return
+        target = min(max(1, app.max_download_task), _live_workers + self.qsize())
+        added = max(0, target - len(self.workers))
+        for _ in range(added):
+            task = asyncio.create_task(worker(self.client))
+            self.workers.add(task)
+            task.add_done_callback(self._worker_done)
+        if added:
+            logger.info("Started {} file worker(s) on demand (workers={}, limit={})",
+                        added, len(self.workers), app.max_download_task)
+
+    def _worker_done(self, task):
+        self.workers.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("File worker stopped unexpectedly: {}", task.exception())
+        # A submission can arrive just before an exiting worker's callback.
+        self.ensure_workers()
+
+    async def stop(self):
+        """Stop writers before their download clients are closed."""
+        self._closing = True
+        tasks = list(self.workers)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _worker_pool_set_target(n: int):
-    """Set the target worker count and resize safely, including from Flask threads."""
-    global _worker_exit_signal, _live_workers
+    """Reconcile queued demand after a concurrency change from a Flask thread."""
     with _worker_pool_lock:
-        cur = _live_workers
-    if n > cur:
-        # This may run in a Flask thread without an event loop. Schedule worker creation on the
-        # main Pyrogram loop.
-        import asyncio as _aio
-        added = 0
-        client = _main_client_ref.get("client")
-        loop = client.loop if client and getattr(client, "loop", None) else None
-        for _ in range(n - cur):
-            try:
-                if loop and loop.is_running():
-                    # Submit through run_coroutine_threadsafe to cross the thread boundary.
-                    fut = _aio.run_coroutine_threadsafe(_spawn_one_worker(client), loop)
-                    fut.result(timeout=10)
-                else:
-                    _aio.get_running_loop().create_task(worker(client))
-                added += 1
-            except Exception as e:
-                logger.error(
-                    f"Worker pool: failed to spawn worker: {e} "
-                    f"(loop={loop}, is_running={loop.is_running() if loop else None}, "
-                    f"cur={cur}, n={n})"
-                )
-                break
-        logger.info(f"Worker pool: scaled up {cur} -> {cur + added} workers")
-    elif n < cur:
-        # Wake queue.get() waiters with sentinels. Surplus workers exit; retained workers ignore
-        # extra sentinels.
-        global queue
-        _worker_exit_signal = True
-        excess = cur - n
-        for _ in range(cur):  # Wake all waiting workers.
-            try:
-                queue.put_nowait(None)
-            except Exception:
-                pass
-        logger.info(f"Worker pool: scaling down {cur} -> {n} workers ({excess} excess)")
-    return cur
+        current = _live_workers
+    if isinstance(queue, _DownloadQueue) and app.loop.is_running():
+        app.loop.call_soon_threadsafe(queue.ensure_workers)
+    logger.info("File worker concurrency limit set to {}", n)
+    return current
 
 logging.getLogger("pyrogram.session.session").addFilter(LogFilter())
 logging.getLogger("pyrogram.client").addFilter(LogFilter())
@@ -1311,17 +1320,15 @@ async def worker(client: pyrogram.client.Client):
             message = None
             node = None
             try:
-                logger.info(f"Worker waiting for queue item...")
-                item = await queue.get()
-                # A None sentinel wakes workers during shrinking; surplus workers exit.
-                if item is None:
-                    with _worker_pool_lock:
-                        target = max(1, getattr(app, "max_download_task", 2))
-                        if _worker_exit_signal and _live_workers > target:
-                            logger.info(f"Worker exiting (pool scale-down, live={_live_workers - 1})")
-                            return
-                        # Retained workers ignore the sentinel and continue.
-                    continue
+                # Finish the current file before shrinking. No await separates
+                # this check, dequeue and active-slot reservation.
+                with _worker_pool_lock:
+                    if _live_workers > max(1, app.max_download_task):
+                        return
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
                 message = item[0]
                 node: TaskNode = item[1]
                 _bot._active_downloads += 1
@@ -1981,18 +1988,10 @@ def main():
         # loop starts) can cause put/get to use different loop references,
         # resulting in workers never receiving items.
         global queue
-        queue = asyncio.Queue()
+        queue = _DownloadQueue(client)
         logger.success(_t("Successfully started (Press Ctrl+C to stop)"))
         app.loop.create_task(download_all_chat(client))
-        # Create max_download_task workers to enforce physical concurrency. The previous fixed
-        # pool of six could exceed the limit during scheduling races.
-        _MAX_WORKERS = max(1, getattr(app, 'max_download_task', 2))
-        logger.info(f"Starting {_MAX_WORKERS} workers (max_download_task={_MAX_WORKERS})")
-        with _worker_pool_lock:
-            global _live_workers
-            _live_workers = 0  # Reset the count; main runs once at startup.
-        for _ in range(_MAX_WORKERS):
-            tasks.append(app.loop.create_task(worker(client)))
+        logger.info("File workers start on demand (max_download_task={})", app.max_download_task)
         # Start the shared silent-throttling recovery monitor.
         tasks.append(app.loop.create_task(_throttle_restart_loop(client)))
         if app.bot_token:
@@ -2008,9 +2007,12 @@ def main():
         app.is_running = False
         save_downloads()
         app.loop.run_until_complete(stop_download_bot())
-        app.loop.run_until_complete(stop_server(client))
+        if isinstance(queue, _DownloadQueue):
+            app.loop.run_until_complete(queue.stop())
         for task in tasks:
             task.cancel()
+        app.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+        app.loop.run_until_complete(stop_server(client))
         logger.info(_t("Stopped"))
         logger.info(f"{_t('update config')}......")
         app.update_config()
