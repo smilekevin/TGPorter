@@ -12,6 +12,7 @@ from pyrogram.session import Auth, Session
 
 _connection_ids = count(1)
 STARTUP_WARNING_INTERVAL = 30
+AUTH_KEY_TIMEOUT = 60
 
 
 class _MediaSession:
@@ -92,14 +93,33 @@ class _DownloadClient:
         self.set_stage("resolving DC endpoint", dc_id)
         option = await self.client.get_dc_option(
             dc_id, is_media=is_media, ipv6=self.ipv6, is_cdn=is_cdn)
+        logger.debug("Download connection #{} for {} (DC {}): media endpoint {}:{}, CDN={}",
+                     self.connection_id, self.label, dc_id, option.ip_address, option.port, is_cdn)
         self.set_stage("reading account storage", dc_id)
         test_mode = await self.storage.test_mode()
         current_dc = await self.storage.dc_id() == dc_id
         if current_dc and not is_cdn:
             auth_key = await self.storage.auth_key()
         else:
+            auth_option = option
+            if not is_cdn:
+                # Match Kurigram's regular-DC auth bootstrap. A media-only
+                # endpoint must not be used for the initial key exchange.
+                self.set_stage("resolving auth endpoint", dc_id)
+                auth_option = await self.client.get_dc_option(dc_id, ipv6=self.ipv6)
             self.set_stage("creating auth key", dc_id)
-            auth_key = await Auth(self, dc_id, option.ip_address, option.port, test_mode).create()
+            logger.debug("Download connection #{} for {} (DC {}): auth endpoint {}:{}, CDN={}",
+                         self.connection_id, self.label, dc_id,
+                         auth_option.ip_address, auth_option.port, is_cdn)
+            try:
+                auth_key = await asyncio.wait_for(
+                    Auth(self, dc_id, auth_option.ip_address, auth_option.port, test_mode).create(),
+                    timeout=AUTH_KEY_TIMEOUT,
+                )
+            except asyncio.TimeoutError as error:
+                raise ConnectionError(
+                    f"Auth key creation timed out on DC {dc_id} after {AUTH_KEY_TIMEOUT} seconds"
+                ) from error
         session = Session(self, dc_id, option.ip_address, option.port, auth_key,
                           test_mode, is_media=is_media, is_cdn=is_cdn)
         # Register before start: cancellation must still stop its background tasks.

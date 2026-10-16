@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from module.telegram import pyrogram
 from pyrogram import Client, raw
@@ -72,6 +72,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 self.client = client
                 self.dc_id = dc_id
                 self.auth_key = auth_key
+                self.server_address = server_address
                 self.is_cdn = is_cdn
                 self.connection = client.connection_factory(dc_id=dc_id, media=True)
                 self.connection.session = self
@@ -114,9 +115,10 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                                              mtime=0, bytes=chunk)
 
         self.auth = AsyncMock(return_value=b"a" * 256)
+        self.auth_factory = Mock(return_value=SimpleNamespace(create=self.auth))
         for item in (
             patch("module.download_connection.Session", MediaSession),
-            patch("module.download_connection.Auth", return_value=SimpleNamespace(create=self.auth)),
+            patch("module.download_connection.Auth", self.auth_factory),
             patch("pyrogram.client.aes.ctr256_decrypt", side_effect=lambda chunk, *_: chunk),
         ):
             item.start()
@@ -430,6 +432,95 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConnectionError):
             await task
         self.assertTrue(self.client._download_connections_closing)
+        self.assert_closed()
+
+    def distinct_dc_endpoints(self):
+        def endpoint(dc_id, *, is_media=False, is_cdn=False, **kwargs):
+            address = "198.51.100.3" if is_cdn else ("198.51.100.2" if is_media else "198.51.100.1")
+            return SimpleNamespace(ip_address=address, port=443)
+        self.client.get_dc_option.side_effect = endpoint
+
+    async def test_foreign_media_auth_uses_regular_endpoint_before_independent_media_connections(self):
+        self.file_id.dc_id = 5
+        self.distinct_dc_endpoints()
+        def auth(client, dc_id, address, port, test_mode):
+            if address != "198.51.100.1":
+                raise ConnectionError("Media endpoint rejects unauthenticated key exchange")
+            return SimpleNamespace(create=self.auth)
+        self.auth_factory.side_effect = auth
+        await self.download()
+        self.assertEqual(len(self.sessions), 4)
+        self.assertEqual(self.auth.await_count, 4)
+        self.assertTrue(all(session.server_address == "198.51.100.2" for session in self.sessions))
+        self.assertEqual(len({id(session.connection) for session in self.sessions}), 4)
+        self.assertEqual(self.path.read_bytes(), self.data)
+        self.assert_closed()
+
+    async def test_current_dc_media_reuses_storage_key_without_creating_auth_key(self):
+        self.distinct_dc_endpoints()
+        await self.download()
+        self.auth_factory.assert_not_called()
+        self.assertTrue(all(session.server_address == "198.51.100.2" for session in self.sessions))
+        self.assert_closed()
+
+    async def test_cdn_auth_keeps_its_own_endpoint(self):
+        self.cdn = True
+        self.distinct_dc_endpoints()
+        await self.download()
+        self.assertTrue(self.auth_factory.call_count)
+        self.assertTrue(all(call.args[2] == "198.51.100.3" for call in self.auth_factory.call_args_list))
+        self.assertTrue(all(session.server_address == "198.51.100.3"
+                            for session in self.sessions if session.is_cdn))
+        self.assertEqual(self.path.read_bytes(), self.data)
+        self.assert_closed()
+
+    async def test_hung_auth_key_is_retired_and_can_retry_with_checkpoint(self):
+        self.file_id.dc_id = 5
+        cancelled = 0
+        active = 0
+        async def blocked_auth():
+            nonlocal cancelled, active
+            active += 1
+            try:
+                await asyncio.Event().wait()
+            finally:
+                active -= 1
+                cancelled += 1
+        self.auth.side_effect = blocked_auth
+        with patch("module.download_connection.AUTH_KEY_TIMEOUT", 0.01):
+            with self.assertRaisesRegex(DownloadWorkersExhausted, "Auth key creation timed out on DC 5"):
+                await asyncio.wait_for(self.download(), 2)
+        self.assertGreater(cancelled, 0)
+        self.assertEqual(active, 0)
+        self.assertTrue((parts_path(str(self.path)) / "manifest.json").exists())
+        self.assert_closed()
+        self.auth.side_effect = None
+        await self.download()
+        self.assertEqual(self.path.read_bytes(), self.data)
+        self.assert_closed()
+
+    async def test_real_auth_timeout_closes_transport_before_worker_cleanup_returns(self):
+        from pyrogram.session import Auth as SDKAuth
+        self.file_id.dc_id = 5
+        transports = []
+        class AuthTransport:
+            def __init__(self, **kwargs):
+                self.closed = False
+                transports.append(self)
+            async def connect(self):
+                await asyncio.Event().wait()
+            async def close(self):
+                self.closed = True
+        with patch.object(self.client, "connection_factory", AuthTransport), patch(
+                "module.download_connection.Auth", SDKAuth), patch(
+                "module.download_connection.AUTH_KEY_TIMEOUT", 0.01):
+            async with DownloadConnection(self.client, "offline-auth-timeout") as connection:
+                with self.assertRaisesRegex(ConnectionError, "Auth key creation timed out on DC 5"):
+                    async for _ in connection.get_file(self.file_id, len(self.data), 1, 0, self.progress):
+                        pass
+        self.assertEqual(len(transports), 1)
+        self.assertTrue(transports[0].closed)
+        self.assertEqual(connection.download_client.connections, [])
         self.assert_closed()
 
     async def test_foreign_dc_authorizes_each_independent_session(self):

@@ -343,6 +343,7 @@ Bot 在内容变化时约每 10 秒编辑原进度消息，不再等待 20% 里�
 新下载的临时主文件统一为 `temp/timestamp_guid.tmp`，不包含频道名或原文件名。`timestamp` 使用消息时间的 Unix 秒数（无日期时为 `0`），GUID 根据消息所属客户端、聊天 ID、消息 ID 和媒体身份稳定生成；同一媒体重试、恢复和重启复用同一路径，不需要额外的索引文件。分片保存在对应的 `timestamp_guid.tmp.parts/manifest.json` 和分片文件中，SDK/合并过程可能使用 `timestamp_guid.tmp.temp`。已有旧路径断点继续沿用，直至完成或明确删除；最终下载文件名仍由现有命名配置决定。部署时应持久化整个 `temp` 目录。
 多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
 离线验证和真实下载验收步骤见 [分片下载测试说明](docs/parallel-download-testing.md)。
+普通媒体下载跨 DC 时，先通过目标 DC 的普通端点创建密钥，再建立 worker 独立媒体连接；当前账号主 DC 继续复用已保存的密钥，CDN 继续使用自己的端点。密钥创建最多等待 60 秒，超时会关闭该连接并保留断点，交给现有连接重试机制；此上限不限制正常文件传输。DEBUG 日志包含媒体端点和密钥协商端点的地址、端口及 CDN 标记，不记录密钥或授权内容。
 应用仅写入 `log/tdl.log`，每个日志文件达到 10MB 时轮转，保留 30 天；不再生成 `download.log`，已有旧日志不会自动删除。其中的 `Waiting for first data` 记录独立下载连接开始等待数据，包含文件名、worker 编号和 DC；`Opened independent download connection #…` 表示已收到首块数据，`Closed independent download connection #…` 表示连接资源已关闭。首块数据前取消也会记录资源释放。设置 `log_level: DEBUG` 可查看 DC 解析、存储读取、密钥创建、会话启动、授权导出/导入和首个媒体请求阶段；等待期间每 30 秒输出当前阶段及该阶段已等待秒数的 WARNING，不改变请求超时或重试策略。SDK 日志级别独立于此设置，应用诊断日志不输出授权内容。
 
 ---
@@ -854,6 +855,7 @@ New downloads use `temp/timestamp_guid.tmp` without channel titles or original f
 Persist the entire `temp` directory. Merging multiple parts may
 temporarily require twice the file size in disk space; a single part is moved without a full extra copy.
 See the [download test guide](docs/parallel-download-testing.md) for offline and live acceptance checks.
+For cross-DC regular media downloads, create the auth key through the target DC's regular endpoint before opening the worker-owned media connection. The account's home DC still reuses its stored key; CDN connections retain their own endpoints. Auth-key creation has a 60-second limit; a timeout closes that connection and preserves checkpoints for the existing connection retry policy. This limit does not cap normal file transfers. DEBUG logs include media/auth endpoint addresses, ports and CDN flags, without key or authorization payloads.
 The application writes only `log/tdl.log`, rotating at 10MB and retaining logs for 30 days. It no longer creates `download.log`; existing historical logs are left in place. In this log, `Waiting for first data` identifies the file, worker and DC before data arrives.
 `Opened independent download connection #…` means the first block has arrived; `Closed independent download connection #…` records resource cleanup. Cancellation before any data also logs resource release.
 Set `log_level: DEBUG` to trace DC resolution, storage reads, auth-key creation, session startup, authorization export/import and the first media request. While waiting for first data, a WARNING reports the current stage and time spent in that stage every 30 seconds, without changing request timeouts or retries. SDK log levels are separate; application diagnostics omit authorization payloads.
