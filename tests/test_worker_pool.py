@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import media_downloader as downloader
-from module import bot
+from module import bot, pyrogram_extension as extension
 
 
 class WorkerPoolTests(unittest.IsolatedAsyncioTestCase):
@@ -182,6 +182,79 @@ class WorkerPoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.finished, [1])
         self.assertEqual(self.owner._active_downloads, 0)
         self.assertFalse(self.owner._in_queue)
+
+    def start_bot_heartbeat(self):
+        """Run the real monitor alongside the queue, replacing only Telegram I/O."""
+        self.owner = bot.DownloadBot()
+        self.owner.app = self.app
+
+        async def pong(query, **kwargs):
+            return bot.pyrogram.raw.types.Pong(msg_id=1, ping_id=query.ping_id)
+
+        self.owner.bot = SimpleNamespace(is_connected=True, invoke=AsyncMock(side_effect=pong),
+                                         stop=AsyncMock())
+        for item in [
+            patch.object(bot, "_bot", self.owner),
+            patch.object(extension, "_bot_conn_errors", {"count": 0}),
+            patch.object(extension, "_bot_flood_wait", {"until": 0, "seconds": 0}),
+        ]:
+            item.start()
+            self.addCleanup(item.stop)
+        monitor = self.owner._ensure_heartbeat()
+
+        async def stop_monitor():
+            self.owner.is_running = False
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
+
+        self.addAsyncCleanup(stop_monitor)
+        return monitor
+
+    async def test_bot_heartbeat_continues_with_idle_active_and_drained_workers(self):
+        monitor = self.start_bot_heartbeat()
+        invoke = self.owner.bot.invoke
+        await self.until(lambda: invoke.await_count > 0)
+        self.assertFalse(self.queue.workers)
+        self.assertIs(monitor, self.owner._ensure_heartbeat())
+        await self.submit(1)
+        await self.until(lambda: self.started == [1])
+        probes = invoke.await_count
+        await self.until(lambda: invoke.await_count > probes)
+        self.assertEqual(self.owner._active_downloads, 1)
+        self.assertFalse(monitor.done())
+        self.release_all()
+        await self.until(lambda: not self.queue.workers)
+        probes = invoke.await_count
+        await self.until(lambda: invoke.await_count > probes)
+        self.assertFalse(monitor.done())
+        self.assertEqual(self.owner._heartbeat_failures, 0)
+
+    async def test_shutdown_awaits_bot_probe_and_file_worker_together(self):
+        monitor = self.start_bot_heartbeat()
+        entered, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def hang(*args, **kwargs):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        self.owner.bot.invoke.side_effect = hang
+        await asyncio.wait_for(entered.wait(), 1)
+        await self.submit(1)
+        await self.until(lambda: self.started == [1])
+        self.app.is_running = False
+        with patch.object(self.owner, "update_config"), patch.object(self.owner, "stop_task"):
+            await bot.stop_download_bot()
+        await self.queue.stop()
+        self.assertTrue(monitor.done())
+        self.assertTrue(cancelled.is_set())
+        self.assertIsNone(self.owner.heartbeat_task)
+        self.assertFalse(self.queue.workers)
+        self.assertEqual(self.owner._active_downloads, 0)
+        self.assertEqual(downloader._live_workers, 0)
+        self.owner.bot.stop.assert_awaited_once()
 
     async def test_shutdown_cancels_and_awaits_active_downloads(self):
         await self.submit(1)
