@@ -52,7 +52,6 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(downloader, "queue", self.queue),
             patch.object(downloader, "app", self.app),
             patch.object(downloader, "_live_workers", 0),
-            patch.object(downloader, "_worker_exit_signal", False),
             patch.object(bot.asyncio, "sleep", short_sleep),
         ]
         for item in patches:
@@ -438,21 +437,14 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.bot._in_queue)
             release.set()
             await self.until(lambda: self.bot._active_downloads == 0)
-            self.assertEqual(downloader._live_workers, 1)
+            self.assertEqual(downloader._live_workers, 0)
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         self.assertEqual(self.bot._active_downloads, 0)
         self.assertEqual(downloader._live_workers, 0)
 
-    async def test_idle_worker_cancellation_and_sentinel_do_not_decrement_active(self):
-        task = asyncio.create_task(downloader.worker(self.client))
-        self.workers.append(task)
-        await self.until(lambda: downloader._live_workers == 1)
-        await self.queue.put(None)
-        await self.until(self.queue.empty)
-        self.assertEqual(self.bot._active_downloads, 0)
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    async def test_idle_worker_exits_without_decrementing_active(self):
+        await downloader.worker(self.client)
         self.assertEqual(self.bot._active_downloads, 0)
         self.assertEqual(downloader._live_workers, 0)
 
@@ -488,12 +480,9 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_scale_down_counts_each_worker_exit_once(self):
         self.app.max_download_task = 1
-        for _ in range(2):
-            self.workers.append(asyncio.create_task(downloader.worker(self.client)))
-        await self.until(lambda: downloader._live_workers == 2)
-        with patch.object(downloader, "_worker_exit_signal", True):
-            await self.queue.put(None)
-            await self.until(lambda: downloader._live_workers == 1)
+        with patch.object(downloader, "_live_workers", 1):
+            await downloader.worker(self.client)
+            self.assertEqual(downloader._live_workers, 1)
         self.assertEqual(self.bot._active_downloads, 0)
 
 
