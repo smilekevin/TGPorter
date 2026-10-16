@@ -73,6 +73,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 self.client = client
                 self.dc_id = dc_id
                 self.auth_key = auth_key
+                self.test_mode = test_mode
                 self.sent_data = False
                 self.server_address = server_address
                 self.is_cdn = is_cdn
@@ -103,6 +104,10 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                     return raw.types.upload.FileCdnRedirect(
                         dc_id=4, file_token=b"file", encryption_key=b"k" * 32,
                         encryption_iv=b"i" * 16, file_hashes=[])
+                if getattr(owner, "key_error", None) is not None:
+                    error = owner.key_error
+                    owner.key_error = None
+                    raise error
                 if getattr(owner, "network_failure", False):
                     if getattr(owner, "fail_once", False):
                         owner.network_failure = False
@@ -467,6 +472,143 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(ip_address=address, port=443)
         self.client.get_dc_option.side_effect = endpoint
 
+    async def test_foreign_workers_share_one_key_but_keep_eight_private_connections(self):
+        self.file_id.dc_id = 5
+        entered = asyncio.Event()
+        release_auth = asyncio.Event()
+        async def create_key():
+            entered.set()
+            await release_auth.wait()
+            return b"a" * 256
+        self.auth.side_effect = create_key
+        self.request_gate = asyncio.Event()
+        self.block_after_first = True
+        paths = (self.path, self.path.with_name("second.bin"))
+        tasks = [asyncio.create_task(self.download(path)) for path in paths]
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            await asyncio.sleep(0.02)
+            self.assertEqual(self.auth.await_count, 1)
+            release_auth.set()
+            await self.until(lambda: len(self.active) == 8)
+            self.assertEqual(self.auth.await_count, 1)
+            self.assertEqual(len({id(session.connection) for session in self.sessions}), 8)
+            self.assertEqual(len({id(session.client.media_sessions) for session in self.sessions}), 8)
+            self.assertTrue(all(session.auth_key == b"a" * 256 for session in self.sessions))
+        finally:
+            release_auth.set()
+            self.request_gate.set()
+            await asyncio.gather(*tasks)
+        self.assertTrue(all(path.read_bytes() == self.data for path in paths))
+        self.assert_closed()
+
+    async def test_cancelling_key_creator_unblocks_other_file_without_stale_key(self):
+        self.file_id.dc_id = 5
+        entered = asyncio.Event()
+        async def create_key():
+            if self.auth.await_count == 1:
+                entered.set()
+                await asyncio.Event().wait()
+            return b"b" * 256
+        self.auth.side_effect = create_key
+        first = asyncio.create_task(self.download())
+        await asyncio.wait_for(entered.wait(), 2)
+        second_path = self.path.with_name("second.bin")
+        second = asyncio.create_task(self.download(second_path))
+        try:
+            await asyncio.sleep(0.02)
+            self.assertEqual(self.auth.await_count, 1)
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(first, 2)
+            await asyncio.wait_for(second, 2)
+            self.assertEqual(self.auth.await_count, 2)
+            self.assertEqual(second_path.read_bytes(), self.data)
+            self.assert_closed()
+        finally:
+            first.cancel()
+            second.cancel()
+            await asyncio.gather(first, second, return_exceptions=True)
+
+    async def test_cancelling_key_waiter_does_not_interrupt_creator(self):
+        self.file_id.dc_id = 5
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        async def create_key():
+            entered.set()
+            await release.wait()
+            return b"a" * 256
+        self.auth.side_effect = create_key
+        first = asyncio.create_task(self.download())
+        await asyncio.wait_for(entered.wait(), 2)
+        second = asyncio.create_task(self.download(self.path.with_name("second.bin")))
+        try:
+            await asyncio.sleep(0.02)
+            second.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(second, 2)
+            self.assertFalse(first.done())
+            self.assertEqual(self.auth.await_count, 1)
+            release.set()
+            await asyncio.wait_for(first, 2)
+            self.assertEqual(self.path.read_bytes(), self.data)
+            self.assertEqual(self.auth.await_count, 1)
+            self.assert_closed()
+        finally:
+            release.set()
+            first.cancel()
+            second.cancel()
+            await asyncio.gather(first, second, return_exceptions=True)
+
+    async def test_foreign_key_cache_is_scoped_to_account_and_dc(self):
+        other = HookClient("other-account", in_memory=True)
+        self.addCleanup(other.executor.shutdown)
+        other.storage = SimpleNamespace(
+            dc_id=AsyncMock(return_value=2), auth_key=AsyncMock(return_value=b"o" * 256),
+            test_mode=AsyncMock(return_value=False))
+        other.get_dc_option = AsyncMock(return_value=SimpleNamespace(ip_address="198.51.100.1", port=443))
+        other.invoke = AsyncMock(return_value=SimpleNamespace(id=2, bytes=b"other-authorization"))
+        other.connection_factory = self.client.connection_factory
+        self.auth.side_effect = [b"a" * 256, b"b" * 256, b"c" * 256]
+        self.file_id.dc_id = 5
+        await self.download()
+        self.file_id.dc_id = 4
+        await self.download(self.path.with_name("dc4.bin"))
+        self.assertEqual(self.auth.await_count, 2)
+        primary = self.client
+        self.file_id.dc_id = 5
+        with patch.object(self, "client", other):
+            await self.download(self.path.with_name("other-account.bin"))
+        self.assertEqual(self.auth.await_count, 3)
+        self.assertEqual(primary._download_auth_keys[(5, False)], b"a" * 256)
+        self.assertEqual(primary._download_auth_keys[(4, False)], b"b" * 256)
+        self.assertEqual(other._download_auth_keys[(5, False)], b"c" * 256)
+        self.assertFalse(other._independent_download_connections)
+        self.assert_closed()
+
+    async def test_client_restart_clears_foreign_key_cache(self):
+        self.file_id.dc_id = 5
+        await self.download()
+        self.assertEqual(self.auth.await_count, 1)
+        await close_download_connections(self.client)
+        self.assertFalse(self.client._download_auth_keys)
+        self.assertFalse(self.client._download_auth_locks)
+        self.client._download_connections_closing = False
+        await self.download(self.path.with_name("after-restart.bin"))
+        self.assertEqual(self.auth.await_count, 2)
+        self.assert_closed()
+
+    async def test_rejected_cached_key_is_replaced_before_retry(self):
+        self.file_id.dc_id = 5
+        self.auth.side_effect = [b"a" * 256, b"b" * 256]
+        await self.download()
+        self.key_error = pyrogram.errors.AuthKeyUnregistered()
+        await self.download(self.path.with_name("retry.bin"))
+        self.assertEqual(self.auth.await_count, 2)
+        self.assertEqual(self.client._download_auth_keys[(5, False)], b"b" * 256)
+        self.assertEqual(self.path.with_name("retry.bin").read_bytes(), self.data)
+        self.assert_closed()
+
     async def test_foreign_media_auth_uses_regular_endpoint_before_independent_media_connections(self):
         self.file_id.dc_id = 5
         self.distinct_dc_endpoints()
@@ -478,7 +620,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         await self.download()
         self.assertGreater(len(self.sessions), 1)
         self.assertLessEqual(len(self.sessions), 4)
-        self.assertEqual(self.auth.await_count, len(self.sessions))
+        self.assertEqual(self.auth.await_count, 1)
         self.assertTrue(all(session.server_address == "198.51.100.2" for session in self.sessions))
         self.assertEqual(len({id(session.connection) for session in self.sessions}), len(self.sessions))
         self.assertEqual(self.path.read_bytes(), self.data)
@@ -559,7 +701,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         await self.download()
         self.assertGreater(len(self.sessions), 1)
         self.assertLessEqual(len(self.sessions), 4)
-        self.assertEqual(self.auth.await_count, len(self.sessions))
+        self.assertEqual(self.auth.await_count, 1)
         self.assertEqual(self.client.invoke.await_count, len(self.sessions))
         self.assertTrue(all(call.kwargs["sleep_threshold"] == 0
                             for call in self.client.invoke.await_args_list))

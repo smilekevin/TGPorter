@@ -119,7 +119,7 @@
 - **代理支持** — Kurigram 原生代理 + Docker 环境变量代理；`proxy: {}` 可禁用 Telegram 代理
 - **依赖管理** — Python 依赖统一由 `requirements.txt` 管理，WebUI 无需 npm 安装或构建；Starlette、Uvicorn、Pydantic 固定版本；完整安装步骤见[部署指南](DEPLOY.md#手动安装)。
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
-- **跨 DC 连接初始化** — 普通媒体下载通过普通 DC 端点创建密钥，再使用独立媒体连接；密钥协商超过 60 秒会关闭该连接并按现有规则重试，保留断点
+- **跨 DC 连接初始化** — 普通媒体下载首次通过普通 DC 端点创建密钥，同一账号和 DC 的后续 worker／文件在内存中复用该密钥；媒体会话和 TCP 连接仍各自独立；密钥协商超过 60 秒会关闭该连接并按现有规则重试，保留断点
 - **统一日志** — 仅写入 `log/tdl.log`，10MB 轮转，保留 30 天；首块数据前每 30 秒记录等待阶段，DEBUG 可查看连接准备和授权步骤，见 [部署指南](DEPLOY.md)
 
 ---
@@ -516,7 +516,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Proxy** — Kurigram native proxy + Docker environment variable proxy; `proxy: {}` disables the Telegram proxy
 - **Dependencies** — Python dependencies are managed in `requirements.txt`, and the WebUI needs no npm install or build. Starlette, Uvicorn and Pydantic are version-pinned; see the [installation guide](DEPLOY.md#manual-install).
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
-- **Cross-DC startup** — regular media downloads create keys through the regular DC endpoint before opening independent media connections; key exchange exceeding 60 seconds retires the connection under the existing retry policy, preserving checkpoints
+- **Cross-DC startup** — regular media downloads create a key through the regular DC endpoint once per account/DC and reuse it in memory across workers/files, with separate media sessions and TCP connections; key exchange exceeding 60 seconds retires the connection under the existing retry policy, preserving checkpoints
 - **Unified log** — only `log/tdl.log`, 10MB rotation, 30-day retention; first-data waits report their stage every 30 seconds, with DEBUG startup and authorization traces; see the [deployment guide](DEPLOY.md)
 
 ---

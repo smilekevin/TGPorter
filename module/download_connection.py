@@ -6,13 +6,14 @@ from itertools import count
 from loguru import logger
 from module.telegram import pyrogram
 from pyrogram import Client, raw
-from pyrogram.errors import AuthBytesInvalid
+from pyrogram.errors import AuthBytesInvalid, AuthKeyDuplicated, AuthKeyInvalid, AuthKeyUnregistered
 from pyrogram.session import Auth, Session
 
 
 _connection_ids = count(1)
 STARTUP_WARNING_INTERVAL = 30
 AUTH_KEY_TIMEOUT = 60
+_INVALID_AUTH_KEYS = (AuthKeyInvalid, AuthKeyUnregistered, AuthKeyDuplicated)
 
 
 class _MediaSession:
@@ -78,6 +79,53 @@ class _DownloadClient:
                            "stage={}, stage_elapsed={:.1f}s",
                            self.connection_id, self.label, self.stage_dc, self.stage, elapsed)
 
+    async def create_auth_key(self, dc_id, option, test_mode, *, is_cdn):
+        """Keep key exchange bounded while tracking transports on this worker."""
+        self.set_stage("creating auth key", dc_id)
+        logger.debug("Download connection #{} for {} (DC {}): auth endpoint {}:{}, CDN={}",
+                     self.connection_id, self.label, dc_id, option.ip_address, option.port, is_cdn)
+        try:
+            return await asyncio.wait_for(
+                Auth(self, dc_id, option.ip_address, option.port, test_mode).create(),
+                timeout=AUTH_KEY_TIMEOUT,
+            )
+        except asyncio.TimeoutError as error:
+            raise ConnectionError(
+                f"Auth key creation timed out on DC {dc_id} after {AUTH_KEY_TIMEOUT} seconds"
+            ) from error
+
+    async def get_dc_auth_key(self, dc_id, test_mode):
+        """Share key bytes within one account/DC, never sessions or sockets."""
+        if not hasattr(self.client, "_download_auth_keys"):
+            self.client._download_auth_keys = {}
+            self.client._download_auth_locks = {}
+        keys = self.client._download_auth_keys
+        cache_key = (dc_id, test_mode)
+        lock = self.client._download_auth_locks.setdefault(cache_key, asyncio.Lock())
+        self.set_stage("waiting for shared DC auth key", dc_id)
+        async with lock:
+            if cache_key in keys:
+                self.set_stage("reusing DC auth key", dc_id)
+                return keys[cache_key]
+            # Match Kurigram's regular-DC bootstrap, without creating a second
+            # shared media session or coupling worker transport lifetimes.
+            self.set_stage("resolving auth endpoint", dc_id)
+            option = await self.client.get_dc_option(dc_id, ipv6=self.ipv6)
+            auth_key = await self.create_auth_key(dc_id, option, test_mode, is_cdn=False)
+            keys[cache_key] = auth_key
+            return auth_key
+
+    def discard_invalid_auth_keys(self):
+        """Invalidate only the rejected key, preserving newer keys and other DCs."""
+        keys = getattr(self.client, "_download_auth_keys", {})
+        for session in self.media_sessions.values():
+            if session.is_cdn:
+                continue
+            cache_key = (session.dc_id, session.test_mode)
+            if keys.get(cache_key) == session.auth_key:
+                keys.pop(cache_key)
+                logger.debug("Discarded rejected download auth key for DC {}", session.dc_id)
+
     async def get_session(self, dc_id, *, is_media=False, is_cdn=False, temporary=False):
         """Own every media/CDN session, including one interrupted during startup."""
         if is_cdn:
@@ -100,26 +148,10 @@ class _DownloadClient:
         current_dc = await self.storage.dc_id() == dc_id
         if current_dc and not is_cdn:
             auth_key = await self.storage.auth_key()
+        elif is_cdn:
+            auth_key = await self.create_auth_key(dc_id, option, test_mode, is_cdn=True)
         else:
-            auth_option = option
-            if not is_cdn:
-                # Match Kurigram's regular-DC auth bootstrap. A media-only
-                # endpoint must not be used for the initial key exchange.
-                self.set_stage("resolving auth endpoint", dc_id)
-                auth_option = await self.client.get_dc_option(dc_id, ipv6=self.ipv6)
-            self.set_stage("creating auth key", dc_id)
-            logger.debug("Download connection #{} for {} (DC {}): auth endpoint {}:{}, CDN={}",
-                         self.connection_id, self.label, dc_id,
-                         auth_option.ip_address, auth_option.port, is_cdn)
-            try:
-                auth_key = await asyncio.wait_for(
-                    Auth(self, dc_id, auth_option.ip_address, auth_option.port, test_mode).create(),
-                    timeout=AUTH_KEY_TIMEOUT,
-                )
-            except asyncio.TimeoutError as error:
-                raise ConnectionError(
-                    f"Auth key creation timed out on DC {dc_id} after {AUTH_KEY_TIMEOUT} seconds"
-                ) from error
+            auth_key = await self.get_dc_auth_key(dc_id, test_mode)
         session = Session(self, dc_id, option.ip_address, option.port, auth_key,
                           test_mode, is_media=is_media, is_cdn=is_cdn)
         # Register before start: cancellation must still stop its background tasks.
@@ -250,6 +282,10 @@ class DownloadConnection:
                     logger.info("Opened independent download connection #{} for {} (DC {})",
                                 self.connection_id, self.label, file_id.dc_id)
                 yield chunk
+        except _INVALID_AUTH_KEYS:
+            if self.download_client is not None:
+                self.download_client.discard_invalid_auth_keys()
+            raise
         finally:
             if self.download_client is not None:
                 self.download_client.diagnosing = False
@@ -273,3 +309,7 @@ async def close_download_connections(client):
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    # All key creators and lock waiters belong to the stopped workers. Clear
+    # account-scoped key state only after their cancellation/cleanup finishes.
+    getattr(client, "_download_auth_keys", {}).clear()
+    getattr(client, "_download_auth_locks", {}).clear()
