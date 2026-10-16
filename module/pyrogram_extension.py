@@ -1040,7 +1040,7 @@ async def report_bot_forward_status(
 _report_lock = asyncio.Lock()
 
 # Bot connection error tracking — when consecutive connection errors reach
-# _BOT_RECONNECT_THRESHOLD, bot.py's update_reply_message loop will trigger
+# _BOT_RECONNECT_THRESHOLD, bot.py's independent heartbeat loop will trigger
 # a bot stop+start reconnect. Reset on successful report.
 _bot_conn_errors = {"count": 0}
 _BOT_RECONNECT_THRESHOLD = 20
@@ -1073,7 +1073,7 @@ async def send_bot_notification(client, from_user_id, text):
     except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
         _record_bot_flood_wait(error.value)
     except Exception as error:
-        logger.debug("Bot notification failed: {}", error)
+        logger.warning("Bot notification failed: error={}", type(error).__name__)
     return False
 
 
@@ -1102,11 +1102,14 @@ async def report_bot_status(
         return result
     except Exception as e:
         err_str = str(e)
-        if "Connection lost" in err_str or "OSError" in err_str or "TimeoutError" in err_str or "socket" in err_str.lower():
+        if (isinstance(e, (TimeoutError, OSError, ConnectionError))
+                or "Connection lost" in err_str or "OSError" in err_str
+                or "TimeoutError" in err_str or "socket" in err_str.lower()):
             _bot_conn_errors["count"] += 1
-            logger.warning(f"bot connection error #{_bot_conn_errors['count']}: {e}")
+            logger.warning("Bot report connection error: error={} count={} task_id={}",
+                           type(e).__name__, _bot_conn_errors["count"], node.task_id)
         else:
-            logger.debug(f"{e}")
+            logger.warning("Bot report failed: error={} task_id={}", type(e).__name__, node.task_id)
         return False
 
 
@@ -1370,8 +1373,12 @@ async def _report_bot_status(
                 node.last_bot_flood_notice = bot_flood_notice
             except pyrogram.errors.exceptions.bad_request_400.MessageIdInvalid:
                 pass
+            except (TimeoutError, OSError, ConnectionError):
+                # Let the outer reporter count actual connection failures for recovery.
+                raise
             except Exception as e:
-                logger.debug(f"edit_message_text failed: {e}")
+                logger.warning("Bot edit_message_text failed: error={} task_id={}",
+                               type(e).__name__, node.task_id)
                 return False
         return True
     return False

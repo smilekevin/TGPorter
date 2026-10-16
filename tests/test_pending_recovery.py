@@ -62,7 +62,8 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.bot.is_running = False
         self.app.is_running = False
-        tasks = [self.bot.reply_task, getattr(self.bot, "_pending_consumer_task", None),
+        tasks = [self.bot.reply_task, self.bot.heartbeat_task,
+                 getattr(self.bot, "_pending_consumer_task", None),
                  *getattr(self.bot, "_range_tasks", {}).values(), *self.workers]
         tasks = [task for task in tasks if task is not None]
         for task in tasks:
@@ -98,6 +99,7 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch.object(bot.pyrogram, "Client", return_value=gateway), \
                 patch.object(self.bot, "_register_bot_handlers"), \
+                patch.object(self.bot, "_ensure_heartbeat"), \
                 patch.object(bot, "send_help_str", AsyncMock()):
             await self.bot.start(self.app, self.client, self.bot.add_download_task,
                                  self.bot.download_chat_task)

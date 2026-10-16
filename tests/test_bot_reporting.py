@@ -47,6 +47,17 @@ class BotReportingTests(unittest.IsolatedAsyncioTestCase):
     async def report(self, immediate=False):
         return await extension.report_bot_status(self.client, self.node, immediate)
 
+    async def test_report_connection_errors_include_type_and_reach_reconnect_counter(self):
+        for error in (TimeoutError(), ConnectionError("private error contents")):
+            with self.subTest(error=type(error).__name__):
+                extension._bot_conn_errors["count"] = 0
+                self.client.edit_message_text.side_effect = error
+                with patch.object(extension.logger, "warning") as warning:
+                    self.assertFalse(await self.report(immediate=True))
+                self.assertEqual(extension._bot_conn_errors["count"], 1)
+                self.assertEqual(warning.call_args.args[1], type(error).__name__)
+                self.assertNotIn("private error contents", str(warning.call_args))
+
     async def test_progress_reports_live_streams_and_updates_when_paused(self):
         with download_stat.track_download_stream(100, 61, 1), \
                 download_stat.track_download_stream(100, 61, 1):

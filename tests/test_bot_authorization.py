@@ -19,6 +19,7 @@ class BotAuthorizationTests(unittest.IsolatedAsyncioTestCase):
             instance.config_path = str(Path(directory) / "bot.yaml")
             instance.recover_tasks = AsyncMock()
             instance._ensure_pending_consumer = Mock()
+            instance._ensure_heartbeat = Mock()
             instance.update_reply_message = AsyncMock()
             account = types.User(id=999, is_bot=True, username="offline_bot")
             telegram = SimpleNamespace(
@@ -39,7 +40,7 @@ class BotAuthorizationTests(unittest.IsolatedAsyncioTestCase):
                 send_help.assert_not_awaited()
             self.assertEqual(set(instance.allowed_user_ids), {123, 456})
             handlers = [call.args[0] for call in telegram.add_handler.call_args_list
-                        if call.args[0].callback is bot.help_command]
+                        if getattr(call.args[0].callback, "__wrapped__", None) is bot.help_command]
             for user_id, expected in [(123, True), (456, True), (789, False)]:
                 message = types.Message(
                     id=1, text="/start", from_user=types.User(id=user_id),
@@ -53,6 +54,7 @@ class BotAuthorizationTests(unittest.IsolatedAsyncioTestCase):
             instance.config_path = str(Path(directory) / "bot.yaml")
             instance.recover_tasks = AsyncMock()
             instance._ensure_pending_consumer = Mock()
+            instance._ensure_heartbeat = Mock()
             instance.update_reply_message = AsyncMock()
             human = types.User(id=10, is_bot=False)
             owner = SimpleNamespace(get_chat=AsyncMock(return_value=SimpleNamespace(id=20)),

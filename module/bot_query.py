@@ -5,7 +5,7 @@ import html
 from module.download_service import DownloadService
 from module.language import _t
 from module.telegram import pyrogram
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters
 
 
 _PAGE_SIZE = 6
@@ -89,7 +89,7 @@ async def query_tasks(client, message):
         return
     from module.bot import _bot
     text, keyboard = build_task_query(DownloadService(_bot.app), status, page)
-    await client.send_message(message.chat.id, text, reply_to_message_id=message.id,
+    await client.send_message(message.chat.id, text, reply_parameters=ReplyParameters(message_id=message.id),
                               reply_markup=keyboard, parse_mode=pyrogram.enums.ParseMode.HTML)
 
 
