@@ -89,6 +89,7 @@
 - **批量操作按状态显示** — 下载中支持状态筛选和选择全部/下载中/已暂停，同选下载中可暂停、同选已暂停可恢复，混选时禁用二者；Pending 可取消所选排队任务；已完成只提供删除；失败可重试或删除
 - **操作** — 暂停/恢复、删除（单个/批量）、重试（单个/批量）；删除确认会识别本地文件和下载缓存
 - **实时数据** — 总速度 = 所有活跃任务速度之和，3 秒无回调判为过期归零
+- **下载流数** — 顶部汇总当前下载流数，文件卡片和 Telegram 进度播报显示各文件的当前下载流数；暂停时为 0
 - **粘性导航栏** — 滚动时标签页固定在顶部
 - **密码登录** — 网页和 Web API 使用登录 Session，可选记住登录 7 天，修改状态需 CSRF Token
 - **网页提交** — 提交单条 Telegram 消息链接，使用服务端已登录账号进入持久化下载队列
@@ -184,11 +185,11 @@ Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参
 |------|------|------|
 | `/` | GET | WebUI 主页 |
 | `/submit_download` | POST | 提交单条 HTTPS `t.me` 消息链接（JSON: `{"url": "https://t.me/channel/123"}`）；返回持久化入队结果，非下载完成 |
-| `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中） |
+| `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中），每个文件含当前下载流数 `active_streams` |
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
 | `/get_pending_list` | GET | Pending 队列，支持 `offset` / `limit` 分页及 `search` 按任务 ID/文件名搜索 |
 | `/get_failed_downloads` | GET | 失败列表 |
-| `/get_download_status` | GET | 总下载速度 |
+| `/get_download_status` | GET | 总下载速度及当前下载流数（`active_streams`） |
 | `/get_download_state` | GET | 全局下载状态（downloading / paused） |
 | `/get_completed_count` | GET | 已完成数量（轻量轮询） |
 | `/get_flood_wait` | GET | FloodWait 冷却状态 + 剩余秒数 |
@@ -477,13 +478,13 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Efficient refresh** — parallel initial loading, one initialization and no overlapping poll cycles; polling pauses in hidden pages and refreshes immediately on return
 - **Task search** — filter the current tab by task ID or filename and retain the query across tabs; Pending and Completed search the full list on the server, and clearing search restores the list
 - **Four tabs**:
-  - 📥 **Active** — live progress / speed / ETA
+  - 📥 **Active** — live progress / speed / ETA / current download streams
   - ✅ **Completed** — infinite scroll, server-side search
   - ❌ **Failed** — error reason + source link, retry supported
   - ⏳ **Pending** — queue with wait time
 - **Contextual batch actions** — filter downloads by status and select all/running/paused tasks; pause running selections or resume paused selections, with both disabled for mixed states; cancel queued Pending tasks, delete Completed tasks, and retry/delete Failed tasks
 - **Actions** — pause/resume, delete (single/batch), retry (single/batch); deletion confirmation identifies local files and download cache
-- **Real-time** — total speed = sum of active task speeds, 3s stale check
+- **Real-time** — total speed = sum of active task speeds, 3s stale check; the header shows the total active stream count, while each file and Telegram progress report shows its own count
 - **Sticky nav** — tabs stay visible while scrolling
 - **Password login** — WebUI and Web APIs use login sessions with an optional seven-day remember-me cookie; state changes require a CSRF token
 - **Web submissions** — Submit one Telegram post link to the durable queue using the server’s existing account
@@ -579,11 +580,11 @@ The main service exposes typed tools, structured results and actionable errors a
 |----------|--------|-------------|
 | `/` | GET | WebUI page |
 | `/submit_download` | POST | Submit one HTTPS `t.me` post link (JSON: `{"url": "https://t.me/channel/123"}`); returns durable queue acceptance, not completion |
-| `/get_download_list` | GET | Download list (`already_down=true` completed, `false` active) |
+| `/get_download_list` | GET | Download list (`already_down=true` completed, `false` active), with per-file `active_streams` |
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
 | `/get_pending_list` | GET | Pending queue with `offset` / `limit` pagination and `search` by task ID/filename |
 | `/get_failed_downloads` | GET | Failed list |
-| `/get_download_status` | GET | Total download speed |
+| `/get_download_status` | GET | Total download speed and current stream count (`active_streams`) |
 | `/get_download_state` | GET | Global state (downloading / paused) |
 | `/get_completed_count` | GET | Completed count (lightweight polling) |
 | `/get_flood_wait` | GET | FloodWait cooldown status + remaining seconds |

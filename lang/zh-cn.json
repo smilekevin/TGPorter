@@ -16,6 +16,7 @@
     "TG Porter": "TG Porter",
     "Version": "版本",
     "Downloading": "下载中",
+    "Active streams: {count}": "当前下载流数：{count}",
     "Available commands:": "可用命令:",
     "Show available commands": "显示可用命令",
     "Download messages": "下载消息",

@@ -35,6 +35,7 @@ MOCK_ACTIVE = [
         "download_progress": "67.3",
         "download_progress_raw": 67.3,
         "download_speed": "8.5 MB/s",
+        "active_streams": 3,
         "save_path": "/app/downloads/Photography group/2024_Summer_Vacation.mp4",
         "status": "active"
     }
@@ -51,6 +52,7 @@ MOCK_COMPLETED = [
         "download_progress": "100.0",
         "download_progress_raw": 100.0,
         "download_speed": "0 B/s",
+        "active_streams": 0,
         "save_path": "/app/downloads/Design resources/Figma_UI_Kit_2025_Complete_Pack.zip",
         "status": "completed"
     }
@@ -84,7 +86,7 @@ def get_failed_downloads():
 
 @app.route("/get_download_status")
 def get_download_status():
-    return jsonify(download_speed="8.5 MB/s", upload_speed="0.00 B/s")
+    return jsonify(download_speed="8.5 MB/s", upload_speed="0.00 B/s", active_streams=3)
 
 @app.route("/get_app_version")
 def get_app_version():

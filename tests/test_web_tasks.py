@@ -35,6 +35,9 @@ class WebTaskTests(unittest.TestCase):
             }]),
             patch.object(download_stat, '_cancelled_tasks', set()),
             patch.object(download_stat, '_discarded_tasks', set()),
+            patch.object(download_stat, '_paused_tasks', set()),
+            patch.object(download_stat, '_download_streams', {}),
+            patch.object(download_stat, '_download_state', download_stat.DownloadState.Downloading),
             patch.object(download_stat, '_HISTORY_FILE', str(self.root / 'history.json')),
         ):
             item.start()
@@ -49,6 +52,29 @@ class WebTaskTests(unittest.TestCase):
 
     def post(self, url, **kwargs):
         return self.client.post(url, headers=self.headers, **kwargs)
+
+    def test_live_stream_counts_in_production_routes_follow_pause_and_resume(self):
+        record = download_stat._download_result[1][2]
+        record.update(total_size=100, download_speed=0, start_time=0, end_time=0)
+        self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 0)
+        self.assertEqual(self.client.get('/get_download_list?already_down=false').json[0]['active_streams'], 0)
+        with download_stat.track_download_stream(1, 2, 'task-1'), \
+                download_stat.track_download_stream(1, 2, 'task-1'), \
+                download_stat.track_download_stream(2, 3, 'task-2'):
+            self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 3)
+            rows = self.client.get('/get_download_list?already_down=false').json
+            self.assertEqual(rows[0]['active_streams'], 2)
+            self.assertEqual(self.post('/pause_task?task_id=1_2').json['code'], '1')
+            self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 1)
+            self.assertEqual(self.client.get('/get_download_list?already_down=false').json[0]['active_streams'], 0)
+            self.assertEqual(self.post('/resume_task?task_id=1_2').json['code'], '1')
+            self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 3)
+        record['down_byte'] = 100
+        # Saved history never supplies a live stream count, even if it has an old field.
+        record['active_streams'] = 99
+        completed = self.client.get('/get_download_list?already_down=true').json['tasks']
+        self.assertEqual(completed[0]['active_streams'], 0)
+        self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 0)
 
     def test_submission_validates_json_and_link_without_touching_telegram(self):
         self.assertEqual(self.client.post('/submit_download', json={'url': 'https://t.me/a/1'}).status_code, 400)

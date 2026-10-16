@@ -34,7 +34,7 @@ from module.app import (
     UploadProgressStat,
     UploadStatus,
 )
-from module.download_stat import get_download_result, is_task_paused
+from module.download_stat import get_download_result, is_task_paused, get_active_download_streams
 from module.language import Language, _t
 from module.send_media_group_v2 import cache_media, send_media_group_v2
 from utils.format import (
@@ -1185,6 +1185,7 @@ async def _report_bot_status(
                     f" │   ├─ 📁 : {temp_file_name}\n"
                     f" │   ├─ 📏 : {format_byte(value['down_byte'])} / {format_byte(value['total_size'])}\n"
                     f" │   ├─ ⏬ : {format_byte(value['download_speed'])}/s\n"
+                    f" │   ├─ 🔗 {_t('Active streams: {count}', count=get_active_download_streams(f'{node.chat_id}_{idx}'))}\n"
                     f" │   └─ 📊 : [{create_progress_bar(progress)}]"
                     f" ({progress}%)\n"
                 )

@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import time
+from contextlib import contextmanager
 from enum import Enum
 
 from loguru import logger
@@ -59,6 +60,34 @@ _SLOW_CLEAR_SUSTAIN_SEC = 15       # Clear after 15 seconds of sustained recover
 # Strategy: sync functions that read/write shared state use a reentrant-compatible
 # pattern via _sync_lock.
 _sync_lock = __import__('threading').Lock()  # Protect writes in synchronous callers.
+_download_streams: dict = {}  # Runtime-only tokens; never restore stream counts from history.
+
+
+@contextmanager
+def track_download_stream(chat_id, message_id, task_id):
+    """Count a stream while it fetches a range, including requests awaiting data."""
+    token = object()
+    with _sync_lock:
+        _download_streams[token] = (f"{chat_id}_{message_id}", str(task_id))
+    try:
+        yield
+    finally:
+        with _sync_lock:
+            _download_streams.pop(token, None)
+
+
+def get_active_download_streams(task_id=None) -> int:
+    """Read live stream counts safely from the downloader loop or Flask threads."""
+    if get_download_state() == DownloadState.StopDownload:
+        return 0
+    with _sync_lock:
+        streams = list(_download_streams.values())
+    return sum(
+        1 for key, owner in streams
+        if (task_id is None or key == str(task_id))
+        and not (is_task_paused(key) or is_task_paused(owner)
+                 or key in _cancelled_tasks or owner in _cancelled_tasks)
+    )
 
 
 def get_download_result() -> dict:

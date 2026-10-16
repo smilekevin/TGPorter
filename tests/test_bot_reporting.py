@@ -35,6 +35,7 @@ class BotReportingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(download_stat, "_paused_tasks", set()),
             patch.object(download_stat, "_cancelled_tasks", set()),
             patch.object(download_stat, "_discarded_tasks", set()),
+            patch.object(download_stat, "_download_streams", {}),
             patch.object(download_stat, "_download_state", download_stat.DownloadState.Downloading),
         ]
         for item in self.patches:
@@ -45,6 +46,24 @@ class BotReportingTests(unittest.IsolatedAsyncioTestCase):
 
     async def report(self, immediate=False):
         return await extension.report_bot_status(self.client, self.node, immediate)
+
+    async def test_progress_reports_live_streams_and_updates_when_paused(self):
+        with download_stat.track_download_stream(100, 61, 1), \
+                download_stat.track_download_stream(100, 61, 1):
+            self.assertTrue(await self.report())
+            self.assertIn('Active streams: 2', self.client.edit_message_text.call_args.args[2])
+            download_stat.pause_task('100_61')
+            self.now += 10
+            self.assertTrue(await self.report())
+            self.assertIn('Active streams: 0', self.client.edit_message_text.call_args.args[2])
+            download_stat.resume_task('100_61')
+            set_language(Language.ZH_CN)
+            self.now += 10
+            self.assertTrue(await self.report())
+            self.assertIn('当前下载流数：2', self.client.edit_message_text.call_args.args[2])
+        self.now += 10
+        self.assertTrue(await self.report())
+        self.assertIn('当前下载流数：0', self.client.edit_message_text.call_args.args[2])
 
     async def test_progress_updates_within_same_twenty_percent_bucket(self):
         self.assertTrue(await self.report())
