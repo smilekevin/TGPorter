@@ -4,6 +4,7 @@ import asyncio
 import os
 import time
 from datetime import datetime
+from functools import wraps
 from typing import Callable, List, Union
 
 from module.telegram import pyrogram
@@ -52,6 +53,11 @@ from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
 
 # pylint: disable = C0301, R0902
+
+_BOT_HEARTBEAT_INTERVAL = 60
+_BOT_HEARTBEAT_TIMEOUT = 10
+_BOT_HEARTBEAT_FAILURES = 3
+_BOT_RECONNECT_COOLDOWN = 300
 
 
 def _cleanup_stopped_task(node):
@@ -196,6 +202,11 @@ class DownloadBot:
         self.download_filter: List[str] = []
         self.task_id: int = 0
         self.reply_task = None
+        self.heartbeat_task = None
+        self._heartbeat_failures = 0
+        self._bot_reconnect_after = 0.0
+        self._last_message_at = None
+        self._active_handlers = {}
 
         # In-memory set of task_ids that are in asyncio Queue but not yet picked
         # up by a worker. Replaces the "queued" download_state — no longer written
@@ -208,6 +219,143 @@ class DownloadBot:
         self._active_downloads = 0
         self._pending_consumer_task = None
         self._range_tasks: dict = {}
+
+    def _ensure_heartbeat(self):
+        """Monitor the Bot session independently of downloads and progress replies."""
+        if self.bot is None:
+            return None
+        if self.heartbeat_task is None or self.heartbeat_task.done():
+            self.heartbeat_task = self.app.loop.create_task(self._heartbeat_loop())
+            logger.info("Bot heartbeat started: interval={}s timeout={}s failure_threshold={}",
+                        _BOT_HEARTBEAT_INTERVAL, _BOT_HEARTBEAT_TIMEOUT,
+                        _BOT_HEARTBEAT_FAILURES)
+        return self.heartbeat_task
+
+    async def _heartbeat_loop(self):
+        try:
+            while self.is_running:
+                expected = time.monotonic() + _BOT_HEARTBEAT_INTERVAL
+                await asyncio.sleep(_BOT_HEARTBEAT_INTERVAL)
+                if not self.is_running:
+                    break
+                delay = max(0, time.monotonic() - expected)
+                if delay >= _BOT_HEARTBEAT_TIMEOUT:
+                    logger.warning("Bot heartbeat delayed: event_loop_delay_s={:.1f}", delay)
+                try:
+                    await self._check_bot_health()
+                except Exception as error:
+                    logger.error("Bot heartbeat monitor error: {}", type(error).__name__)
+        finally:
+            logger.info("Bot heartbeat stopped")
+
+    async def _check_bot_health(self):
+        """Require a matching Telegram Pong; a connected flag alone is insufficient."""
+        from module.pyrogram_extension import (
+            _bot_conn_errors, _BOT_RECONNECT_THRESHOLD, _bot_flood_wait,
+            _record_bot_flood_wait,
+        )
+        if self.bot is None:
+            return
+        remaining = _bot_flood_wait["until"] - time.time()
+        if remaining > 0:
+            logger.info("Bot heartbeat deferred: FLOOD_WAIT remaining={:.0f}s", remaining)
+            return
+        started = time.monotonic()
+        ping_id = time.monotonic_ns() & ((1 << 63) - 1)
+        try:
+            async with asyncio.timeout(_BOT_HEARTBEAT_TIMEOUT):
+                # Kurigram counts total attempts here; zero skips the send entirely.
+                pong = await self.bot.invoke(
+                    pyrogram.raw.functions.Ping(ping_id=ping_id), retries=1,
+                    timeout=_BOT_HEARTBEAT_TIMEOUT, sleep_threshold=0, retry_delay=0)
+                if not isinstance(pong, pyrogram.raw.types.Pong) or pong.ping_id != ping_id:
+                    raise ConnectionError("Unexpected heartbeat response")
+        except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
+            _record_bot_flood_wait(error.value)
+            logger.warning("Bot heartbeat deferred: FLOOD_WAIT {}s", error.value)
+            return
+        except Exception as error:
+            self._heartbeat_failures += 1
+            logger.warning("Bot heartbeat failed: error={} elapsed_s={:.1f} failures={}/{} connected={}",
+                           type(error).__name__, time.monotonic() - started,
+                           self._heartbeat_failures, _BOT_HEARTBEAT_FAILURES,
+                           getattr(self.bot, "is_connected", False))
+        else:
+            if self._heartbeat_failures:
+                logger.info("Bot heartbeat recovered: failed_probes={}", self._heartbeat_failures)
+            self._heartbeat_failures = 0
+            now = time.monotonic()
+            dispatcher = getattr(self.bot, "dispatcher", None)
+            workers = getattr(dispatcher, "handler_worker_tasks", [])
+            queue = getattr(dispatcher, "updates_queue", None)
+            oldest_name, oldest_start = min(
+                self._active_handlers.values(), key=lambda value: value[1], default=("none", now))
+            logger.info(
+                "Bot heartbeat OK: rtt_ms={:.0f} connected={} update_queue={} workers_alive={}/{} "
+                "active_handlers={} oldest_handler_s={:.0f} oldest_handler={} last_message_age_s={}",
+                (now - started) * 1000, getattr(self.bot, "is_connected", False),
+                queue.qsize() if queue is not None else 0,
+                sum(not task.done() for task in workers), len(workers),
+                len(self._active_handlers), now - oldest_start, oldest_name,
+                round(now - self._last_message_at) if self._last_message_at is not None else "none")
+
+        # This loop owns reconnects so slow progress reports cannot prevent recovery.
+        if (self._heartbeat_failures >= _BOT_HEARTBEAT_FAILURES
+                or _bot_conn_errors["count"] >= _BOT_RECONNECT_THRESHOLD):
+            now = time.monotonic()
+            if now < self._bot_reconnect_after:
+                logger.warning("Bot reconnect deferred: cooldown_remaining_s={:.0f}",
+                               self._bot_reconnect_after - now)
+                return
+            self._bot_reconnect_after = now + _BOT_RECONNECT_COOLDOWN
+            logger.warning("Bot heartbeat triggering reconnect: heartbeat_failures={} report_errors={}",
+                           self._heartbeat_failures, _bot_conn_errors["count"])
+            _bot_conn_errors["count"] = 0
+            success = await self._reconnect_bot()
+            cooldown = _BOT_RECONNECT_COOLDOWN if success else _BOT_HEARTBEAT_INTERVAL
+            self._bot_reconnect_after = time.monotonic() + cooldown
+
+    async def _observe_bot_message(self, client, message):
+        """Log receipt before authorization without recording message content."""
+        self._last_message_at = time.monotonic()
+        sender = getattr(message, "from_user", None)
+        allowed = sender is not None and sender.id in self.allowed_user_ids
+        kind = "media" if message.media else "text"
+        if message.text and message.text.startswith("/"):
+            kind = "command"
+        sent_at = getattr(message, "date", None)
+        age = max(0, round(time.time() - sent_at.timestamp())) if sent_at is not None else "unknown"
+        logger.info("Bot message received: message_id={} kind={} authorized={} message_age_s={}",
+                    message.id, kind, allowed, age)
+
+    def _logged_bot_handler(self, callback):
+        """Trace handler completion independently of the Telegram receive path."""
+        @wraps(callback)
+        async def logged(client, update):
+            task = asyncio.current_task()
+            started = time.monotonic()
+            message = getattr(update, "message", None) or update
+            message_id = getattr(message, "id", "none")
+            self._active_handlers[task] = (callback.__name__, started)
+            logger.info("Bot handler started: handler={} message_id={}", callback.__name__, message_id)
+            outcome = "completed"
+            try:
+                return await callback(client, update)
+            except (pyrogram.StopPropagation, pyrogram.ContinuePropagation):
+                raise
+            except asyncio.CancelledError:
+                outcome = "cancelled"
+                raise
+            except Exception as error:
+                outcome = "failed"
+                logger.warning("Bot handler failed: handler={} message_id={} error={}",
+                               callback.__name__, message_id, type(error).__name__)
+                raise
+            finally:
+                self._active_handlers.pop(task, None)
+                logger.info("Bot handler finished: handler={} message_id={} outcome={} elapsed_s={:.1f}",
+                            callback.__name__, message_id, outcome, time.monotonic() - started)
+        return logged
 
     def _ensure_pending_consumer(self):
         """Keep one live consumer, including when the task store is empty."""
@@ -386,31 +534,10 @@ class DownloadBot:
 
     async def update_reply_message(self):
         """Update reply message"""
-        _bot_reconnect_cooldown = 300  # 5 min between reconnect attempts
-        _bot_last_reconnect = 0.0
         while self.is_running:
             for key, value in self.task_node.copy().items():
                 if value.is_running:
                     await report_bot_status(self.bot, value)
-
-            # Check if bot connection has degraded — reconnect if too many
-            # consecutive errors and cooldown has passed.
-            from module.pyrogram_extension import _bot_conn_errors, _BOT_RECONNECT_THRESHOLD
-            if _bot_conn_errors["count"] >= _BOT_RECONNECT_THRESHOLD:
-                now = time.time()
-                if now - _bot_last_reconnect >= _bot_reconnect_cooldown:
-                    logger.warning(
-                        f"Bot connection errors reached {_bot_conn_errors['count']} "
-                        f"(threshold {_BOT_RECONNECT_THRESHOLD}) — triggering reconnect"
-                    )
-                    _bot_conn_errors["count"] = 0
-                    _bot_last_reconnect = now
-                    success = await self._reconnect_bot()
-                    if success:
-                        _bot_last_reconnect = now
-                    else:
-                        # Reconnect failed — set shorter cooldown to retry sooner
-                        _bot_last_reconnect = now - _bot_reconnect_cooldown + 60
 
             for key, value in self.task_node.copy().items():
                 if value.is_running and value.is_finish():
@@ -834,13 +961,7 @@ class DownloadBot:
         self.reply_task = self.app.loop.create_task(self.update_reply_message())
         self._ensure_pending_consumer()
 
-        self.bot.add_handler(
-            MessageHandler(
-                forward_to_comments,
-                filters=pyrogram.filters.command(["forward_to_comments"])
-                & pyrogram.filters.user(self.allowed_user_ids),
-            )
-        )
+        self._ensure_heartbeat()
 
         # Register channel listeners automatically, including chats configured in config.yaml.
         if self.app.chat_download_config:
@@ -853,77 +974,82 @@ class DownloadBot:
         Called from start() and _reconnect_bot() — stop() clears handlers,
         so they must be re-registered after every reconnect.
         """
-        self.bot.add_handler(
+        def add_handler(handler):
+            handler.callback = self._logged_bot_handler(handler.callback)
+            self.bot.add_handler(handler)
+
+        self.bot.add_handler(MessageHandler(self._observe_bot_message), group=-1)
+        add_handler(
             MessageHandler(
                 query_tasks,
                 filters=pyrogram.filters.command(["query"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 download_from_bot,
                 filters=pyrogram.filters.command(["download"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 forward_messages,
                 filters=pyrogram.filters.command(["forward"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 download_forward_media,
                 filters=pyrogram.filters.media
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 download_from_link,
                 filters=pyrogram.filters.regex(r"^https://t.me.*")
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 set_listen_forward_msg,
                 filters=pyrogram.filters.command(["listen_forward"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 help_command,
                 filters=pyrogram.filters.command(["help"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 get_info,
                 filters=pyrogram.filters.command(["get_info"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 help_command,
                 filters=pyrogram.filters.command(["start"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 set_language,
                 filters=pyrogram.filters.command(["set_language"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 add_filter,
                 filters=pyrogram.filters.command(["add_filter"])
@@ -931,35 +1057,35 @@ class DownloadBot:
             )
         )
 
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 add_filter_advertisement_filter,
                 filters=pyrogram.filters.command(["add_ad"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 remove_filter_advertisement_filter,
                 filters=pyrogram.filters.command(["remove_ad"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 add_replace_advertisement_filter,
                 filters=pyrogram.filters.command(["add_replace_ad"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 remove_replace_advertisement_filter,
                 filters=pyrogram.filters.command(["remove_replace_ad"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 set_add_advertisement,
                 filters=pyrogram.filters.command(["set_ad"])
@@ -967,7 +1093,7 @@ class DownloadBot:
             )
         )
 
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 stop,
                 filters=pyrogram.filters.command(["stop"])
@@ -975,14 +1101,14 @@ class DownloadBot:
             )
         )
 
-        self.bot.add_handler(
+        add_handler(
             CallbackQueryHandler(
                 on_query_handler, filters=pyrogram.filters.user(self.allowed_user_ids)
             )
         )
 
         # forward_to_comments handler (registered after reply_task in original start)
-        self.bot.add_handler(
+        add_handler(
             MessageHandler(
                 forward_to_comments,
                 filters=pyrogram.filters.command(["forward_to_comments"])
@@ -1003,7 +1129,7 @@ class DownloadBot:
             except asyncio.TimeoutError:
                 logger.error("bot.stop() timed out after 30s, force disconnect")
                 try:
-                    await self.bot.disconnect()
+                    await asyncio.wait_for(self.bot.disconnect(), timeout=10)
                 except Exception:
                     pass
                 self.bot.is_connected = False
@@ -1094,13 +1220,14 @@ async def stop_download_bot():
     _bot.is_running = False
     _bot.stop_task("all", discard_partial=False)
     background_tasks = [
-        task for task in [_bot.reply_task, _bot._pending_consumer_task,
+        task for task in [_bot.reply_task, _bot.heartbeat_task, _bot._pending_consumer_task,
                           *_bot._range_tasks.values()] if task is not None
     ]
     for task in background_tasks:
         task.cancel()
     await asyncio.gather(*background_tasks, return_exceptions=True)
     _bot._pending_consumer_task = None
+    _bot.heartbeat_task = None
     if _bot.bot:
         await _bot.bot.stop()
 
@@ -1605,7 +1732,7 @@ async def direct_download(
 
     replay_message = _t("Direct download...")
     last_reply_message = await download_bot.bot.send_message(
-        message.from_user.id, replay_message, reply_to_message_id=message.id
+        message.from_user.id, replay_message, reply_parameters=types.ReplyParameters(message_id=message.id)
     )
 
     node = TaskNode(
@@ -1678,11 +1805,13 @@ async def download_forward_media(
     """
 
     if message.media and getattr(message, message.media.value):
+        origin = message.forward_origin
+        source_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
         # If forwarded from a channel/group, download from source
-        if message.forward_from_chat:
-            source_chat_id = message.forward_from_chat.id
-            source_message_id = message.forward_from_message_id or 0
-            source_chat_title = message.forward_from_chat.title or ""
+        if source_chat:
+            source_chat_id = source_chat.id
+            source_message_id = getattr(origin, "message_id", None) or 0
+            source_chat_title = source_chat.title or ""
 
             download_message = None
             if source_message_id:
@@ -1708,7 +1837,7 @@ async def download_forward_media(
                 try:
                     from module.pyrogram_extension import parse_link
                     # Build source link: private channels use /c/, public use /username/
-                    fwd_chat = message.forward_from_chat
+                    fwd_chat = source_chat
                     if fwd_chat.username:
                         link_str = f"https://t.me/{fwd_chat.username}/{source_message_id}"
                     else:
@@ -1797,7 +1926,7 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
                 await client.send_message(
                     message.from_user.id,
                     f"{_t('From')} {entity.title} {_t('download')} {message_id} {_t('error')}!",
-                    reply_to_message_id=message.id,
+                    reply_parameters=types.ReplyParameters(message_id=message.id),
                 )
         return
 
@@ -1855,7 +1984,7 @@ async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Mes
         res, err = _bot.filter.check_filter(download_filter)
         if not res:
             await client.send_message(
-                message.from_user.id, err, reply_to_message_id=message.id
+                message.from_user.id, err, reply_parameters=types.ReplyParameters(message_id=message.id)
             )
             return
     entity = None
@@ -1872,7 +2001,7 @@ async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Mes
             reply_message = _t("Download messages {start}–{end} from {chat}",
                                start=start_offset_id, end=end_offset_id, chat=chat_title)
             last_reply_message = await client.send_message(
-                message.from_user.id, reply_message, reply_to_message_id=message.id
+                message.from_user.id, reply_message, reply_parameters=types.ReplyParameters(message_id=message.id)
             )
             node = TaskNode(
                 chat_id=entity.id,
@@ -1944,7 +2073,7 @@ async def get_forward_task_node(
         await client.send_message(
             message.from_user.id,
             _t("Invalid chat link") + f"{src_chat_id} {dst_chat_id}",
-            reply_to_message_id=message.id,
+            reply_parameters=types.ReplyParameters(message_id=message.id),
         )
         return None
 
@@ -1955,7 +2084,7 @@ async def get_forward_task_node(
         await client.send_message(
             message.from_user.id,
             f"{_t('Invalid chat link')} {e}",
-            reply_to_message_id=message.id,
+            reply_parameters=types.ReplyParameters(message_id=message.id),
         )
         logger.exception(f"get chat error: {e}")
         return None
@@ -1966,7 +2095,7 @@ async def get_forward_task_node(
         await client.send_message(
             message.from_user.id,
             _t("Cannot be forwarded to this bot, will cause an infinite loop"),
-            reply_to_message_id=message.id,
+            reply_parameters=types.ReplyParameters(message_id=message.id),
         )
         return None
 
@@ -1975,13 +2104,13 @@ async def get_forward_task_node(
         res, err = _bot.filter.check_filter(download_filter)
         if not res:
             await client.send_message(
-                message.from_user.id, err, reply_to_message_id=message.id
+                message.from_user.id, err, reply_parameters=types.ReplyParameters(message_id=message.id)
             )
 
     last_reply_message = await client.send_message(
         message.from_user.id,
         _t("Forwarding message, please wait..."),
-        reply_to_message_id=message.id,
+        reply_parameters=types.ReplyParameters(message_id=message.id),
     )
 
     node = TaskNode(

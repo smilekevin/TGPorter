@@ -524,6 +524,23 @@ environment:
 5. **session 丢失** — 确保 `./sessions/` 目录已正确挂载
 6. **FLOOD_WAIT** — 频道消息过多触发了 Telegram 限速，等待冷却后自动恢复
 
+### Bot 心跳与消息诊断
+
+配置了 Bot 时，应用会独立于下载和进度通知，每 60 秒发送一次 MTProto Ping 并等待匹配的 Pong，最多等待 10 秒。每轮仅尝试一次；Kurigram 的 `retries=1` 表示总共一次尝试，设为 `0` 不会发送请求，会立即产生超时误报。无需新增配置。Kurigram 自身约每 5 秒发送一次不等待回复的保活 Ping；应用心跳额外验证 Telegram 确实返回了响应。连续 3 次失败会尝试重连 Bot，成功重启后 300 秒内不再重连；重启失败则最早在 60 秒后重试。已有的进度通知连接错误阈值也由该独立循环处理。Bot 的已知 FLOOD_WAIT 期间暂停探测；探测遇到 FLOOD_WAIT 时记录并遵守冷却，不计为网络失败。关闭服务时取消并等待心跳任务；无 Bot 模式不启动心跳。
+
+使用项目默认容器名查看日志：
+
+```bash
+docker logs --since 30m --timestamps tgporter
+docker logs -f --since 5m --timestamps tgporter
+```
+
+这些日志同时写入 `log/tdl.log`，遵守 `log_level`、轮转和保留设置。`INFO` 可看到 `Bot heartbeat OK`、往返耗时 `rtt_ms`、本地连接标记 `connected`、待处理更新数 `update_queue`、存活处理 worker 数 `workers_alive`、活动处理数 `active_handlers`、最长处理耗时和函数名，以及距离上次收到消息的秒数。`Bot heartbeat failed` 包含异常类型、等待耗时与连续失败数；重连尝试、结果与冷却也会记录；连接恢复显示 `Bot heartbeat recovered`，事件循环延迟超过 10 秒显示 `event_loop_delay_s`。消息入口日志 `Bot message received` 显示消息编号、类型、`authorized` 与消息发送至今的秒数 `message_age_s`，随后 `Bot handler started` / `Bot handler finished` 显示匹配处理函数、完成状态与耗时。日志不记录消息正文、命令参数、回调数据或 Token。
+
+`message.forward_from_chat`、`message.forward_from_message_id` 和发送消息时的 `reply_to_message_id` 弃用警告不是网络断线证据。Bot 已改用 Kurigram 的 `forward_origin` 和 `ReplyParameters`，保留频道来源、Bot 私聊回退和回复目标。
+
+Pong 证明 Bot 会话能与 Telegram 往返通信，不能证明消息解析、授权和命令回复均正常。心跳正常但 `/help` 无回复时，先看 `authorized=False`，再检查消息入口日志、`update_queue`、`workers_alive` 和长时间未完成的 handler。长期没有心跳日志也可能是下载事件循环阻塞、进程停止或日志级别过滤；WebUI 正常并不能排除这些情况。心跳不向用户发送测试消息，不创建额外 Telegram session，也不重启主下载客户端。
+
 ---
 
 ## Prerequisites
@@ -1029,3 +1046,20 @@ Inside a container, `127.0.0.1` refers to the container itself. Use a reachable 
 4. **Permission errors**: ensure mounted directories are writable.
 5. **Session is lost**: check the `sessions/` mount and repeat interactive login.
 6. **FLOOD_WAIT**: wait for the Telegram cooldown; pending tasks are retried automatically.
+
+### Bot Heartbeat and Message Diagnostics
+
+When a Bot is configured, an independent loop sends an MTProto Ping every 60 seconds and waits up to 10 seconds for a matching Pong. Each probe makes one attempt: Kurigram counts total attempts in `retries`, so `retries=1` sends once while `0` sends nothing and immediately reports a false timeout. No new configuration is required. Kurigram also sends its own keepalive Ping about every 5 seconds without waiting for a response; the application probe additionally verifies that Telegram responds. Three consecutive failures trigger a Bot reconnect attempt. A successful restart has a 300-second reconnect cooldown; a failed restart can retry after 60 seconds. The same independent loop handles the existing progress-report connection-error threshold. Probes defer during a known Bot FLOOD_WAIT; a FLOOD_WAIT from the probe records and respects the cooldown instead of counting as a network failure. Shutdown cancels and awaits the heartbeat; operation without a Bot does not start it.
+
+For the default container name:
+
+```bash
+docker logs --since 30m --timestamps tgporter
+docker logs -f --since 5m --timestamps tgporter
+```
+
+The same events go to `log/tdl.log` under the configured `log_level`, rotation and retention. At `INFO`, `Bot heartbeat OK` reports `rtt_ms`, the local `connected` flag, pending `update_queue`, `workers_alive`, `active_handlers`, the oldest handler's age and function name, and seconds since the last received message. `Bot heartbeat failed` includes the exception type, elapsed time and consecutive failure count. Reconnect attempts, outcomes and cooldowns are logged too; recovery emits `Bot heartbeat recovered`, and event-loop delays of at least 10 seconds report `event_loop_delay_s`. `Bot message received` records the message ID, type, `authorized` result and age since sending (`message_age_s`), followed by `Bot handler started` / `Bot handler finished` with the matching function, outcome and elapsed time. Logs exclude message bodies, command arguments, callback data and tokens.
+
+Deprecation warnings for `message.forward_from_chat`, `message.forward_from_message_id` or the `reply_to_message_id` sending argument do not indicate network loss. The Bot now uses Kurigram `forward_origin` and `ReplyParameters`, preserving channel origins, Bot-inbox fallback and reply targets.
+
+A Pong confirms round-trip communication on the Bot session; it does not prove message parsing, authorization or command replies work. If heartbeats succeed but `/help` does not respond, check for `authorized=False`, message receipt logs, `update_queue`, `workers_alive` and handlers that never finish. Missing heartbeats can also indicate a blocked downloader event loop, a stopped process or log-level filtering; a responsive WebUI does not rule these out. Probes send no test messages to users, create no additional Telegram sessions and do not restart the main download client.

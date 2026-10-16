@@ -47,6 +47,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 
 - Persist single-message tasks as Pending before the consumer fetches their messages and hands them to the shared file task queue. Batch history scans and live listeners also feed this queue.
 - `recover_tasks()` in `module/bot.py` restores task state and sequence numbers. Incomplete tasks return to Pending to avoid a burst of network requests after a restart.
+- Keep the Bot heartbeat independent of progress notifications. Require a bounded Telegram response, respect Bot FLOOD_WAIT, log dispatch metadata without message contents or credentials, and cancel and await the singleton monitor during shutdown.
 - Start the Pending consumer even when there are no historical tasks. Repeated startup must not create duplicate consumers. Cancel and await background tasks during shutdown.
 - Tasks being fetched, queued, and actively processed must share the concurrency budget. Release reservations on rejected handoffs, exceptions, and cancellation to prevent duplicate consumption, lost tasks, and leaked capacity.
 - Range-task recovery must preserve scan bounds, checkpoints, forwarding destinations, and topics. Single-message recovery must retain the owning account; use the Bot account to download and refresh Bot inbox media.

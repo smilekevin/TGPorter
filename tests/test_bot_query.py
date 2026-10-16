@@ -63,7 +63,8 @@ class BotQueryTests(unittest.IsolatedAsyncioTestCase):
                       "active.mp4", "done.mp4", "pending.mp4", "failed.mp4"):
             self.assertIn(value, text)
         self.assertIn("(4 tasks)", text)
-        self.assertEqual(call.kwargs["reply_to_message_id"], 10)
+        self.assertEqual(call.kwargs["reply_parameters"].message_id, 10)
+        self.assertNotIn("reply_to_message_id", call.kwargs)
         self.assertEqual((self.result, self.pending, self.failed), before)
 
     async def test_completed_filter_and_page_clamp(self):
@@ -143,10 +144,10 @@ class BotQueryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_command_and_pagination_use_existing_user_allowlist(self):
         handlers = []
-        self.backend.bot = SimpleNamespace(add_handler=handlers.append)
+        self.backend.bot = SimpleNamespace(add_handler=lambda handler, **kwargs: handlers.append(handler))
         self.backend._register_bot_handlers()
-        command = next(handler for handler in handlers if handler.callback is bot_query.query_tasks)
-        callback = next(handler for handler in handlers if handler.callback is bot.on_query_handler)
+        command = next(handler for handler in handlers if getattr(handler.callback, "__wrapped__", None) is bot_query.query_tasks)
+        callback = next(handler for handler in handlers if getattr(handler.callback, "__wrapped__", None) is bot.on_query_handler)
         message = pyrogram.types.Message(
             id=10, text="/query", from_user=pyrogram.types.User(id=200),
             chat=pyrogram.types.Chat(id=200, type=pyrogram.enums.ChatType.PRIVATE))
