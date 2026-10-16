@@ -60,6 +60,8 @@ Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/tgporter:latest`，由
 
 ### Docker 镜像部署
 
+启动 Bot 后，发送 `/help` 或 `/start`，可通过 “Join us” 按钮加入 [Telegram 群组](https://t.me/+lW7jhYDVj5U5NzJl)。
+
 服务器或 NAS 已安装 Docker 后，可以直接运行本 fork 的预构建镜像。
 
 1. **准备配置和数据目录**：从本仓库下载 [config.yaml.example](./config.yaml.example)，复制为 `config.yaml`，并创建运行数据文件和持久化目录。下面的命令会保留已有的 `config.yaml` 和 `data.yaml`。
@@ -562,6 +564,8 @@ These steps apply to image, Docker Compose and manual deployments. Local mock de
 The main download client supports phone or Bot Token login. Setting `bot_token` in the configuration does not replace the main client's first login. When downloading as a bot, it must have access to the target messages. First login and login after session loss are described under each deployment method below. See [Kurigram's authentication documentation](https://docs.kurigram.icu/start/auth) for background on both login methods.
 
 ### Docker Image Deployment
+
+After starting the Bot, send `/help` or `/start` and use “Join us” to open the [Telegram group](https://t.me/+lW7jhYDVj5U5NzJl).
 
 With Docker installed on your server or NAS, run this fork's prebuilt image directly.
 

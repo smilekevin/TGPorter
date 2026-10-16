@@ -139,6 +139,8 @@
 
 ## Bot 命令
 
+`/help` 和 `/start` 帮助消息中的 “Join us” 按钮指向 [Telegram 群组](https://t.me/+lW7jhYDVj5U5NzJl)。
+
 | 命令 | 说明 | 示例 |
 |------|------|------|
 | `/download <link> <start> <end> [filter]` | 批量下载消息 | `/download https://t.me/c/123 1 100` |
@@ -530,6 +532,8 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 ---
 
 ## Bot Commands
+
+The “Join us” button in `/help` and `/start` messages opens the [Telegram group](https://t.me/+lW7jhYDVj5U5NzJl).
 
 | Command | Description | Example |
 |---------|-------------|---------|

@@ -1118,7 +1118,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
                     url="https://github.com/smilekevin/TGPorter/releases",
                 ),
                 InlineKeyboardButton(
-                    "Join us", url="https://t.me/TeegramMediaDownload"
+                    "Join us", url="https://t.me/+lW7jhYDVj5U5NzJl"
                 ),
             ]
         ]
