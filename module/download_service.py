@@ -320,12 +320,14 @@ class DownloadService:
         return {'max_workers': self.app.max_download_task}
 
     def set_max_workers(self, n=None):
-        """Set max download task count (1-6, hot-applies to the live worker pool)"""
+        """Save the download task limit (1-6) and apply it to the live worker pool."""
         if n is None or n < 1 or n > 6:
             return {'error': "n must be 1-6"}, 400
         self.app.max_download_task = n
         # Leave enough transport slots for each file's independent fixed ranges.
         self.app.max_concurrent_transmissions = n * max(5, getattr(self.app, "file_download_concurrency", 1))
+        # Persist before applying workers or returning success to WebUI/MCP callers.
+        self.app.save_app_data(True)
         # Apply to pyrogram client if available
         from module.pyrogram_extension import set_max_concurrent_transmissions
         try:
@@ -346,8 +348,6 @@ class DownloadService:
                 logger.warning("set_max_workers: __main__ has no _worker_pool_set_target")
         except Exception as e:
             logger.warning(f"set_max_workers: worker pool adjust failed: {e}")
-        # Persist to config file
-        self.app.update_config(True)
         return {'max_workers': n}
 
     def get_download_list(self, already_down=None, offset=0, limit=0, search=""):

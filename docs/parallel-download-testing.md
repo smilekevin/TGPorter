@@ -81,19 +81,19 @@ python -B tools/benchmark_download.py --chat me --message-id 123 --lanes 1 4
    `Opened independent download connection #…` 表示已通过独立连接收到文件数据，包含文件名和 worker 编号；
    `Confirmed independent download startup` 表示该 worker 的首块有效数据已写入，在该确认前不得为同一文件启动下一个新连接；启动间隔仍至少一秒。
    若首个连接一直停在密钥创建或等待首块数据，其余 worker 不应发起下载；若启动失败，确认关闭连接后才尝试下一个。
-   `Closed independent download connection #…` 表示该连接已清理。应用运行时，这些 INFO 日志写入统一的 `log/tdl.log`。
+   `Closed independent download connection #…` 表示该连接已清理。应用运行时，这些 INFO 日志写入统一的 `data/log/tdl.log`。
    切片数本身不能证明 TCP 连接数。实际连接验收还应通过系统 socket 信息或代理连接页面，
    确认同一个下载进程存在不同源端口的下载 TCP；同时下载两个至少四片的文件、每文件四个 worker 时，逐个确认并扩展后最多可看到八条媒体下载连接。
    统计同时活跃的连接数，不要将网络重连产生的累计连接次数当作并发数。
    同一 worker 连续下载后续切片时会沿用自己的连接；控制连接和 CDN 连接可能额外出现。
 4. 新建一次多分片测试任务，在有进度后暂停，确认进度停止；恢复后确认分片数不变且哈希一致。
-5. 再新建一次任务，下载一部分后停止程序，保留整个 `temp` 目录，再启动程序。
+5. 再新建一次任务，下载一部分后停止程序，保留整个 `downloads/.temp` 目录，再启动程序。
    任务恢复后应沿用 `.parts/manifest.json` 中的范围，不从零开始，最终哈希仍一致。
    可以在重启前修改单文件 worker 数或切片大小，验证原任务没有重新分片。
 6. 用约 40 MiB、100 MiB 和 500 MiB 的文件验证切片大小：上述配置应分别使用 1、2 和 8 片，worker 数最多为 4。
 7. 如需验证 Bot 自有消息，再直接给现有 Bot 发送文件，验证进度、引用刷新和最终哈希。
 8. 下载产生数据后，分别通过网页删除、`POST /delete_task?task_id=…`、`POST /batch_delete`（JSON `task_ids`）以及 Bot 的 `/stop` 菜单取消任务。
-   等下载协程结束后，确认对应 `temp/` 中的临时文件、合并文件和 `.parts/` 已删除，连接已关闭；其他下载文件及已完成文件保持原状。
+   等下载协程结束后，确认对应 `downloads/.temp/` 中的临时文件、合并文件和 `.parts/` 已删除，连接已关闭；其他下载文件及已完成文件保持原状。
    `Removed cancelled download data: …` 日志表示具体临时路径已清理。暂停和程序退出后仍应保留断点，以便恢复。
 
 完成时间改善与否取决于账号限速、连接延迟、代理带宽和磁盘。离线测试确认文件正确性和调度规则，

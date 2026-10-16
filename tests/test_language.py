@@ -99,18 +99,19 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(lang.translate('Download returned no file (failed after 3 retries)', 'es'),
                          'La descarga no devolvió ningún archivo (falló tras 3 reintentos)')
 
-    def test_configuration_accepts_legacy_codes_and_saves_canonical_codes(self):
+    def test_configuration_accepts_legacy_codes_and_saves_canonical_codes_in_data(self):
         from module.app import Application
         for value in ('ZH', 'zh-cn', 'zh-tw', 'ja', 'es', 'fr', 'UA'):
             with self.subTest(value=value):
                 directory = tempfile.TemporaryDirectory()
                 app = Application(str(Path(directory.name) / 'config.yaml'),
-                                  str(Path(directory.name) / 'data.yaml'))
+                                  str(Path(directory.name) / 'data.json'))
                 try:
                     app.assign_config({'api_id': 'test', 'api_hash': 'test',
                                        'media_types': [], 'file_formats': {}, 'language': value})
-                    app.update_config()
-                    self.assertEqual(app.config['language'], lang.normalize_language(value))
+                    app.save_app_data()
+                    self.assertEqual(app.app_data['language'], lang.normalize_language(value))
+                    self.assertFalse(Path(app.config_file).exists())
                 finally:
                     app.loop.close()
                     directory.cleanup()
@@ -127,10 +128,10 @@ class LanguageTests(unittest.TestCase):
 
 class BotLanguageTests(unittest.IsolatedAsyncioTestCase):
     async def test_command_accepts_new_codes_and_uses_native_name(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, Mock
         for code in ('zh', 'zh-cn', 'zh-tw', 'ja', 'es', 'fr', 'ua'):
             with self.subTest(code=code):
-                app = SimpleNamespace(set_language=set_language)
+                app = SimpleNamespace(set_language=set_language, save_app_data=Mock())
                 client = SimpleNamespace(send_message=AsyncMock())
                 message = SimpleNamespace(text=f'/set_language {code}',
                                           from_user=SimpleNamespace(id=12))
@@ -139,6 +140,7 @@ class BotLanguageTests(unittest.IsolatedAsyncioTestCase):
                         await bot.set_language(client, message)
                     native_name = lang.CATALOGS[lang.normalize_language(code)]['name']
                     self.assertIn(native_name, client.send_message.await_args.args[1])
+                    app.save_app_data.assert_called_once_with(True)
                 finally:
                     set_language(Language.EN)
 

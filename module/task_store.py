@@ -8,9 +8,10 @@ import time
 from typing import Optional
 
 from loguru import logger
+from module.runtime_paths import LOG_DIR
 
-_TASKS_FILE = os.path.join(os.path.abspath("."), "log", "bot_tasks.json")
-_COUNTER_FILE = os.path.join(os.path.abspath("."), "log", "task_counter.json")
+_TASKS_FILE = os.path.join(LOG_DIR, "bot_tasks.json")
+_COUNTER_FILE = os.path.join(LOG_DIR, "task_counter.json")
 _lock = threading.Lock()
 
 

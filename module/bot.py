@@ -51,6 +51,7 @@ from module.pyrogram_extension import (
 )
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
+from module.runtime_paths import BOT_CONFIG_FILE
 
 # pylint: disable = C0301, R0902
 
@@ -187,7 +188,7 @@ class DownloadBot:
         self.listen_forward_chat: dict = {}
         self.config: dict = {}
         self._yaml = yaml.YAML()
-        self.config_path = os.path.join(os.path.abspath("."), "bot.yaml")
+        self.config_path = BOT_CONFIG_FILE
         self.download_command: dict = {}
         self.filter = Filter()
         self.bot_info = None
@@ -782,6 +783,7 @@ class DownloadBot:
         """Update config from str."""
         self.config["download_filter"] = self.download_filter
 
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         with open(self.config_path, "w", encoding="utf-8") as yaml_file:
             self._yaml.dump(self.config, yaml_file)
 
@@ -1163,7 +1165,7 @@ _bot = DownloadBot()
 
 def _cleanup_task_temp_files(chat_id: int):
     """Remove temp files for a specific chat from temp directory."""
-    temp_dir = os.path.join(os.path.abspath("."), "temp")
+    temp_dir = _bot.app.temp_save_path
     chat_dir = os.path.join(temp_dir, str(chat_id))
     if not os.path.isdir(chat_dir):
         return
@@ -1339,6 +1341,7 @@ async def set_language(client: pyrogram.Client, message: pyrogram.types.Message)
     try:
         language = parse_language(language)
         _bot.app.set_language(language)
+        _bot.app.save_app_data(True)
         await client.send_message(
             message.from_user.id, f"{_t('Language set to')} {CATALOGS[language.value]['name']}"
         )
@@ -1462,8 +1465,8 @@ async def add_filter_advertisement_filter(
         return
 
     _bot.app.filter_advertisement_list.append(filter_str)
+    _bot.app.save_app_data(True)
     await client.send_message(message.from_user.id, f"{_t('Add filter')}: {filter_str}")
-    _bot.app.update_config(True)
 
 
 async def remove_filter_advertisement_filter(
@@ -1484,11 +1487,10 @@ async def remove_filter_advertisement_filter(
     filter_str = args[1]
     if filter_str in _bot.app.filter_advertisement_list:
         _bot.app.filter_advertisement_list.remove(filter_str)
+        _bot.app.save_app_data(True)
         await client.send_message(
             message.from_user.id, f"{_t('Remove filter')} : {args[1]}"
         )
-
-        _bot.app.update_config(True)
     else:
         await client.send_message(
             message.from_user.id, f"{_t('Filter')} : {args[1]} {_t('not exist')}"
@@ -1517,14 +1519,14 @@ async def set_add_advertisement(
         chat_id, _, _ = await parse_link(_bot.client, mesage_link)
         if advertisement_str:
             _bot.app.group_add_advertisement[chat_id] = advertisement_str
-            _bot.app.update_config(True)
+            _bot.app.save_app_data(True)
             await client.send_message(
                 message.from_user.id, _t("Set advertisement: {advertisement}", advertisement=advertisement_str)
             )
         else:
             if chat_id in _bot.app.group_add_advertisement:
                 del _bot.app.group_add_advertisement[chat_id]
-                _bot.app.update_config(True)
+                _bot.app.save_app_data(True)
                 await client.send_message(
                     message.from_user.id, _t("Removed advertisement for chat {chat}", chat=chat_id)
                 )
@@ -1653,7 +1655,7 @@ async def add_replace_advertisement_filter(
     try:
         filter_str = await proc_replace_advertisement(mesage_link, filter_str)
         _bot.app.replace_advertisement_list.append(filter_str)
-        _bot.app.update_config(True)
+        _bot.app.save_app_data(True)
         await client.send_message(
             message.from_user.id, f"{_t('Add filter')} : {filter_str}"
         )
@@ -1696,6 +1698,7 @@ async def remove_replace_advertisement_filter(
 
         if filter_str in _bot.app.replace_advertisement_list:
             _bot.app.replace_advertisement_list.remove(filter_str)
+            _bot.app.save_app_data(True)
             await client.send_message(
                 message.from_user.id, f"{_t('Remove filter')} : {filter_str}"
             )
@@ -1704,7 +1707,6 @@ async def remove_replace_advertisement_filter(
                 message.from_user.id,
                 f"{_t('Filter not found')}: {filter_str}",
             )
-        _bot.app.update_config(True)
     except Exception as e:
         await client.send_message(
             message.from_user.id, f"{_t('Add filter')} : {filter_str}\n{e}"

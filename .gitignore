@@ -70,5 +70,7 @@ log/
 temp/
 config.yaml
 data.yaml
+data/
+data.json
 *.scss
 *.css.map

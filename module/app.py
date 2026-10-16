@@ -1,8 +1,12 @@
 """Application module"""
 
 import asyncio
+import copy
 import functools
+import json
 import os
+import tempfile
+import threading
 import time
 from asyncio import Lock
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +21,7 @@ from ruamel import yaml
 from module.cloud_drive import CloudDrive, CloudDriveConfig
 from module.filter import Filter
 from module.language import Language, parse_language, set_language
+from module.runtime_paths import APP_DATA_FILE
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
 
@@ -366,12 +371,12 @@ def get_config(config, key, default=None, val_type=str, verbose=True):
 
 
 class Application:
-    """Application load config and update config."""
+    """Load startup configuration and persist runtime data separately."""
 
     def __init__(
         self,
         config_file: str,
-        app_data_file: str,
+        app_data_file: str = APP_DATA_FILE,
         application_name: str = "UndefineApp",
     ):
         """
@@ -390,7 +395,8 @@ class Application:
 
         """
         self.config_file: str = config_file
-        self.app_data_file: str = app_data_file
+        self.app_data_file: str = os.path.abspath(app_data_file)
+        self.data_path: str = os.path.dirname(self.app_data_file)
         self.application_name: str = application_name
         self.download_filter = Filter()
         self.is_running = True
@@ -400,7 +406,7 @@ class Application:
         self.chat_download_config: dict = {}
 
         self.save_path = os.path.join(os.path.abspath("."), "downloads")
-        self.temp_save_path = os.path.join(os.path.abspath("."), "temp")
+        self.temp_save_path = os.path.join(self.save_path, ".temp")
         self.api_id: str = ""
         self.api_hash: str = ""
         self.bot_token: str = ""
@@ -411,11 +417,12 @@ class Application:
         self.restart_program = False
         self.config: dict = {}
         self.app_data: dict = {}
+        self._app_data_lock = threading.RLock()
         self.file_path_prefix: List[str] = ["chat_title", "media_datetime"]
         self.file_name_prefix: List[str] = ["message_id", "file_name"]
         self.file_name_prefix_split: str = " - "
-        self.log_file_path = os.path.join(os.path.abspath("."), "log")
-        self.session_file_path = os.path.join(os.path.abspath("."), "sessions")
+        self.log_file_path = os.path.join(self.data_path, "log")
+        self.session_file_path = os.path.join(self.data_path, "sessions")
         self.cloud_drive_config = CloudDriveConfig()
         self.hide_file_name = False
         self.caption_name_dict: dict = {}
@@ -475,6 +482,7 @@ class Application:
         # TODO: judge the storage if enough,and provide more path
         if _config.get("save_path") is not None:
             self.save_path = _config["save_path"]
+        self.temp_save_path = os.path.join(self.save_path, ".temp")
 
         self.api_id = _config["api_id"]
         self.api_hash = _config["api_hash"]
@@ -610,22 +618,22 @@ class Application:
             _config, "enable_download_txt", self.enable_download_txt, bool
         )
 
-        self.filter_advertisement_list = get_config(
+        self.filter_advertisement_list = copy.deepcopy(get_config(
             _config,
             "filter_advertisement_list",
             self.filter_advertisement_list,
             yaml.comments.CommentedSeq,
-        )
+        ))
 
-        self.replace_advertisement_list = get_config(
+        self.replace_advertisement_list = copy.deepcopy(get_config(
             _config,
             "replace_advertisement_list",
             self.replace_advertisement_list,
             yaml.comments.CommentedSeq,
-        )
+        ))
 
         if _config.get("group_add_advertisement"):
-            self.group_add_advertisement = _config["group_add_advertisement"]
+            self.group_add_advertisement = copy.deepcopy(_config["group_add_advertisement"])
         try:
             date = datetime(2023, 10, 31)
             date.strftime(self.date_format)
@@ -703,43 +711,39 @@ class Application:
         return True
 
     def assign_app_data(self, app_data: dict) -> bool:
-        """Assign config from str.
-
-        Parameters
-        ----------
-        app_data: dict
-            application data dict
-
-        Returns
-        -------
-        bool
-        """
-        if app_data.get("ids_to_retry"):
-            if self._chat_id:
-                self.chat_download_config[self._chat_id].ids_to_retry = app_data[
-                    "ids_to_retry"
-                ]
-                for it in self.chat_download_config[self._chat_id].ids_to_retry:
-                    self.chat_download_config[self._chat_id].ids_to_retry_dict[
-                        it
-                    ] = True
-                self.app_data.pop("ids_to_retry")
-        else:
-            if app_data.get("chat"):
-                chats = app_data["chat"]
-                for chat in chats:
-                    if (
-                        "chat_id" in chat
-                        and chat["chat_id"] in self.chat_download_config
-                    ):
-                        chat_id = chat["chat_id"]
-                        self.chat_download_config[chat_id].ids_to_retry = chat.get(
-                            "ids_to_retry", []
-                        )
-                        for it in self.chat_download_config[chat_id].ids_to_retry:
-                            self.chat_download_config[chat_id].ids_to_retry_dict[
-                                it
-                            ] = True
+        """Restore runtime overrides, falling back to existing startup configuration."""
+        if "max_download_task" in app_data:
+            workers = app_data["max_download_task"]
+            if type(workers) is not int or workers < 1:
+                raise ValueError("Saved max_download_task must be a positive integer")
+            self.max_download_task = workers
+            self.max_concurrent_transmissions = workers * max(5, self.file_download_concurrency)
+        if "language" in app_data:
+            try:
+                self.language = parse_language(app_data["language"])
+            except ValueError:
+                logger.warning("Invalid runtime language; using configured language")
+        for key in ("filter_advertisement_list", "replace_advertisement_list"):
+            if key in app_data:
+                setattr(self, key, get_config(app_data, key, getattr(self, key),
+                                             list))
+        if "group_add_advertisement" in app_data:
+            self.group_add_advertisement = get_config(
+                app_data, "group_add_advertisement", self.group_add_advertisement, dict)
+            # JSON object keys are strings; Telegram numeric chat IDs remain integers in memory.
+            self.group_add_advertisement = {
+                int(key) if str(key).lstrip("-").isdigit() else key: value
+                for key, value in self.group_add_advertisement.items()
+            }
+        for chat in app_data.get("chat", []):
+            chat_id = chat.get("chat_id")
+            if chat_id in self.chat_download_config:
+                config = self.chat_download_config[chat_id]
+                config.ids_to_retry = chat.get("ids_to_retry", [])
+                config.ids_to_retry_dict = {message_id: True for message_id in config.ids_to_retry}
+                if "last_read_message_id" in chat:
+                    config.last_read_message_id = max(
+                        config.last_read_message_id, chat["last_read_message_id"])
         return True
 
     async def upload_file(
@@ -884,89 +888,57 @@ class Application:
 
         return True
 
-    # pylint: disable = R0912
-    def update_config(self, immediate: bool = True):
-        """update config
+    def save_app_data(self, immediate: bool = True):
+        """Snapshot runtime state and optionally write data.json; never write config.yaml."""
+        with self._app_data_lock:
+            chats = self.app_data.setdefault("chat", [])
+            for chat_id, value in self.chat_download_config.items():
+                unfinished_ids = set(value.ids_to_retry)
+                for message_id in value.ids_to_retry:
+                    if value.node.download_status.get(message_id) in (
+                        DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload
+                    ):
+                        unfinished_ids.discard(message_id)
+                # Web setting saves can race with downloader-loop status updates.
+                for message_id, status in list(value.node.download_status.items()):
+                    if status not in (DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload):
+                        unfinished_ids.add(message_id)
+                value.ids_to_retry = sorted(unfinished_ids)
+                record = next((chat for chat in chats if chat.get("chat_id") == chat_id), None)
+                if record is None:
+                    record = {"chat_id": chat_id}
+                    chats.append(record)
+                # Preserve the existing next-message checkpoint convention, including scans
+                # with only filtered or text messages. Match records by chat ID, not order.
+                record["last_read_message_id"] = value.last_read_message_id + 1
+                record["ids_to_retry"] = value.ids_to_retry
 
-        Parameters
-        ----------
-        immediate: bool
-            If update config immediate,default True
-        """
-        # TODO: fix this not exist chat
-        if not self.app_data.get("chat") and self.config.get("chat"):
-            self.app_data["chat"] = [
-                {"chat_id": i} for i in range(0, len(self.config["chat"]))
-            ]
-        idx = 0
-        # pylint: disable = R1733
-        for key, value in self.chat_download_config.items():
-            # pylint: disable = W0201
-            unfinished_ids = set(value.ids_to_retry)
+            self.app_data["language"] = self.language.value
+            self.app_data["max_download_task"] = self.max_download_task
+            for key in ("filter_advertisement_list", "replace_advertisement_list",
+                        "group_add_advertisement"):
+                self.app_data[key] = copy.deepcopy(getattr(self, key))
 
-            for it in value.ids_to_retry:
-                if value.node.download_status.get(
-                    it, DownloadStatus.FailedDownload
-                ) in [DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload]:
-                    unfinished_ids.remove(it)
+            if immediate:
+                self._write_app_data()
 
-            for _idx, _value in value.node.download_status.items():
-                if _value not in (
-                    DownloadStatus.SuccessDownload,
-                    DownloadStatus.SkipDownload,
-                ):
-                    unfinished_ids.add(_idx)
-
-            self.chat_download_config[key].ids_to_retry = list(unfinished_ids)
-
-            if idx >= len(self.app_data["chat"]):
-                self.app_data["chat"].append({})
-
-            # Persist last_read_message_id even if nothing downloaded, so text-only or filtered
-            # scans retain their progress.
-            self.config["chat"][idx]["last_read_message_id"] = (
-                value.last_read_message_id + 1
-            )
-
-            self.app_data["chat"][idx]["chat_id"] = key
-            self.app_data["chat"][idx]["ids_to_retry"] = value.ids_to_retry
-            idx += 1
-
-        self.config["save_path"] = self.save_path
-        self.config["file_path_prefix"] = self.file_path_prefix
-
-        if self.config.get("ids_to_retry"):
-            self.config.pop("ids_to_retry")
-
-        if self.config.get("chat_id"):
-            self.config.pop("chat_id")
-
-        if self.config.get("download_filter"):
-            self.config.pop("download_filter")
-
-        if self.config.get("last_read_message_id"):
-            self.config.pop("last_read_message_id")
-
-        self.config["max_download_task"] = self.max_download_task
-        self.config.pop("download_concurrency", None)  # Removed setting from earlier versions.
-        self.config["file_download_concurrency"] = self.file_download_concurrency
-        self.config.pop("download_min_part_size_mb", None)
-        self.config["download_part_size_mb"] = self.download_part_size_mb
-
-        self.config["language"] = self.language.value
-        # for it in self.downloaded_ids:
-        #    self.already_download_ids_set.add(it)
-
-        # self.app_data["already_download_ids"] = list(self.already_download_ids_set)
-        self.config["filter_advertisement_list"] = self.filter_advertisement_list
-        self.config["replace_advertisement_list"] = self.replace_advertisement_list
-        self.config["group_add_advertisement"] = self.group_add_advertisement
-
-        if immediate:
-            with open(self.config_file, "w", encoding="utf-8") as yaml_file:
-                _yaml.dump(self.config, yaml_file)
-            with open(self.app_data_file, "w", encoding="utf-8") as yaml_file:
-                _yaml.dump(self.app_data, yaml_file)
+    def _write_app_data(self):
+        """Create the data directory and replace runtime JSON atomically under the save lock."""
+        with self._app_data_lock:
+            content = json.dumps(self.app_data, ensure_ascii=False, indent=2) + "\n"
+            os.makedirs(self.data_path, exist_ok=True)
+            temporary_path = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.data_path,
+                                                 prefix=".data-", suffix=".tmp", delete=False) as stream:
+                    temporary_path = stream.name
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary_path, self.app_data_file)
+            finally:
+                if temporary_path is not None and os.path.exists(temporary_path):
+                    os.remove(temporary_path)
 
     def set_language(self, language: Language):
         """Set Language"""
@@ -983,21 +955,23 @@ class Application:
                 self.config = config
                 self.assign_config(self.config)
 
-        if os.path.exists(os.path.join(os.path.abspath("."), self.app_data_file)):
-            with open(
-                os.path.join(os.path.abspath("."), self.app_data_file),
-                encoding="utf-8",
-            ) as f:
-                app_data = _yaml.load(f.read())
-                if app_data:
-                    self.app_data = app_data
-                    self.assign_app_data(self.app_data)
+        if os.path.exists(self.app_data_file):
+            with open(self.app_data_file, encoding="utf-8") as stream:
+                app_data = json.load(stream)
+            if not isinstance(app_data, dict):
+                raise ValueError("Runtime data must be a JSON object")
+            self.app_data = app_data
+            self.assign_app_data(self.app_data)
+        else:
+            # An initial empty snapshot must not advance configured scan bounds.
+            self._write_app_data()
 
     def pre_run(self):
         """before run application do"""
         self.cloud_drive_config.pre_run()
-        if not os.path.exists(self.session_file_path):
-            os.makedirs(self.session_file_path)
+        for directory in (self.data_path, self.log_file_path, self.session_file_path,
+                          self.temp_save_path):
+            os.makedirs(directory, exist_ok=True)
         set_language(self.language)
 
     def is_match_advertisement(self, caption) -> bool:
