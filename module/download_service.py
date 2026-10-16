@@ -19,6 +19,7 @@ from module.download_stat import (
     get_download_result,
     get_download_state,
     get_failed_downloads,
+    get_active_download_streams,
     get_total_download_speed,
     is_task_paused,
     pause_task,
@@ -272,8 +273,9 @@ class DownloadService:
         return {'total': count}
 
     def get_download_speed(self):
-        """Get download speed"""
-        return {'download_speed': format_byte(get_total_download_speed()) + "/s", 'upload_speed': "0.00 B/s"}
+        """Get download speed and the number of streams currently fetching data."""
+        return {'download_speed': format_byte(get_total_download_speed()) + "/s",
+                'upload_speed': "0.00 B/s", 'active_streams': get_active_download_streams()}
 
     def get_flood_wait(self):
         """Get unified FloodWait cooldown status for WebUI display."""
@@ -465,6 +467,7 @@ class DownloadService:
                     "download_progress": str(progress),
                     "download_progress_raw": progress,
                     "download_speed": download_speed,
+                    "active_streams": 0 if is_already_down else get_active_download_streams(task_id),
                     "eta": eta,
                     "save_path": value["file_name"].replace("\\", "/"),
                     "status": status,

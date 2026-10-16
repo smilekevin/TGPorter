@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from weakref import WeakValueDictionary
 
@@ -155,7 +156,7 @@ def _read_plan(directory, size, identity):
 async def download_file(client, file_id, size, file_name, identity, parallelism,
                         progress, wait_ready, part_size=64 * CHUNK_SIZE, request_started=None,
                         discard_requested=None, refresh_file_id=None,
-                        flood_wait=None, flood_remaining=None):
+                        flood_wait=None, flood_remaining=None, stream_context=None):
     """Keep ranges across retries/restarts and validate every received block.
 
     Workers take the next unfinished part when their current part completes.
@@ -163,6 +164,7 @@ async def download_file(client, file_id, size, file_name, identity, parallelism,
     New connections start gradually. Failed workers return their ranges while
     healthy workers continue; only the final worker has a three-attempt budget.
     Flood callbacks publish and inspect the application's shared cooldown.
+    The optional synchronous stream context tracks requests, excluding idle workers.
     """
     async def run():
         key = os.path.abspath(file_name)
@@ -172,7 +174,7 @@ async def download_file(client, file_id, size, file_name, identity, parallelism,
                 return await _download_file(client, file_id, size, file_name, identity,
                                             parallelism, progress, wait_ready, part_size,
                                             request_started, refresh_file_id,
-                                            flood_wait, flood_remaining)
+                                            flood_wait, flood_remaining, stream_context)
             finally:
                 if discard_requested is not None and discard_requested():
                     discard_partial_download(file_name)
@@ -209,7 +211,7 @@ async def _wait_network_retry(seconds, wait_ready):
 
 async def _download_file(client, file_id, size, file_name, identity, parallelism,
                          progress, wait_ready, part_size, request_started,
-                         refresh_file_id, flood_wait, flood_remaining):
+                         refresh_file_id, flood_wait, flood_remaining, stream_context):
     if size <= 0 or parallelism < 1 or part_size < CHUNK_SIZE or part_size % CHUNK_SIZE:
         raise ValueError("File size and worker count must be positive; part size must be whole MiB")
     directory = parts_path(file_name)
@@ -281,19 +283,20 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
 
     async def connection_chunks(connection, requested_id, remaining, offset):
         stream = connection.get_file(requested_id, size, remaining, offset, stream_progress)
-        try:
+        with stream_context() if stream_context else nullcontext():
             try:
-                async for chunk in stream:
-                    yield chunk
-            except pyrogram.StopTransmission:
-                raise
-            except Exception as error:
-                if isinstance(error, (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait)):
-                    # Publish the cooldown before connection cleanup can yield.
-                    gate.throttled(error)
-                raise _PartConnectionError(error, requested_id) from error
-        finally:
-            await stream.aclose()
+                try:
+                    async for chunk in stream:
+                        yield chunk
+                except pyrogram.StopTransmission:
+                    raise
+                except Exception as error:
+                    if isinstance(error, (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait)):
+                        # Publish the cooldown before connection cleanup can yield.
+                        gate.throttled(error)
+                    raise _PartConnectionError(error, requested_id) from error
+            finally:
+                await stream.aclose()
 
     async def download_range(index, connection):
         start, end = ranges[index]

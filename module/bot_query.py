@@ -56,6 +56,7 @@ def build_task_query(service, status="all", page=1):
         detail = _text(task.get("chat_title") or task.get("chat"), 50)
         if kind == "active":
             detail += f" · {_text(task['download_progress'], 10)}% · {_text(task['download_speed'], 24)}"
+            detail += f" · {_t('Active streams: {count}', count=task.get('active_streams', 0))}"
         elif kind == "failed":
             detail += f" · {_text(_t(task.get('error_message', 'Unknown error')), 80)}"
         else:

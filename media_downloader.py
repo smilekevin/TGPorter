@@ -16,6 +16,7 @@ from module.retry_policy import network_backoff
 from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
+from module.download_stat import track_download_stream
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.parallel_download import (download_file, has_parts, discard_partial_download,
@@ -268,7 +269,9 @@ async def _download_parallel_media(client, message, temp_file_name, media_size,
                                discard_requested=lambda: is_download_discarded(message.id, node),
                                refresh_file_id=refresh_file_id,
                                flood_wait=_publish_download_flood,
-                               flood_remaining=get_flood_wait_remaining)
+                               flood_remaining=get_flood_wait_remaining,
+                               stream_context=lambda: track_download_stream(
+                                   node.chat_id, message.id, node.task_id))
 
 
 async def _resume_download_from_temp(
@@ -340,7 +343,7 @@ async def _resume_download_from_temp(
     from module.download_stat import update_download_status
 
     # The outer worker pool limits simultaneous files.
-    with open(real_temp, "r+b") as f:
+    with track_download_stream(node.chat_id, message.id, node.task_id), open(real_temp, "r+b") as f:
         f.seek(aligned)
         async for chunk in client.get_file(
             file_id_obj, real_size, 0, offset_mb,
@@ -976,11 +979,12 @@ async def download_media(
                     ui_file_name, task_start_time, file_parallelism, part_size,
                 )
             else:
-                temp_download_path = await client.download_media(
-                    message, file_name=temp_file_name,
-                    progress=update_download_status,
-                    progress_args=(message_id, ui_file_name, task_start_time, node, client),
-                )
+                with track_download_stream(node.chat_id, message_id, node.task_id):
+                    temp_download_path = await client.download_media(
+                        message, file_name=temp_file_name,
+                        progress=update_download_status,
+                        progress_args=(message_id, ui_file_name, task_start_time, node, client),
+                    )
             from module.download_stat import wait_download_ready
             await wait_download_ready(message_id, node, client)
             if temp_download_path and isinstance(temp_download_path, str):

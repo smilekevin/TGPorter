@@ -12,6 +12,7 @@
     "TG Porter": "TG Porter",
     "Version": "バージョン",
     "Downloading": "ダウンロード中",
+    "Active streams: {count}": "ダウンロード中のストリーム数: {count}",
     "Available commands:": "利用可能なコマンド:",
     "Show available commands": "コマンド一覧を表示",
     "Download messages": "メッセージをダウンロード",

@@ -14,6 +14,7 @@
     "TG Porter": "TG Porter",
     "Version": "Версія",
     "Downloading": "Завантаження",
+    "Active streams: {count}": "Активні потоки: {count}",
     "Available commands:": "Доступні команди:",
     "Show available commands": "Показати доступні команди",
     "Download messages": "Скачати повідомлення",

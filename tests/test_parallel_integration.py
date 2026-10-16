@@ -56,6 +56,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(downloader, "_maybe_reconnect_client", AsyncMock(return_value=False)),
             patch.object(downloader, "_add_failed_download", Mock()),
             patch.object(download_stat, "_download_result", self.result),
+            patch.object(download_stat, "_download_streams", {}),
             patch.object(download_stat, "_download_lock", asyncio.Lock()),
             patch.object(download_stat, "_paused_tasks", set()),
             patch.object(download_stat, "_cancelled_tasks", set()),
@@ -83,7 +84,13 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_entry_point_downloads_and_records_only_one_aggregate_ui_entry(self):
+        counts = []
+        async def before(index):
+            counts.append(download_stat.get_active_download_streams('100_61'))
+        self.client.before_chunk = before
         await downloader.download_task(self.client, self.message, self.node)
+        self.assertEqual(max(counts), 3)
+        self.assertEqual(download_stat.get_active_download_streams(), 0)
         self.assertEqual((self.path / "saved.mp4").read_bytes(), self.data)
         self.assertEqual(self.node.success_download_task, 1)
         self.assertEqual(self.node.download_status[61], DownloadStatus.SuccessDownload)
@@ -399,6 +406,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         del self.app.file_download_concurrency
 
         async def serial(*args, **kwargs):
+            self.assertEqual(download_stat.get_active_download_streams('100_61'), 1)
             (self.path / "partial.mp4.temp").write_bytes(b"partial data")
             await download_stat.update_download_status(
                 MB, len(self.data), self.message.id, str(self.path / "saved.mp4"),
@@ -411,6 +419,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
         self.assertEqual(status, DownloadStatus.SkipDownload)
         self.client.download_media.assert_awaited_once()
+        self.assertEqual(download_stat.get_active_download_streams(), 0)
         self.assert_cancelled_temp_removed()
 
     async def cancel_two_files(self, numeric):

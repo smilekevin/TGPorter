@@ -92,14 +92,20 @@
                         <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
                         </svg>
-                        <span class="font-mono font-medium" x-text="downloadSpeed">0.00 B/s</span>
+                        <div class="flex flex-col">
+                            <span class="font-mono font-medium" x-text="downloadSpeed">0.00 B/s</span>
+                            <span class="text-xs text-gray-500" x-text="t('Active streams: {count}', {count: activeStreams})"></span>
+                        </div>
                     </div>
                     <!-- Download Speed (mobile) -->
                     <div class="flex sm:hidden items-center gap-1.5">
                         <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
                         </svg>
-                        <span class="font-mono text-xs font-medium text-gray-700" x-text="downloadSpeed">0.00 B/s</span>
+                        <div class="flex flex-col text-xs">
+                            <span class="font-mono font-medium text-gray-700" x-text="downloadSpeed">0.00 B/s</span>
+                            <span class="text-gray-500" x-text="t('Active streams: {count}', {count: activeStreams})"></span>
+                        </div>
                     </div>
                     {% if web_login_required %}
                     <form action="{{ url_for('logout') }}" method="post">
@@ -394,7 +400,7 @@
                                     </template>
                                 </div>
                                 <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.phase === 'fetching' ? t('Fetching file information...') : task.filename"></h4>
-                                <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+                                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-gray-500">
                                     <template x-if="task.phase !== 'fetching'">
                                         <span>
                                             <span x-text="t(task.total_size)"></span>
@@ -406,6 +412,8 @@
                                                       'text-gray-400': task.status === 'waiting'
                                                   }"
                                                   x-text="task.download_speed"></span>
+                                            <span class="text-gray-300">|</span>
+                                            <span class="inline-block whitespace-nowrap" x-text="t('Active streams: {count}', {count: task.active_streams ?? 0})"></span>
                                         </span>
                                     </template>
                                     <template x-if="task.eta && task.phase !== 'fetching'">
@@ -946,6 +954,7 @@
             activeTab: 'active',
             version: '',
             downloadSpeed: '0.00 B/s',
+            activeStreams: 0,
             floodWait: { active: false, remaining: 0, reason: '' },
             throttle: { active: false, elapsed: 0 },
             maxWorkers: 5,
@@ -1182,6 +1191,7 @@
                     const res = await authenticatedFetch('/get_download_status');
                     const data = await res.json();
                     this.downloadSpeed = data.download_speed;
+                    this.activeStreams = data.active_streams ?? 0;
                 } catch(e) {}
             },
 
