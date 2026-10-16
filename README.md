@@ -336,7 +336,7 @@ _TCP.TIMEOUT = 900
 
 无需 Telegram 账号或网络连接；测试用临时任务文件和模拟 Telegram 响应验证真实 Consumer、持久化和 Worker 队列代码。
 
-Release notes 回写测试还需要 Node.js 24，用于执行工作流中的实际脚本；CI 会自动配置该运行环境。
+Release notes 回写测试还需要 Node.js 24，用于执行工作流中的实际脚本；CI 会自动配置该运行环境。工作流中的 checkout、setup-node 和 setup-python action 已升级为原生 Node.js 24 版本，避免 Node.js 20 弃用警告。
 
 ```bash
 python -m pip install -r requirements.txt
@@ -731,7 +731,7 @@ For branch verification, this repository's PRs automatically run **TG Porter CI*
 
 The tests need no Telegram account or network access. They use temporary persistence files and mocked Telegram responses with the real consumer and worker queue code.
 
-Release notes tests also require Node.js 24 to execute the workflow's actual script; CI sets up this runtime automatically.
+Release notes tests also require Node.js 24 to execute the workflow's actual script; CI sets up this runtime automatically. The checkout, setup-node and setup-python actions use native Node.js 24 versions to avoid Node.js 20 deprecation warnings.
 
 ```bash
 python -m pip install -r requirements.txt
