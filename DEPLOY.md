@@ -60,7 +60,7 @@ Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/tgporter:latest`，由
 
 ### Docker 镜像部署
 
-启动 Bot 后，发送 `/help` 或 `/start`，可通过 “Join us” 按钮加入 [Telegram 群组](https://t.me/+lW7jhYDVj5U5NzJl)。
+启动 Bot 后，发送 `/help` 或 `/start`，可通过 “Join us” 按钮加入 [Telegram 群组](https://t.me/tg_porter)。
 
 服务器或 NAS 已安装 Docker 后，可以直接运行本 fork 的预构建镜像。
 
@@ -568,7 +568,7 @@ The main download client supports phone or Bot Token login. Setting `bot_token` 
 
 ### Docker Image Deployment
 
-After starting the Bot, send `/help` or `/start` and use “Join us” to open the [Telegram group](https://t.me/+lW7jhYDVj5U5NzJl).
+After starting the Bot, send `/help` or `/start` and use “Join us” to open the [Telegram group](https://t.me/tg_porter).
 
 With Docker installed on your server or NAS, run this fork's prebuilt image directly.
 

@@ -140,7 +140,7 @@
 
 ## Bot 命令
 
-`/help` 和 `/start` 帮助消息中的 “Join us” 按钮指向 [Telegram 群组](https://t.me/+lW7jhYDVj5U5NzJl)。
+`/help` 和 `/start` 帮助消息中的 “Join us” 按钮指向 [Telegram 群组](https://t.me/tg_porter)。
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
@@ -535,7 +535,7 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 
 ## Bot Commands
 
-The “Join us” button in `/help` and `/start` messages opens the [Telegram group](https://t.me/+lW7jhYDVj5U5NzJl).
+The “Join us” button in `/help` and `/start` messages opens the [Telegram group](https://t.me/tg_porter).
 
 | Command | Description | Example |
 |---------|-------------|---------|
