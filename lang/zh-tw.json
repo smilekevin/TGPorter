@@ -348,6 +348,16 @@
     "Connection timeout, possibly rate limited (message {message})": "連線超時疑似限速 (msg {message})",
     "Resume FloodWait (message {message})": "續傳 FloodWait (msg {message})",
     "Cache files (partial downloads)": "快取檔案（未完成下載）",
-    "Local file": "本地檔案"
+    "Local file": "本地檔案",
+    "FLOOD_WAIT: {seconds} seconds remaining": "FLOOD_WAIT：剩餘 {seconds} 秒",
+    "Telegram notification FLOOD_WAIT ended after {seconds} seconds": "Telegram 播報限流已結束，等待了 {seconds} 秒",
+    "Query download tasks": "查詢下載任務",
+    "Download tasks": "下載任務",
+    "Page {page}/{pages} ({total} tasks)": "第 {page}/{pages} 頁（共 {total} 個任務）",
+    "No tasks": "暫無任務",
+    "Previous": "上一頁",
+    "Next": "下一頁",
+    "Refresh": "重新整理",
+    "Usage: /query [all|active|pending|completed|failed] [page]": "用法：/query [all|active|pending|completed|failed] [頁碼]"
   }
 }

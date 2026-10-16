@@ -521,7 +521,6 @@ async def update_download_status(
 
     # Refresh Bot status as soon as a placeholder resolves to real data.
     if _placeholder_resolved and node.bot:
-        node.last_progress_pct = -1  # Reset progress buckets so the initial 0-20% range also triggers an update.
         from module.pyrogram_extension import report_bot_status
         await report_bot_status(node.bot, node, immediate_reply=True)
 
@@ -530,24 +529,6 @@ async def update_download_status(
         node.initial_progress_reported = True
         from module.pyrogram_extension import report_bot_status
         await report_bot_status(node.bot, node)
-
-    # Report progress at every 20% milestone during active download
-        dl_result = _download_result.get(chat_id, {})
-        total = 0
-        weighted = 0
-        for _v in dl_result.values():
-            if str(_v.get("task_id")) == str(node.task_id):
-                ts = _v.get("total_size", 0)
-                if ts > 0:
-                    total += ts
-                    weighted += _v.get("down_byte", 0)
-        if total > 0:
-            pct = int(weighted / total * 100)
-            bucket = (pct // 20) * 20
-            prev = (node.last_progress_pct // 20) * 20 if node.last_progress_pct >= 0 else -1
-            if bucket != prev:
-                node.last_progress_pct = pct
-                await report_bot_status(node.bot, node)
 
     if cur_time - _last_download_time >= 1.0:
         # update speed

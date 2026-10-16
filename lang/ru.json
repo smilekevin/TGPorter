@@ -205,6 +205,16 @@
     "All {count} items loaded": "Загружено записей: {count}",
     "Delete {count} selected tasks? This cannot be undone.": "Удалить выбранные задачи ({count})? Это действие необратимо.",
     "Cache files (partial downloads)": "Файлы кэша (частичные загрузки)",
-    "Local file": "Локальный файл"
+    "Local file": "Локальный файл",
+    "FLOOD_WAIT: {seconds} seconds remaining": "FLOOD_WAIT: осталось {seconds} секунд",
+    "Telegram notification FLOOD_WAIT ended after {seconds} seconds": "FLOOD_WAIT уведомлений Telegram завершился через {seconds} секунд",
+    "Query download tasks": "Просмотреть задачи загрузки",
+    "Download tasks": "Задачи загрузки",
+    "Page {page}/{pages} ({total} tasks)": "Страница {page}/{pages} ({total} задач)",
+    "No tasks": "Нет задач",
+    "Previous": "Назад",
+    "Next": "Далее",
+    "Refresh": "Обновить",
+    "Usage: /query [all|active|pending|completed|failed] [page]": "Использование: /query [all|active|pending|completed|failed] [страница]"
   }
 }

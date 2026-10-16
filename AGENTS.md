@@ -22,6 +22,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `media_downloader.py` | Main application, file task queue, worker pool, download execution, startup, and shutdown |
 | `module/app.py` | Configuration loading/saving, Application, TaskNode, and task status types |
 | `module/bot.py` | Bot commands, message entry points, task recovery, Pending consumer, forwarding, and listening |
+| `module/bot_query.py` | Read-only `/query` task lists and pagination using the shared download service |
 | `module/task_store.py` | Persistent tasks and daily task sequence numbers, using locks and atomic file replacement |
 | `module/download_stat.py` | Download progress, history, failures, pause, and cancellation state |
 | `module/parallel_download.py` | Fixed-size parts, per-file part queues, checkpoint plans, and file merging |

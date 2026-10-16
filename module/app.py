@@ -158,7 +158,7 @@ class TaskNode:
         self.skip_download_task = 0
         self.last_reply_time = time.time()
         self.last_edit_msg: str = ""
-        self.last_progress_pct: int = -1  # Last reported progress percentage (0-100), -1 = never reported
+        self.last_bot_flood_notice: float = time.time()  # Ignore notification waits before this task.
         self.initial_progress_reported: bool = False  # Whether first progress report has been sent
         self.flood_wait_until: float = 0  # Non-blocking FLOOD_WAIT cooldown
         self.total_download_byte = 0
@@ -248,20 +248,21 @@ class TaskNode:
         else:
             self.failed_forward_task += count
 
-    def can_reply(self):
+    def can_reply(self, immediate=False):
         """
         Checks if the bot can reply to a message
             based on the time elapsed since the last reply.
 
         Returns:
             True if the time elapsed since
-                the last reply is greater than 5 seconds, False otherwise.
+                the last reply is at least 10 seconds, False otherwise.
+            Immediate reports skip this interval but still honor FLOOD_WAIT.
         """
         cur_time = time.time()
         # Check FLOOD_WAIT cooldown
         if cur_time < self.flood_wait_until:
             return False
-        if cur_time - self.last_reply_time > 5.0:
+        if immediate or cur_time - self.last_reply_time >= 10.0:
             self.last_reply_time = cur_time
             return True
 

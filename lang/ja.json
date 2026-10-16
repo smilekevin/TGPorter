@@ -344,6 +344,16 @@
     "Connection timeout, possibly rate limited (message {message})": "接続タイムアウト。制限の可能性あり（メッセージ {message}）",
     "Resume FloodWait (message {message})": "再開時のFloodWait（メッセージ {message}）",
     "Cache files (partial downloads)": "キャッシュファイル（未完了のダウンロード）",
-    "Local file": "ローカルファイル"
+    "Local file": "ローカルファイル",
+    "FLOOD_WAIT: {seconds} seconds remaining": "FLOOD_WAIT：残り {seconds} 秒",
+    "Telegram notification FLOOD_WAIT ended after {seconds} seconds": "Telegram 通知の FLOOD_WAIT が {seconds} 秒後に解除されました",
+    "Query download tasks": "ダウンロードタスクを照会",
+    "Download tasks": "ダウンロードタスク",
+    "Page {page}/{pages} ({total} tasks)": "{page}/{pages} ページ（{total} 件のタスク）",
+    "No tasks": "タスクはありません",
+    "Previous": "前へ",
+    "Next": "次へ",
+    "Refresh": "更新",
+    "Usage: /query [all|active|pending|completed|failed] [page]": "使い方：/query [all|active|pending|completed|failed] [ページ]"
   }
 }

@@ -101,7 +101,7 @@
 
 ### 通知
 
-- **进度通知** — 每 20% 进度里程碑发送一次 Bot 消息更新
+- **进度通知** — 进度变化时约每 10 秒更新原 Bot 消息，显示限流剩余时间和暂停状态
 - **完成通知** — 任务完成时立即发送最终状态（从 _download_result 重新计数，避免竞态）
 - **失败通知** — 列出每个失败文件及具体错误原因
 - **限速通知** — FLOOD_WAIT 暂停时通知用户等待时长
@@ -153,6 +153,7 @@
 | `/remove_replace_ad <msg_link> <keyword>` | 移除替换规则 | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | 设置群组追加广告（空文本删除） | `/set_ad https://t.me/c/123 关注我` |
 | `/set_language <lang>` | 设置语言（en/zh-cn/zh-tw/ja/es/fr/ru/uk，兼容 zh/ua） | `/set_language zh-cn` |
+| `/query [all\|active\|pending\|completed\|failed] [page]` | 查询所有、下载中（含暂停）、Pending、已完成或失败任务；支持分类、翻页和刷新按钮 | `/query pending`、`/query completed 2` |
 | `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
 | `/help` `/start` | 显示帮助 | — |
 
@@ -268,7 +269,7 @@ flowchart TB
 
 1. **用户提交单条下载** → Bot handler 创建 TaskNode → `save_task()` 保存 Pending → Consumer 取得消息 → `add_download_task()` 入队
 2. **Worker 从队列取任务** → `download_task()` → `download_media()` → Kurigram 下载
-3. **进度回调** → `update_download_status()` 更新 `_download_result` → 20% 里程碑触发 Bot 通知
+3. **进度回调** → `update_download_status()` 更新 `_download_result` → 按时间节流更新 Bot 进度消息
 4. **下载完成** → `complete_task()` 从持久化移除 → `save_downloads()` 写入历史
 5. **下载失败** → `add_failed_download()` 记入失败列表 → WebUI 可重试
 6. **容器重启** → `recover_tasks()` 读取未完成任务 → 全部重置为 pending → 消费循环逐个喂入 worker
@@ -367,7 +368,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 | **FLOOD_WAIT** | 阻塞 sleep | 非阻塞冷却时间戳，不卡死队列 |
 | **静默限速** | 不检测 | 速度 < 200 KB/s 持续 120 秒 → WebUI 横幅 + TG 通知（触发和解除各一次） |
 | **并发任务数** | 固定（config） | WebUI 下拉框动态调整 1-6，实时生效 |
-| **进度通知** | 定时轮询 | 20% 里程碑触发 + 完成立即通知 + 从 _download_result 重计数 |
+| **进度通知** | 定时轮询 | 约 10 秒更新 + 完成立即通知 + FLOOD_WAIT 倒计时 |
 | **失败处理** | 仅日志 | 失败列表持久化 + 错误原因 + 源链接 + WebUI 重试 |
 | **停止任务** | 直接停止 | 未完成文件记入失败列表（手动终止），不留残留 |
 | **TCP 超时** | 10s（默认） | 900s，防止限速时 reconnect 风暴 |
@@ -493,7 +494,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Notifications
 
-- **Progress** — Bot message update at every 20% milestone
+- **Progress** — Update the existing Bot message about every 10 seconds when progress changes, with cooldown and pause status
 - **Completion** — immediate final status (re-counted from _download_result to avoid races)
 - **Failure** — lists each failed file with specific error reason
 - **Rate limit** — FLOOD_WAIT pause notification with wait duration
@@ -545,6 +546,7 @@ Credentials, first login, full configuration, parallel downloads and checkpoints
 | `/remove_replace_ad <msg_link> <keyword>` | Remove replacement rule | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | Set group append ad (empty to delete) | `/set_ad https://t.me/c/123 关注我` |
 | `/set_language <lang>` | Set language (en/zh-cn/zh-tw/ja/es/fr/ru/uk; zh/ua remain compatible) | `/set_language zh-cn` |
+| `/query [all\|active\|pending\|completed\|failed] [page]` | Query all, active (including paused), pending, completed or failed tasks; category, paging and refresh buttons | `/query pending`, `/query completed 2` |
 | `/stop` | Stop download/forward/listen (interactive) | `/stop` |
 | `/help` `/start` | Show help | — |
 
@@ -660,7 +662,7 @@ Solid edges show requests, task and media processing. Dashed edges show persiste
 
 1. **User submits a single download** → Bot handler creates TaskNode → `save_task()` persists Pending → consumer fetches message → `add_download_task()` enqueues
 2. **Worker dequeues** → `download_task()` → `download_media()` → Kurigram download
-3. **Progress callback** → `update_download_status()` updates `_download_result` → 20% milestone triggers Bot notification
+3. **Progress callback** → `update_download_status()` updates `_download_result` → Time-throttled Bot progress updates
 4. **Download complete** → `complete_task()` removes from store → `save_downloads()` writes history
 5. **Download failed** → `add_failed_download()` records to failed list → WebUI retry available
 6. **Container restart** → `recover_tasks()` reads incomplete tasks → resets all to pending → consumer loop feeds workers
@@ -759,7 +761,7 @@ Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegr
 | **FLOOD_WAIT** | Blocking sleep | Non-blocking cooldown timestamp |
 | **Silent throttle** | Not detected | Speed < 200 KB/s for 120s → WebUI banner + TG notification (trigger & recovery) |
 | **Worker count** | Fixed (config) | WebUI dropdown 1-6, dynamically adjusts concurrency |
-| **Progress notification** | Timed polling | 20% milestone + immediate completion + re-counted from _download_result |
+| **Progress notification** | Timed polling | Updates about every 10s + immediate completion + FLOOD_WAIT countdown |
 | **Failure handling** | Log only | Failed list persisted + error reason + source link + WebUI retry |
 | **Stop task** | Direct stop | Incomplete files recorded as failed (manually stopped) |
 | **TCP timeout** | 10s (default) | 900s, prevents reconnect storm during throttling |

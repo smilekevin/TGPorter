@@ -344,6 +344,16 @@
     "Connection timeout, possibly rate limited (message {message})": "Conexión agotada, posible límite (mensaje {message})",
     "Resume FloodWait (message {message})": "FloodWait al reanudar (mensaje {message})",
     "Cache files (partial downloads)": "Archivos de caché (descargas parciales)",
-    "Local file": "Archivo local"
+    "Local file": "Archivo local",
+    "FLOOD_WAIT: {seconds} seconds remaining": "FLOOD_WAIT: quedan {seconds} segundos",
+    "Telegram notification FLOOD_WAIT ended after {seconds} seconds": "El FLOOD_WAIT de las notificaciones de Telegram terminó tras {seconds} segundos",
+    "Query download tasks": "Consultar tareas de descarga",
+    "Download tasks": "Tareas de descarga",
+    "Page {page}/{pages} ({total} tasks)": "Página {page}/{pages} ({total} tareas)",
+    "No tasks": "No hay tareas",
+    "Previous": "Anterior",
+    "Next": "Siguiente",
+    "Refresh": "Actualizar",
+    "Usage: /query [all|active|pending|completed|failed] [page]": "Uso: /query [all|active|pending|completed|failed] [página]"
   }
 }

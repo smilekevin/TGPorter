@@ -549,7 +549,7 @@ async def _reset_task_for_retry(node, message):
     node.download_status = {}
     node.last_reply_time = _time.time()
     node.last_edit_msg = ""
-    node.last_progress_pct = -1
+    node.last_bot_flood_notice = _time.time()
     node.initial_progress_reported = False
 
 
@@ -684,10 +684,18 @@ def _publish_download_flood(seconds):
 async def _wait_download_flood(seconds, message_id, node, client):
     """Automatically resume rate-limit waits while honoring manual controls."""
     from module.download_stat import wait_download_ready
-    from module.pyrogram_extension import get_flood_wait_remaining
+    from module.pyrogram_extension import get_flood_wait_remaining, send_bot_notification
 
     _publish_download_flood(seconds)
     deadline = time.monotonic() + seconds
+    notice = (
+        f"⏳ {_t('Telegram rate limit pause')}\n"
+        f"{_t('Task')}: {node.task_id_display}\n"
+        f"{_t('Message ID')}: {message_id}\n"
+        + _t("FLOOD_WAIT: {seconds} seconds remaining", seconds=seconds)
+    )
+    notice += "\n" + _t("Retry automatically after {seconds} seconds", seconds=seconds)
+    notified = await send_bot_notification(node.bot, node.from_user_id, notice)
     while True:
         try:
             await wait_download_ready(message_id, node, client)
@@ -695,6 +703,13 @@ async def _wait_download_flood(seconds, message_id, node, client):
             return False
         remaining = max(deadline - time.monotonic(), get_flood_wait_remaining())
         if remaining <= 0:
+            if notified:
+                await send_bot_notification(
+                    node.bot, node.from_user_id,
+                    f"✅ {_t('Telegram rate limit cleared; resuming download')}\n"
+                    f"{_t('Task')}: {node.task_id_display}\n"
+                    f"{_t('Message ID')}: {message_id}",
+                )
             return True
         await asyncio.sleep(min(1, remaining))
 
@@ -1068,34 +1083,11 @@ async def download_media(
                 pyrogram.errors.FloodPremiumWait) as wait_err:
             # Rate limits pause the task indefinitely without spending download attempts.
             total_wait += wait_err.value
-            # First FloodWait for this file: notify user so they know progress is paused
-            if wait_err.value <= 600 and total_wait == wait_err.value and node and node.bot and getattr(node, "from_user_id", ""):
-                try:
-                    notify_text = (
-                        f"⏳ {_t('Telegram rate limit pause')}\n"
-                        f"{_t('Task')}: {getattr(node, 'task_id_display', str(node.task_id))}\n"
-                        f"{_t('File')}: {ui_file_name}\n"
-                        + _t("Retry automatically after {seconds} seconds", seconds=wait_err.value)
-                    )
-                    await node.bot.send_message(int(node.from_user_id), notify_text)
-                except Exception:
-                    pass
             if not await _wait_download_flood(wait_err.value, message_id, node, client):
                 return DownloadStatus.SkipDownload, None, ""
             retry -= 1
             logger.info("Message[{}]: FlowWait {}s, waiting (total={}s)", message.id, wait_err.value, total_wait)
             error_message = f'Rate limited; waiting {wait_err.value} seconds'
-            # Notify user that download has resumed after FloodWait
-            if node and node.bot and getattr(node, "from_user_id", ""):
-                try:
-                    resume_text = (
-                        f"✅ {_t('Telegram rate limit cleared; resuming download')}\n"
-                        f"{_t('Task')}: {getattr(node, 'task_id_display', str(node.task_id))}\n"
-                        f"{_t('File')}: {ui_file_name}"
-                    )
-                    await node.bot.send_message(int(node.from_user_id), resume_text)
-                except Exception:
-                    pass
         except TypeError:
             _cleanup_temp_file(temp_file_name)
             logger.warning(

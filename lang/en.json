@@ -344,6 +344,16 @@
     "Connection timeout, possibly rate limited (message {message})",
     "Resume FloodWait (message {message})",
     "Cache files (partial downloads)",
-    "Local file"
+    "Local file",
+    "FLOOD_WAIT: {seconds} seconds remaining",
+    "Telegram notification FLOOD_WAIT ended after {seconds} seconds",
+    "Query download tasks",
+    "Download tasks",
+    "Page {page}/{pages} ({total} tasks)",
+    "No tasks",
+    "Previous",
+    "Next",
+    "Refresh",
+    "Usage: /query [all|active|pending|completed|failed] [page]"
   ]
 }

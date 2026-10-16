@@ -207,6 +207,16 @@
     "All {count} items loaded": "Завантажено записів: {count}",
     "Delete {count} selected tasks? This cannot be undone.": "Видалити вибрані завдання ({count})? Цю дію неможливо скасувати.",
     "Cache files (partial downloads)": "Файли кешу (часткові завантаження)",
-    "Local file": "Локальний файл"
+    "Local file": "Локальний файл",
+    "FLOOD_WAIT: {seconds} seconds remaining": "FLOOD_WAIT: залишилося {seconds} секунд",
+    "Telegram notification FLOOD_WAIT ended after {seconds} seconds": "FLOOD_WAIT сповіщень Telegram завершився через {seconds} секунд",
+    "Query download tasks": "Переглянути завдання завантаження",
+    "Download tasks": "Завдання завантаження",
+    "Page {page}/{pages} ({total} tasks)": "Сторінка {page}/{pages} ({total} завдань)",
+    "No tasks": "Немає завдань",
+    "Previous": "Назад",
+    "Next": "Далі",
+    "Refresh": "Оновити",
+    "Usage: /query [all|active|pending|completed|failed] [page]": "Використання: /query [all|active|pending|completed|failed] [сторінка]"
   }
 }
