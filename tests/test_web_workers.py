@@ -1,5 +1,6 @@
-"""Keep live concurrency changes separate from the configured startup limit."""
+"""Persist live concurrency in runtime JSON while keeping startup configuration read-only."""
 
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -47,8 +48,8 @@ class WebWorkerTests(unittest.TestCase):
         app.load_config()
         return app
 
-    def test_live_adjustments_resize_workers_without_writing_files(self):
-        original = self.config_file.read_bytes(), self.data_file.read_bytes()
+    def test_live_adjustments_save_runtime_json_and_resize_workers(self):
+        original = self.config_file.read_bytes()
         for workers in (1, 6):
             with self.subTest(workers=workers):
                 response = self.client.post(f'/set_max_workers?n={workers}')
@@ -60,12 +61,13 @@ class WebWorkerTests(unittest.TestCase):
                 self.assertEqual(self.app.max_concurrent_transmissions, workers * 8)
                 self.resize.assert_called_with(workers)
                 self.resize_transmissions.assert_called_with(self.telegram_client, workers * 8)
-                self.app.save_app_data.assert_not_called()
+                self.app.save_app_data.assert_called_with(True)
                 self.assertEqual(self.app.config['max_download_task'], 2)
-                self.assertEqual((self.config_file.read_bytes(), self.data_file.read_bytes()), original)
-        self.assertEqual(self.load_application().max_download_task, 2)
+                self.assertEqual(self.config_file.read_bytes(), original)
+                self.assertEqual(json.loads(self.data_file.read_text())['max_download_task'], workers)
+        self.assertEqual(self.load_application().max_download_task, 6)
 
-    def test_later_runtime_saves_do_not_persist_worker_limit(self):
+    def test_later_runtime_saves_keep_worker_limit_even_without_configured_default(self):
         for configured in (2, None):
             with self.subTest(configured=configured):
                 if configured is None:
@@ -79,7 +81,8 @@ class WebWorkerTests(unittest.TestCase):
                 self.assertEqual(self.app.max_download_task, 3)
                 self.assertEqual(self.app.config.get('max_download_task'), configured)
                 restarted = self.load_application()
-                self.assertEqual(restarted.max_download_task, configured if configured is not None else 5)
+                self.assertEqual(restarted.max_download_task, 3)
+                self.assertEqual(restarted.max_concurrent_transmissions, 24)
                 self.assertEqual(restarted.config.get('max_download_task'), configured)
 
     def test_invalid_limits_leave_runtime_and_config_unchanged(self):

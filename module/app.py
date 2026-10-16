@@ -712,6 +712,12 @@ class Application:
 
     def assign_app_data(self, app_data: dict) -> bool:
         """Restore runtime overrides, falling back to existing startup configuration."""
+        if "max_download_task" in app_data:
+            workers = app_data["max_download_task"]
+            if type(workers) is not int or workers < 1:
+                raise ValueError("Saved max_download_task must be a positive integer")
+            self.max_download_task = workers
+            self.max_concurrent_transmissions = workers * max(5, self.file_download_concurrency)
         if "language" in app_data:
             try:
                 self.language = parse_language(app_data["language"])
@@ -893,7 +899,8 @@ class Application:
                         DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload
                     ):
                         unfinished_ids.discard(message_id)
-                for message_id, status in value.node.download_status.items():
+                # Web setting saves can race with downloader-loop status updates.
+                for message_id, status in list(value.node.download_status.items()):
                     if status not in (DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload):
                         unfinished_ids.add(message_id)
                 value.ids_to_retry = sorted(unfinished_ids)
@@ -907,6 +914,7 @@ class Application:
                 record["ids_to_retry"] = value.ids_to_retry
 
             self.app_data["language"] = self.language.value
+            self.app_data["max_download_task"] = self.max_download_task
             for key in ("filter_advertisement_list", "replace_advertisement_list",
                         "group_add_advertisement"):
                 self.app_data[key] = copy.deepcopy(getattr(self, key))

@@ -1341,6 +1341,7 @@ async def set_language(client: pyrogram.Client, message: pyrogram.types.Message)
     try:
         language = parse_language(language)
         _bot.app.set_language(language)
+        _bot.app.save_app_data(True)
         await client.send_message(
             message.from_user.id, f"{_t('Language set to')} {CATALOGS[language.value]['name']}"
         )
@@ -1464,8 +1465,8 @@ async def add_filter_advertisement_filter(
         return
 
     _bot.app.filter_advertisement_list.append(filter_str)
-    await client.send_message(message.from_user.id, f"{_t('Add filter')}: {filter_str}")
     _bot.app.save_app_data(True)
+    await client.send_message(message.from_user.id, f"{_t('Add filter')}: {filter_str}")
 
 
 async def remove_filter_advertisement_filter(
@@ -1486,11 +1487,10 @@ async def remove_filter_advertisement_filter(
     filter_str = args[1]
     if filter_str in _bot.app.filter_advertisement_list:
         _bot.app.filter_advertisement_list.remove(filter_str)
+        _bot.app.save_app_data(True)
         await client.send_message(
             message.from_user.id, f"{_t('Remove filter')} : {args[1]}"
         )
-
-        _bot.app.save_app_data(True)
     else:
         await client.send_message(
             message.from_user.id, f"{_t('Filter')} : {args[1]} {_t('not exist')}"
@@ -1698,6 +1698,7 @@ async def remove_replace_advertisement_filter(
 
         if filter_str in _bot.app.replace_advertisement_list:
             _bot.app.replace_advertisement_list.remove(filter_str)
+            _bot.app.save_app_data(True)
             await client.send_message(
                 message.from_user.id, f"{_t('Remove filter')} : {filter_str}"
             )
@@ -1706,7 +1707,6 @@ async def remove_replace_advertisement_filter(
                 message.from_user.id,
                 f"{_t('Filter not found')}: {filter_str}",
             )
-        _bot.app.save_app_data(True)
     except Exception as e:
         await client.send_message(
             message.from_user.id, f"{_t('Add filter')} : {filter_str}\n{e}"

@@ -161,7 +161,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             workers = self.assert_success(await client.call_tool("set_max_workers", {"workers": 3}))
             self.assertEqual(workers, {"max_workers": 3})
             self.assertEqual(self.config.max_download_task, 3)
-            self.config.save_app_data.assert_not_called()
+            self.config.save_app_data.assert_called_once_with(True)
 
     async def test_api_business_failure_is_a_tool_error_instead_of_false_success(self):
         async with Client(self.server) as client:

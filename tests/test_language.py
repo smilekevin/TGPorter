@@ -128,10 +128,10 @@ class LanguageTests(unittest.TestCase):
 
 class BotLanguageTests(unittest.IsolatedAsyncioTestCase):
     async def test_command_accepts_new_codes_and_uses_native_name(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, Mock
         for code in ('zh', 'zh-cn', 'zh-tw', 'ja', 'es', 'fr', 'ua'):
             with self.subTest(code=code):
-                app = SimpleNamespace(set_language=set_language)
+                app = SimpleNamespace(set_language=set_language, save_app_data=Mock())
                 client = SimpleNamespace(send_message=AsyncMock())
                 message = SimpleNamespace(text=f'/set_language {code}',
                                           from_user=SimpleNamespace(id=12))
@@ -140,6 +140,7 @@ class BotLanguageTests(unittest.IsolatedAsyncioTestCase):
                         await bot.set_language(client, message)
                     native_name = lang.CATALOGS[lang.normalize_language(code)]['name']
                     self.assertIn(native_name, client.send_message.await_args.args[1])
+                    app.save_app_data.assert_called_once_with(True)
                 finally:
                     set_language(Language.EN)
 

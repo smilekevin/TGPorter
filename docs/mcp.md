@@ -13,7 +13,7 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 | `check_task_file` | `task_id` | 查询已完成任务的文件是否存在、路径和文件名 |
 | `submit_download` | `url` | 提交单条 Telegram 消息链接，持久化进入待下载队列 |
 | `set_download_state` | `state`: paused / downloading | 全局暂停 / 恢复 |
-| `set_max_workers` | `workers`: 1–6 | 临时设置同时下载的文件数，不写配置，重启后恢复配置值；不改变单文件分片 worker 数 |
+| `set_max_workers` | `workers`: 1–6 | 设置同时下载的文件数，立即保存到运行 JSON，重启后保留；不改变单文件分片 worker 数 |
 | `pause_task` / `resume_task` | `task_id` | 暂停 / 恢复单个任务 |
 | `retry_task` | `task_id` | 重试一个失败任务 |
 | `batch_retry_tasks` | `task_ids` | 批量重试失败任务 |
@@ -57,7 +57,7 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 | `check_task_file` | `task_id` | Check a completed file's existence, path and name |
 | `submit_download` | `url` | Persist a single Telegram post in the download queue |
 | `set_download_state` | `state`: paused / downloading | Pause/resume global processing |
-| `set_max_workers` | `workers`: 1–6 | Temporarily set simultaneous files without saving; resets to config on restart and leaves per-file part workers unchanged |
+| `set_max_workers` | `workers`: 1–6 | Set simultaneous files and save immediately to runtime JSON for restarts; leaves per-file part workers unchanged |
 | `pause_task` / `resume_task` | `task_id` | Pause/resume an individual task |
 | `retry_task` / `batch_retry_tasks` | `task_id` / `task_ids` | Requeue failed tasks |
 | `delete_task` / `batch_delete_tasks` | `task_id` / `task_ids`, `delete_file` | Cancel/delete tasks; `delete_file=true` removes files and partial data |

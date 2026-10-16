@@ -41,7 +41,7 @@ hide_file_name: false
 file_name_prefix:
 - file_name
 #file_name_prefix_split: ' - '
-# Startup file limit; WebUI/MCP changes last until restart and do not update this file.
+# Initial file limit; saved data/data.json overrides it. WebUI/API/MCP changes save immediately.
 max_download_task: 5
 # Workers per file; each uses an independent connection and takes another part when finished.
 file_download_concurrency: 4

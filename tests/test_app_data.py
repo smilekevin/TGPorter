@@ -75,7 +75,7 @@ class AppDataTests(unittest.TestCase):
         self.assertEqual(app.config, initial_config)
         data = self.read_data()
         self.assertEqual(data['other'], 'keep')
-        self.assertNotIn('max_download_task', data)
+        self.assertEqual(data['max_download_task'], 6)
         self.assertNotIn('api_id', data)
         self.assertNotIn('api_hash', data)
         records = {item['chat_id']: item for item in data['chat']}
@@ -90,7 +90,7 @@ class AppDataTests(unittest.TestCase):
         self.assertEqual(restarted.replace_advertisement_list, [])
         self.assertEqual(restarted.group_add_advertisement, {-1001: 'new-ad'})
         self.assertEqual(restarted.language, Language.FR)
-        self.assertEqual(restarted.max_download_task, 2)
+        self.assertEqual(restarted.max_download_task, 6)
 
     def test_empty_runtime_rules_override_initial_configuration(self):
         app = self.load()
@@ -174,6 +174,38 @@ class AppDataTests(unittest.TestCase):
 
 
 class BotAdDataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_language_is_saved_before_success_reply_and_survives_restart(self):
+        self.addCleanup(set_language, Language.EN)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.yaml'
+            data = Path(directory) / 'data/data.json'
+            config.write_text('api_id: test\napi_hash: test\nmedia_types: []\nfile_formats: {}\n')
+            original = config.read_bytes()
+            config.chmod(0o444)
+            app = Application(str(config), str(data))
+            restarted = None
+            try:
+                app.load_config()
+                self.assertEqual(json.loads(data.read_text()), {})
+
+                async def reply(*args, **kwargs):
+                    self.assertEqual(json.loads(data.read_text())['language'], 'fr')
+                    self.assertEqual(config.read_bytes(), original)
+
+                client = SimpleNamespace(send_message=AsyncMock(side_effect=reply))
+                message = SimpleNamespace(text='/set_language fr', from_user=SimpleNamespace(id=7))
+                with patch.object(bot, '_bot', SimpleNamespace(app=app)):
+                    await bot.set_language(client, message)
+                client.send_message.assert_awaited_once()
+                restarted = Application(str(config), str(data))
+                restarted.load_config()
+                self.assertEqual(restarted.language, Language.FR)
+            finally:
+                for instance in (app, restarted):
+                    if instance is not None:
+                        instance.loop.close()
+                        instance.executor.shutdown()
+
     async def test_all_ad_commands_persist_to_data_and_empty_rules_survive_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.yaml'
@@ -199,12 +231,15 @@ class BotAdDataTests(unittest.IsolatedAsyncioTestCase):
                         patch.object(bot, 'proc_replace_advertisement', AsyncMock(return_value='replacement')):
                     for handler, text, key, expected in cases:
                         with self.subTest(command=text):
-                            await handler(client, SimpleNamespace(text=text, from_user=SimpleNamespace(id=7)))
-                            saved = json.loads(data.read_text())
                             if isinstance(expected, dict):
                                 expected = {str(key): value for key, value in expected.items()}
-                            self.assertEqual(saved[key], expected)
-                            self.assertEqual(config.read_bytes(), original)
+
+                            async def reply(*args, **kwargs):
+                                self.assertEqual(json.loads(data.read_text())[key], expected)
+                                self.assertEqual(config.read_bytes(), original)
+
+                            client.send_message.side_effect = reply
+                            await handler(client, SimpleNamespace(text=text, from_user=SimpleNamespace(id=7)))
                 restarted = Application(str(config), str(data))
                 restarted.load_config()
                 self.assertEqual(restarted.filter_advertisement_list, [])

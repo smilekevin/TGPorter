@@ -65,7 +65,7 @@
 - **任务 ID** — `MMDD-序号` 格式（如 `0628-1`），每日序号重置，持久化计数器
 - **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；内存占位区分已入队等待 worker 的任务
 - **下载进度持久化** — 扫描时定期保存位置，扫描结束及退出时保存到 `data/data.json`，重启可恢复
-- **只读启动配置** — 程序不改写 `config.yaml`；自动生成 `data/data.json` 保存广告规则、Bot 语言及扫描/重试状态，日志和 session 共用 `data/` 挂载，临时下载使用 `save_path/.temp/`。UI 并发调整仅在本次运行生效。[持久化说明](./DEPLOY.md#docker-数据持久化)
+- **只读启动配置** — 程序不改写 `config.yaml`；自动生成 `data/data.json` 保存广告规则、Bot 语言及扫描/重试状态，日志和 session 共用 `data/` 挂载，临时下载使用 `save_path/.temp/`。Bot 语言、广告规则和 UI/API/MCP 并发调整立即保存，重启后保留。[持久化说明](./DEPLOY.md#docker-数据持久化)
 - **下载历史持久化** — 完成/失败记录写入 `data/log/download_history.json`
 - **手动终止** — 停止任务时未完成文件记入失败列表（原因：手动终止）
 
@@ -200,7 +200,7 @@ Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参
 | `/get_flood_wait` | GET | FloodWait 冷却状态 + 剩余秒数 |
 | `/get_app_version` | GET | 应用版本 |
 | `/get_max_workers` | GET | 当前同时下载的文件数 |
-| `/set_max_workers` | POST | 临时设置同时下载的文件数（`n=1`–`6`），不写配置，重启后恢复配置值 |
+| `/set_max_workers` | POST | 设置同时下载的文件数（`n=1`–`6`），立即保存到 `data/data.json`，重启后保留 |
 | `/check_file_exists` | POST | 检查本地文件或活动/失败任务断点，分别返回 `output_exists`、`cache_exists` 和 `cache_paths`；删除确认只提示缓存存在 |
 | `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
 | `/pause_task` | POST | 暂停单个任务 |
@@ -375,7 +375,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 | **Pending 队列** | 无 | 重启任务统一入 pending，逐个消费，防 FLOOD_WAIT 风暴 |
 | **FLOOD_WAIT** | 阻塞 sleep | 非阻塞冷却时间戳，不卡死队列 |
 | **静默限速** | 不检测 | 速度 < 200 KB/s 持续 120 秒 → WebUI 横幅 + TG 通知（触发和解除各一次） |
-| **并发任务数** | 固定（config） | WebUI 下拉框临时调整 1-6，实时生效，不写配置，重启后恢复 |
+| **并发任务数** | 固定（config） | WebUI 下拉框调整 1-6，立即生效并保存到运行数据，重启后保留 |
 | **进度通知** | 定时轮询 | 约 10 秒更新 + 完成立即通知 + FLOOD_WAIT 倒计时 |
 | **失败处理** | 仅日志 | 失败列表持久化 + 错误原因 + 源链接 + WebUI 重试 |
 | **停止任务** | 直接停止 | 未完成文件记入失败列表（手动终止），不留残留 |
@@ -466,7 +466,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Task ID** — `MMDD-N` format (e.g. `0628-1`), resets daily, persistent counter
 - **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; in-memory reservations distinguish tasks waiting for worker pickup
 - **Download progress persistence** — checkpoints during scans, at scan completion and on shutdown save to `data/data.json` for restart recovery
-- **Read-only startup configuration** — the application never rewrites `config.yaml`; it generates `data/data.json` for ad rules, Bot language, checkpoints and retry IDs. Logs and sessions share the `data/` mount; staging uses `save_path/.temp/`. UI concurrency changes last until restart. [Persistence details](./DEPLOY.md#docker-data-persistence)
+- **Read-only startup configuration** — the application never rewrites `config.yaml`; it generates `data/data.json` for ad rules, Bot language, checkpoints and retry IDs. Logs and sessions share the `data/` mount; staging uses `save_path/.temp/`. Bot language, ad rules and UI/API/MCP concurrency changes save immediately and survive restarts. [Persistence details](./DEPLOY.md#docker-data-persistence)
 - **Download history** — completed/failed records in `data/log/download_history.json`
 - **Manual stop** — stopped tasks' incomplete files recorded as failed (reason: manually stopped)
 
@@ -600,7 +600,7 @@ The main service exposes typed tools, structured results and actionable errors a
 | `/get_flood_wait` | GET | FloodWait cooldown status + remaining seconds |
 | `/get_app_version` | GET | App version |
 | `/get_max_workers` | GET | Current number of simultaneous file downloads |
-| `/set_max_workers` | POST | Temporarily set simultaneous file downloads (`n=1`–`6`); no config write, resets on restart |
+| `/set_max_workers` | POST | Set simultaneous file downloads (`n=1`–`6`); save immediately to `data/data.json` for restarts |
 | `/check_file_exists` | POST | Check local output or active/failed-task partial data; return `output_exists`, `cache_exists`, and `cache_paths` separately; deletion confirmation only indicates cache presence |
 | `/set_download_state` | POST | Global pause/resume (`state=pause` / `state=continue`) |
 | `/pause_task` | POST | Pause a task |
@@ -775,7 +775,7 @@ Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegr
 | **Pending queue** | None | Restart tasks enter pending, consumed one by one, prevents FLOOD_WAIT storm |
 | **FLOOD_WAIT** | Blocking sleep | Non-blocking cooldown timestamp |
 | **Silent throttle** | Not detected | Speed < 200 KB/s for 120s → WebUI banner + TG notification (trigger & recovery) |
-| **Worker count** | Fixed (config) | WebUI dropdown 1-6, applies immediately without saving; resets on restart |
+| **Worker count** | Fixed (config) | WebUI dropdown 1-6, applies and saves immediately; survives restarts |
 | **Progress notification** | Timed polling | Updates about every 10s + immediate completion + FLOOD_WAIT countdown |
 | **Failure handling** | Log only | Failed list persisted + error reason + source link + WebUI retry |
 | **Stop task** | Direct stop | Incomplete files recorded as failed (manually stopped) |

@@ -321,7 +321,7 @@ proxy:
 暂停时保留连接，完成、取消或客户端重启时关闭连接。
 取消下载先关闭连接，再按文件删除选项处理该文件在 `downloads/.temp/` 中的临时文件和 `.parts/` 目录。活动和失败任务的删除确认只提示是否存在缓存文件（临时文件或分片目录），不列出缓存路径；仅在文件和已记录路径的缓存均不存在时提示未找到。网页取消和删除失败任务默认勾选“同时删除本地文件和缓存”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
 文件任务入队时按需启动文件 worker，队列清空后退出，空队列启动不创建文件 worker。调高并发只为等待任务增加 worker；调低时正在下载的文件继续完成，再收缩并发。同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 个 worker 时，最多有 20 个并发下载 worker，没有额外的总并发配置。
-WebUI、Web API 和 MCP 调整的并发任务数仅在当前进程生效，不会将临时值写入 `config.yaml`；重启后恢复文件中的 `max_download_task`（未配置时为 `5`）。需要永久修改时，请手动编辑配置文件并重启服务。
+WebUI、Web API 和 MCP 调整的并发任务数立即生效并保存到 `data/data.json` 的 `max_download_task`，重启后继续使用；`config.yaml` 保持只读。未保存运行值时才使用配置中的初始值（未配置时为 `5`）。需要恢复配置初始值时，先停服并删除 JSON 中的 `max_download_task`。
 切片大小和 worker 数在文件首次开始时保存，暂停、重试和程序重启后继续使用该计划，不重复下载已完成切片。
 连接下载失败时关闭该连接并将未完成分片交回队列，保留其他健康连接。只要还有可用 worker，单个 worker 失败不会结束文件任务；仅最后一个 worker 连续失败 3 次才算下载失败，不再叠加文件级重试。完成一个分片会重置计数。最后一个 worker 重试使用最多 50% 随机退避，上限 30 秒，前两次等待分别为 10–15 秒和 20–30 秒。磁盘写入和文件计划校验错误不作为连接错误重试。明确的文件引用过期或无效错误会重新获取原消息，并检查文件身份和大小后续传；普通 BadRequest 保留真实异常类型。FLOOD_WAIT / FLOOD_PREMIUM_WAIT 不消耗失败次数，也没有累计等待或 600 秒手动恢复门槛。受限连接关闭并保留断点，冷却期间不创建新连接，已有健康连接继续领取分片；全部连接受限时等待最长的共享冷却截止时间，到期后自动从断点恢复并逐步增加连接。UI 显示共享 FLOOD_WAIT 倒计时；仍可手动暂停、恢复或取消，手动暂停不会因冷却结束而解除。
 进度条汇总所有切片的已下载字节，续传恢复的已有字节不计入新传输速度。
@@ -476,7 +476,7 @@ docker-compose up -d
 | `./downloads/` | 下载的文件 |
 | `./config.yaml` | 只读启动配置；程序不会改写 |
 | `./data/` | 整体挂载到 `/app/data`，下列运行内容由程序自动创建 |
-| `./data/data.json` | 频道扫描位置、重试 ID、广告规则及 Bot 语言 |
+| `./data/data.json` | 频道扫描位置、重试 ID、广告规则、Bot 语言及并发数 |
 | `./data/log/` | 日志 + 任务持久化（bot_tasks.json / task_counter.json / download_history.json） |
 | `./data/sessions/` | Telegram 登录会话 |
 | `./data/bot.yaml` | Bot 过滤配置，由程序管理 |
@@ -484,7 +484,7 @@ docker-compose up -d
 
 程序仅读取 `config.yaml`，扫描、Bot 命令和退出均不会改写它；Docker 示例以 `:ro` 挂载该文件，`data/` 则以目录方式挂载并保持可写。首次启动自动创建 `data/data.json`，无需预建数据文件。JSON 通过锁和临时文件原子替换保存；`chat[].chat_id` 标识频道，`ids_to_retry` 保存重试消息 ID，`last_read_message_id` 保存下一条待扫描位置。启动时取配置初始位置与已保存位置中较大的值。未在本次配置启用的频道记录及其他数据键会保留。
 
-广告相关的 `filter_advertisement_list`、`replace_advertisement_list`、`group_add_advertisement` 和 Bot 的 `language` 保存于 `data/data.json` 顶层。已有配置中的对应值仍作为初始值读取；一旦 `data/data.json` 有对应键，就优先使用该值，包括空列表和空字典。Bot 广告命令立即保存规则，Bot 语言随扫描/退出保存；网页语言仍只保存在浏览器。需要恢复配置中的初始规则或语言时，先停服并删除 `data/data.json` 中对应的键；不要删除整个文件，以免丢失下载状态。需要从更早的位置重新扫描时，同样应停服后调整该频道的数据检查点和配置初始位置。
+广告相关的 `filter_advertisement_list`、`replace_advertisement_list`、`group_add_advertisement` 和 Bot 的 `language` 保存于 `data/data.json` 顶层。已有配置中的对应值仍作为初始值读取；一旦 `data/data.json` 有对应键，就优先使用该值，包括空列表和空字典。Bot 语言、广告规则和并发设置在修改成功后立即保存，保存完成后才报告成功；网页语言仍只保存在浏览器。需要恢复配置中的初始规则或语言时，先停服并删除 `data/data.json` 中对应的键；不要删除整个文件，以免丢失下载状态。需要从更早的位置重新扫描时，同样应停服后调整该频道的数据检查点和配置初始位置。
 
 只需持久化 `config.yaml`、`data/` 和下载目录。程序会创建 `data/log/`、`data/sessions/` 和下载目录下的 `.temp/`，不需要单独挂载日志、session 或 temp。容器移除或重建不会删除这些宿主机数据；自定义的宿主机下载路径对应表中的 `./downloads/`。
 
@@ -843,7 +843,7 @@ all parts are complete, then the parts are merged in order. Each worker owns an 
 TCP connection and uses it for successive parts; different workers and files do not share download connections.
 Pauses retain connections; completion, cancellation and client restart close them. File workers start on demand when tasks enter the queue and exit when it empties; an empty startup creates none. Raising the limit adds workers only for queued tasks; lowering it lets active files finish before reducing concurrency. `max_download_task` limits
 simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
-Concurrency changes through WebUI, Web API or MCP apply only to the current process and never save the temporary value to `config.yaml`. Restarting restores the file's `max_download_task` value (`5` when omitted). For a permanent change, edit the configuration file and restart the service.
+Concurrency changes through WebUI, Web API or MCP apply immediately and save to `max_download_task` in `data/data.json` for subsequent restarts; `config.yaml` stays read-only. Without a saved runtime value, the configured initial value applies (`5` when omitted). To restore the configured default, stop the service and remove the JSON `max_download_task` key.
 Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `downloads/.temp/`. For active and failed tasks, the deletion dialog indicates whether staging files or part directories exist without listing cache paths; it reports no files only when neither output nor cache at recorded paths exists. WebUI checks the file and cache option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
 A failed download connection closes and returns its unfinished part to the queue while healthy connections keep running. A single worker failure does not end the file while another worker remains; only three consecutive failures of the last worker fail the download, without another file-level retry budget. Completing a part resets the counter. The last worker retries with up to 50% random jitter capped at 30 seconds: the two waits are 10–15 and 20–30 seconds. Local disk writes and checkpoint validation errors are not retried as connection errors. Explicit expired/invalid references refetch the original message and validate file identity and size before resuming; other BadRequest errors retain their actual exception type. FLOOD_WAIT / FLOOD_PREMIUM_WAIT does not consume attempts or impose cumulative limits or a 600-second manual-resume threshold. Throttled connections close with checkpoints retained; cooldown blocks new connections while healthy existing connections continue taking parts. If all connections are throttled, they wait for the longest shared cooldown, then automatically resume from checkpoints with gradual connection creation. The UI displays the shared FLOOD_WAIT countdown. Manual pause, resume and cancellation remain available; cooldown expiry does not clear a manual pause.
 The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
@@ -995,7 +995,7 @@ After updating local source, run `docker-compose up -d --build`. See [Docker Com
 | `./downloads/` | Downloaded files |
 | `./config.yaml` | Read-only startup configuration; never rewritten by the application |
 | `./data/` | Mounted as `/app/data`; the application creates the runtime contents below |
-| `./data/data.json` | Chat scan positions, retry IDs, ad rules and Bot language |
+| `./data/data.json` | Chat scan positions, retry IDs, ad rules, Bot language and concurrency |
 | `./data/log/` | Logs + task persistence (bot_tasks.json / task_counter.json / download_history.json) |
 | `./data/sessions/` | Telegram login sessions |
 | `./data/bot.yaml` | Bot filter settings managed by the application |
@@ -1003,7 +1003,7 @@ After updating local source, run `docker-compose up -d --build`. See [Docker Com
 
 The application only reads `config.yaml`; scans, Bot commands and shutdown never rewrite it. Docker examples mount it with `:ro` and mount `data/` as a writable directory. First startup automatically creates `data/data.json`; no runtime file needs to be prepared. JSON saves use locked atomic replacement through a temporary file. Each `chat[]` record contains its `chat_id`, retry message IDs in `ids_to_retry` and the next scan position in `last_read_message_id`. Startup uses the later of the configured initial position and saved checkpoint. Records for currently unconfigured chats and unrelated data keys are preserved.
 
-The top-level `filter_advertisement_list`, `replace_advertisement_list`, `group_add_advertisement` and Bot `language` now live in `data/data.json`. Existing config values remain initial defaults; saved data takes precedence whenever its key exists, including empty lists and dictionaries. Bot ad commands save immediately; Bot language saves with scan/shutdown state. Browser language stays in browser storage. To restore initial ad rules or language, stop the service and remove only the corresponding data keys, preserving download state. To rescan earlier messages, also stop the service before adjusting that chat's saved checkpoint and configured initial position.
+The top-level `filter_advertisement_list`, `replace_advertisement_list`, `group_add_advertisement` and Bot `language` now live in `data/data.json`. Existing config values remain initial defaults; saved data takes precedence whenever its key exists, including empty lists and dictionaries. Bot language, ad rules and concurrency settings save immediately, before success is reported. Browser language stays in browser storage. To restore initial ad rules or language, stop the service and remove only the corresponding data keys, preserving download state. To rescan earlier messages, also stop the service before adjusting that chat's saved checkpoint and configured initial position.
 
 Persist only `config.yaml`, `data/` and the download directory. The application creates `data/log/`, `data/sessions/` and `.temp/` inside the download directory; no separate log, session or temp mount is needed. Recreating a container keeps this host data. A custom host download directory replaces `./downloads/` in this table.
 
