@@ -211,12 +211,12 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         generated.write_bytes(b"resume")
         legacy = root / "legacy.mov.temp"
         legacy.write_bytes(b"old")
-        downloads = self.path / "downloads"
+        downloads = self.path / "configured-downloads"
         downloads.mkdir()
+        self.app.save_path = str(downloads)
         (downloads / Path(staging).name).write_bytes(b"finished")
         (downloads / "legacy.mov").write_bytes(b"finished")
-        with patch.object(downloader.os.path, "abspath", return_value=str(self.path)):
-            downloader._cleanup_stale_temp_files()
+        downloader._cleanup_stale_temp_files()
         self.assertEqual(generated.read_bytes(), b"resume")
         self.assertFalse(legacy.exists())
 
@@ -745,7 +745,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
 class DownloadConfigTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application("unused-config.yaml", "unused-data.yaml")
+        self.app = Application("unused-config.yaml", "unused-data.json")
         self.addCleanup(self.app.loop.close)
         self.addCleanup(self.app.executor.shutdown)
         self.base = {"api_id": "test", "api_hash": "test", "media_types": [],

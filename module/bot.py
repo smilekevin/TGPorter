@@ -51,6 +51,7 @@ from module.pyrogram_extension import (
 )
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
+from module.runtime_paths import BOT_CONFIG_FILE
 
 # pylint: disable = C0301, R0902
 
@@ -187,7 +188,7 @@ class DownloadBot:
         self.listen_forward_chat: dict = {}
         self.config: dict = {}
         self._yaml = yaml.YAML()
-        self.config_path = os.path.join(os.path.abspath("."), "bot.yaml")
+        self.config_path = BOT_CONFIG_FILE
         self.download_command: dict = {}
         self.filter = Filter()
         self.bot_info = None
@@ -782,6 +783,7 @@ class DownloadBot:
         """Update config from str."""
         self.config["download_filter"] = self.download_filter
 
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         with open(self.config_path, "w", encoding="utf-8") as yaml_file:
             self._yaml.dump(self.config, yaml_file)
 
@@ -1163,7 +1165,7 @@ _bot = DownloadBot()
 
 def _cleanup_task_temp_files(chat_id: int):
     """Remove temp files for a specific chat from temp directory."""
-    temp_dir = os.path.join(os.path.abspath("."), "temp")
+    temp_dir = _bot.app.temp_save_path
     chat_dir = os.path.join(temp_dir, str(chat_id))
     if not os.path.isdir(chat_dir):
         return

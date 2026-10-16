@@ -39,7 +39,7 @@
 - **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
 - **连接容错** — 失败连接退出，未完成分片交给剩余连接；仅最后一个连接连续失败 3 次才判定下载失败，成功完成分片会重置计数；FLOOD_WAIT 不消耗尝试次数
 - **文件引用过期处理** — 分片遇到明确的引用过期或无效错误时刷新原消息，校验文件身份后续传；其他错误保留具体原因
-- **临时文件命名** — 新下载统一使用 `temp/timestamp_guid.tmp`，重试和重启复用相同名称，兼容旧路径断点；完成后按原规则保存文件名
+- **临时文件命名** — 新下载统一使用 `downloads/.temp/timestamp_guid.tmp`，重试和重启复用相同名称，兼容旧路径断点；完成后按原规则保存文件名
 - **临时文件清理** — 删除或取消正在下载的任务时清理其临时文件和分片目录；暂停、断网和程序退出保留断点
 
 ### 转发
@@ -60,13 +60,13 @@
 
 ### 任务管理
 
-- **任务持久化** — 所有下载/转发任务写入 `log/bot_tasks.json`，容器重启不丢任务
+- **任务持久化** — 所有下载/转发任务写入 `data/log/bot_tasks.json`，容器重启不丢任务
 - **崩溃恢复** — 重启后所有未完成任务统一进入 pending 队列，逐个消费
 - **任务 ID** — `MMDD-序号` 格式（如 `0628-1`），每日序号重置，持久化计数器
 - **Pending 队列** — 任务先入 pending 状态，由消费循环逐个喂给 worker 池；内存占位区分已入队等待 worker 的任务
-- **下载进度持久化** — 扫描时定期保存位置，扫描结束及退出时保存到 `data.yaml`，重启可恢复
-- **只读启动配置** — 程序不改写 `config.yaml`；广告规则、Bot 语言及频道扫描/重试状态保存在 `data.yaml`，UI 并发调整仅在本次运行生效。[持久化说明](./DEPLOY.md#docker-数据持久化)
-- **下载历史持久化** — 完成/失败记录写入 `log/download_history.json`
+- **下载进度持久化** — 扫描时定期保存位置，扫描结束及退出时保存到 `data/data.json`，重启可恢复
+- **只读启动配置** — 程序不改写 `config.yaml`；自动生成 `data/data.json` 保存广告规则、Bot 语言及扫描/重试状态，日志和 session 共用 `data/` 挂载，临时下载使用 `save_path/.temp/`。UI 并发调整仅在本次运行生效。[持久化说明](./DEPLOY.md#docker-数据持久化)
+- **下载历史持久化** — 完成/失败记录写入 `data/log/download_history.json`
 - **手动终止** — 停止任务时未完成文件记入失败列表（原因：手动终止）
 
 ### FLOOD_WAIT 处理
@@ -123,7 +123,7 @@
 - **跨 DC 连接初始化** — 普通媒体下载首次通过普通 DC 端点创建密钥，同一账号和 DC 的后续 worker／文件在内存中复用该密钥；媒体会话和 TCP 连接仍各自独立；密钥协商超过 60 秒会关闭该连接并按现有规则重试，保留断点
 - **Kurigram 接口兼容** — 转发来源使用 `forward_origin`，Bot 回复使用 `ReplyParameters`，避免旧接口弃用警告并保留来源与回复关系
 - **Bot 心跳与诊断** — 每 60 秒进行一次实际 Ping/Pong 探测，10 秒超时，连续 3 次失败尝试重连；记录消息授权、处理耗时和队列状态，见[部署指南](DEPLOY.md#bot-心跳与消息诊断)
-- **统一日志** — 仅写入 `log/tdl.log`，10MB 轮转，保留 30 天；首块数据前每 30 秒记录等待阶段，DEBUG 可查看连接准备和授权步骤，见 [部署指南](DEPLOY.md)
+- **统一日志** — 仅写入 `data/log/tdl.log`，10MB 轮转，保留 30 天；首块数据前每 30 秒记录等待阶段，DEBUG 可查看连接准备和授权步骤，见 [部署指南](DEPLOY.md)
 
 ---
 
@@ -440,7 +440,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Size mismatch** — backs up existing file (.bak), re-downloads, deletes backup on success
 - **Connection recovery** — failed connections retire and surviving connections take their unfinished parts; only three consecutive failures of the last worker fail a download, with the counter reset by a completed part; FLOOD_WAIT does not consume attempts
 - **File reference refresh** — explicit expired/invalid reference errors refresh the source message and validate file identity before resuming parts; other errors retain their actual cause
-- **Staging names** — new downloads use `temp/timestamp_guid.tmp`; retries and restarts reuse the same name, existing legacy checkpoints remain resumable, and completed files keep the configured naming rules
+- **Staging names** — new downloads use `downloads/.temp/timestamp_guid.tmp`; retries and restarts reuse the same name, existing legacy checkpoints remain resumable, and completed files keep the configured naming rules
 - **Temp file cleanup** — deleting or cancelling an active download removes its staging files and part directory; pauses, network interruptions and process exit retain checkpoints
 
 ### Forward
@@ -461,13 +461,13 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ### Task Management
 
-- **Task persistence** — all download/forward tasks written to `log/bot_tasks.json`, survive container restarts
+- **Task persistence** — all download/forward tasks written to `data/log/bot_tasks.json`, survive container restarts
 - **Crash recovery** — incomplete tasks re-enter pending queue on restart, consumed one by one
 - **Task ID** — `MMDD-N` format (e.g. `0628-1`), resets daily, persistent counter
 - **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; in-memory reservations distinguish tasks waiting for worker pickup
-- **Download progress persistence** — checkpoints during scans, at scan completion and on shutdown save to `data.yaml` for restart recovery
-- **Read-only startup configuration** — the application never rewrites `config.yaml`; `data.yaml` stores ad rules, Bot language, chat checkpoints and retry IDs. UI concurrency changes last until restart. [Persistence details](./DEPLOY.md#docker-data-persistence)
-- **Download history** — completed/failed records in `log/download_history.json`
+- **Download progress persistence** — checkpoints during scans, at scan completion and on shutdown save to `data/data.json` for restart recovery
+- **Read-only startup configuration** — the application never rewrites `config.yaml`; it generates `data/data.json` for ad rules, Bot language, checkpoints and retry IDs. Logs and sessions share the `data/` mount; staging uses `save_path/.temp/`. UI concurrency changes last until restart. [Persistence details](./DEPLOY.md#docker-data-persistence)
+- **Download history** — completed/failed records in `data/log/download_history.json`
 - **Manual stop** — stopped tasks' incomplete files recorded as failed (reason: manually stopped)
 
 ### FLOOD_WAIT Handling
@@ -523,7 +523,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Cross-DC startup** — regular media downloads create a key through the regular DC endpoint once per account/DC and reuse it in memory across workers/files, with separate media sessions and TCP connections; key exchange exceeding 60 seconds retires the connection under the existing retry policy, preserving checkpoints
 - **Kurigram compatibility** — uses `forward_origin` for forwarded media and `ReplyParameters` for Bot replies, preserving source identity and reply targets without deprecated API warnings
 - **Bot heartbeat and diagnostics** — makes one actual Ping/Pong attempt every 60 seconds with a 10-second timeout; attempts reconnection after 3 consecutive failures and logs authorization, handler timing and queue state; see the [deployment guide](DEPLOY.md#bot-heartbeat-and-message-diagnostics)
-- **Unified log** — only `log/tdl.log`, 10MB rotation, 30-day retention; first-data waits report their stage every 30 seconds, with DEBUG startup and authorization traces; see the [deployment guide](DEPLOY.md)
+- **Unified log** — only `data/log/tdl.log`, 10MB rotation, 30-day retention; first-data waits report their stage every 30 seconds, with DEBUG startup and authorization traces; see the [deployment guide](DEPLOY.md)
 
 ---
 

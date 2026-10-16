@@ -14,13 +14,8 @@ services:
     volumes:
       # Download directory (change to your actual path)
       - "./downloads:/app/downloads/"
-      # Configuration files
+      # Read-only startup configuration
       - "./config.yaml:/app/config.yaml:ro"
-      - "./data.yaml:/app/data.yaml"
-      # Logs
-      - "./log:/app/log/"
-      # Telegram session
-      - "./sessions:/app/sessions"
-      # Temporary files
-      - "./temp:/app/temp"
+      # Runtime JSON, logs, task history and Telegram sessions
+      - "./data:/app/data"
     restart: unless-stopped

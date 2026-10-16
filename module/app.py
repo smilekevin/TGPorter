@@ -3,8 +3,9 @@
 import asyncio
 import copy
 import functools
-import io
+import json
 import os
+import tempfile
 import threading
 import time
 from asyncio import Lock
@@ -20,6 +21,7 @@ from ruamel import yaml
 from module.cloud_drive import CloudDrive, CloudDriveConfig
 from module.filter import Filter
 from module.language import Language, parse_language, set_language
+from module.runtime_paths import APP_DATA_FILE
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
 
@@ -374,7 +376,7 @@ class Application:
     def __init__(
         self,
         config_file: str,
-        app_data_file: str,
+        app_data_file: str = APP_DATA_FILE,
         application_name: str = "UndefineApp",
     ):
         """
@@ -393,7 +395,8 @@ class Application:
 
         """
         self.config_file: str = config_file
-        self.app_data_file: str = app_data_file
+        self.app_data_file: str = os.path.abspath(app_data_file)
+        self.data_path: str = os.path.dirname(self.app_data_file)
         self.application_name: str = application_name
         self.download_filter = Filter()
         self.is_running = True
@@ -403,7 +406,7 @@ class Application:
         self.chat_download_config: dict = {}
 
         self.save_path = os.path.join(os.path.abspath("."), "downloads")
-        self.temp_save_path = os.path.join(os.path.abspath("."), "temp")
+        self.temp_save_path = os.path.join(self.save_path, ".temp")
         self.api_id: str = ""
         self.api_hash: str = ""
         self.bot_token: str = ""
@@ -418,8 +421,8 @@ class Application:
         self.file_path_prefix: List[str] = ["chat_title", "media_datetime"]
         self.file_name_prefix: List[str] = ["message_id", "file_name"]
         self.file_name_prefix_split: str = " - "
-        self.log_file_path = os.path.join(os.path.abspath("."), "log")
-        self.session_file_path = os.path.join(os.path.abspath("."), "sessions")
+        self.log_file_path = os.path.join(self.data_path, "log")
+        self.session_file_path = os.path.join(self.data_path, "sessions")
         self.cloud_drive_config = CloudDriveConfig()
         self.hide_file_name = False
         self.caption_name_dict: dict = {}
@@ -479,6 +482,7 @@ class Application:
         # TODO: judge the storage if enough,and provide more path
         if _config.get("save_path") is not None:
             self.save_path = _config["save_path"]
+        self.temp_save_path = os.path.join(self.save_path, ".temp")
 
         self.api_id = _config["api_id"]
         self.api_hash = _config["api_hash"]
@@ -716,42 +720,24 @@ class Application:
         for key in ("filter_advertisement_list", "replace_advertisement_list"):
             if key in app_data:
                 setattr(self, key, get_config(app_data, key, getattr(self, key),
-                                             yaml.comments.CommentedSeq))
+                                             list))
         if "group_add_advertisement" in app_data:
             self.group_add_advertisement = get_config(
                 app_data, "group_add_advertisement", self.group_add_advertisement, dict)
-        if app_data.get("ids_to_retry"):
-            if self._chat_id:
-                self.chat_download_config[self._chat_id].ids_to_retry = app_data[
-                    "ids_to_retry"
-                ]
-                for it in self.chat_download_config[self._chat_id].ids_to_retry:
-                    self.chat_download_config[self._chat_id].ids_to_retry_dict[
-                        it
-                    ] = True
-                self.app_data.pop("ids_to_retry")
-        else:
-            if app_data.get("chat"):
-                chats = app_data["chat"]
-                for chat in chats:
-                    if (
-                        "chat_id" in chat
-                        and chat["chat_id"] in self.chat_download_config
-                    ):
-                        chat_id = chat["chat_id"]
-                        self.chat_download_config[chat_id].ids_to_retry = chat.get(
-                            "ids_to_retry", []
-                        )
-                        for it in self.chat_download_config[chat_id].ids_to_retry:
-                            self.chat_download_config[chat_id].ids_to_retry_dict[
-                                it
-                            ] = True
+            # JSON object keys are strings; Telegram numeric chat IDs remain integers in memory.
+            self.group_add_advertisement = {
+                int(key) if str(key).lstrip("-").isdigit() else key: value
+                for key, value in self.group_add_advertisement.items()
+            }
         for chat in app_data.get("chat", []):
             chat_id = chat.get("chat_id")
-            if chat_id in self.chat_download_config and "last_read_message_id" in chat:
+            if chat_id in self.chat_download_config:
                 config = self.chat_download_config[chat_id]
-                config.last_read_message_id = max(
-                    config.last_read_message_id, chat["last_read_message_id"])
+                config.ids_to_retry = chat.get("ids_to_retry", [])
+                config.ids_to_retry_dict = {message_id: True for message_id in config.ids_to_retry}
+                if "last_read_message_id" in chat:
+                    config.last_read_message_id = max(
+                        config.last_read_message_id, chat["last_read_message_id"])
         return True
 
     async def upload_file(
@@ -897,7 +883,7 @@ class Application:
         return True
 
     def save_app_data(self, immediate: bool = True):
-        """Snapshot runtime state and optionally write data.yaml; never write config.yaml."""
+        """Snapshot runtime state and optionally write data.json; never write config.yaml."""
         with self._app_data_lock:
             chats = self.app_data.setdefault("chat", [])
             for chat_id, value in self.chat_download_config.items():
@@ -926,12 +912,25 @@ class Application:
                 self.app_data[key] = copy.deepcopy(getattr(self, key))
 
             if immediate:
-                # Serialize before opening the file, and retain its inode for Docker file
-                # bind mounts. The lock serializes snapshots and writes within this process.
-                stream = io.StringIO()
-                yaml.YAML().dump(self.app_data, stream)
-                with open(self.app_data_file, "w", encoding="utf-8") as yaml_file:
-                    yaml_file.write(stream.getvalue())
+                self._write_app_data()
+
+    def _write_app_data(self):
+        """Create the data directory and replace runtime JSON atomically under the save lock."""
+        with self._app_data_lock:
+            content = json.dumps(self.app_data, ensure_ascii=False, indent=2) + "\n"
+            os.makedirs(self.data_path, exist_ok=True)
+            temporary_path = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.data_path,
+                                                 prefix=".data-", suffix=".tmp", delete=False) as stream:
+                    temporary_path = stream.name
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary_path, self.app_data_file)
+            finally:
+                if temporary_path is not None and os.path.exists(temporary_path):
+                    os.remove(temporary_path)
 
     def set_language(self, language: Language):
         """Set Language"""
@@ -948,21 +947,23 @@ class Application:
                 self.config = config
                 self.assign_config(self.config)
 
-        if os.path.exists(os.path.join(os.path.abspath("."), self.app_data_file)):
-            with open(
-                os.path.join(os.path.abspath("."), self.app_data_file),
-                encoding="utf-8",
-            ) as f:
-                app_data = _yaml.load(f.read())
-                if app_data:
-                    self.app_data = app_data
-                    self.assign_app_data(self.app_data)
+        if os.path.exists(self.app_data_file):
+            with open(self.app_data_file, encoding="utf-8") as stream:
+                app_data = json.load(stream)
+            if not isinstance(app_data, dict):
+                raise ValueError("Runtime data must be a JSON object")
+            self.app_data = app_data
+            self.assign_app_data(self.app_data)
+        else:
+            # An initial empty snapshot must not advance configured scan bounds.
+            self._write_app_data()
 
     def pre_run(self):
         """before run application do"""
         self.cloud_drive_config.pre_run()
-        if not os.path.exists(self.session_file_path):
-            os.makedirs(self.session_file_path)
+        for directory in (self.data_path, self.log_file_path, self.session_file_path,
+                          self.temp_save_path):
+            os.makedirs(directory, exist_ok=True)
         set_language(self.language)
 
     def is_match_advertisement(self, caption) -> bool:

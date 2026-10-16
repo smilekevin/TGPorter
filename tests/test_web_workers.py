@@ -17,12 +17,12 @@ class WebWorkerTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.config_file = self.root / 'config.yaml'
-        self.data_file = self.root / 'data.yaml'
+        self.data_file = self.root / 'data.json'
         self.config_file.write_text(
             '# Keep the startup limit and this comment.\n'
             'api_id: test\napi_hash: test\nmedia_types: []\nfile_formats: {}\n'
             'max_download_task: 2\nfile_download_concurrency: 8\n', encoding='utf-8')
-        self.data_file.write_text('chat: []\n', encoding='utf-8')
+        self.data_file.write_text('{"chat": []}\n', encoding='utf-8')
         self.app = self.load_application()
         self.client = web.get_flask_app().test_client()
         self.telegram_client = Mock()

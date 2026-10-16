@@ -14,6 +14,7 @@ from rich.logging import RichHandler
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.retry_policy import network_backoff
 from module.staging import get_staging_path, is_staging_name
+from module.runtime_paths import APP_DATA_FILE
 from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
@@ -48,7 +49,7 @@ logging.basicConfig(
 )
 
 CONFIG_NAME = "config.yaml"
-DATA_FILE_NAME = "data.yaml"
+DATA_FILE_NAME = APP_DATA_FILE
 APPLICATION_NAME = "media_downloader"
 app = Application(CONFIG_NAME, DATA_FILE_NAME, APPLICATION_NAME)
 
@@ -386,8 +387,8 @@ def _cleanup_stale_temp_files():
 
     Rules:
     - 0-byte .temp files: always delete (empty shells from failed downloads)
-    - Non-zero .temp files: delete if corresponding target file exists in downloads/
-    - Empty directories in temp/: delete
+    - Non-zero .temp files: delete if the corresponding target exists in save_path
+    - Empty directories in the staging directory: delete
     """
     temp_dir = app.temp_save_path
     if not os.path.isdir(temp_dir):
@@ -416,14 +417,12 @@ def _cleanup_stale_temp_files():
                 # SDK/merge checkpoints must survive startup for recovery.
                 if is_staging_name(f[:-5]):
                     continue
-                # Non-zero: check if target already exists in downloads/
-                # temp path: temp/chat_id/filename.ext.temp
-                # target path: downloads/chat_id/filename.ext
+                # Match the staging-relative output path under the configured download root.
                 rel_path = os.path.relpath(temp_path, temp_dir)
                 # Strip .temp suffix to get the target filename
                 target_name = f[:-5] if f.endswith('.temp') else f
                 target_path = os.path.join(
-                    os.path.abspath("."), "downloads",
+                    app.save_path,
                     os.path.dirname(rel_path), target_name
                 )
                 if os.path.exists(target_path):
@@ -2014,10 +2013,10 @@ def main():
         app.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
         app.loop.run_until_complete(stop_server(client))
         logger.info(_t("Stopped"))
-        logger.info("Saving runtime data to data.yaml")
+        logger.info("Saving runtime data to data/data.json")
         app.save_app_data()
         logger.success(
-            "Saved scan checkpoints to data.yaml, "
+            "Saved scan checkpoints to data/data.json, "
             f"{_t('total download')} {app.total_download_task}, "
             f"{_t('total upload file')} {app.cloud_drive_config.total_upload_success_file_count}"
         )

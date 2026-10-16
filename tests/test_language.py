@@ -105,7 +105,7 @@ class LanguageTests(unittest.TestCase):
             with self.subTest(value=value):
                 directory = tempfile.TemporaryDirectory()
                 app = Application(str(Path(directory.name) / 'config.yaml'),
-                                  str(Path(directory.name) / 'data.yaml'))
+                                  str(Path(directory.name) / 'data.json'))
                 try:
                     app.assign_config({'api_id': 'test', 'api_hash': 'test',
                                        'media_types': [], 'file_formats': {}, 'language': value})

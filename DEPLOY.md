@@ -18,7 +18,7 @@ WebUI 使用原生 HTML/CSS/JS，无需安装 Node.js 或运行 npm 构建；CI 
 
 主服务通过 `requirements.txt` 安装依赖，直接使用的 Starlette、Uvicorn、Pydantic 固定为已验证版本。过滤表达式由固定版本的 Lark 解析，不再使用 PLY 或生成 `parsetab.py`。不再需要 Flask-Login、Requests 或 PyCryptodome；从旧环境升级时重新创建虚拟环境，可避免残留包掩盖缺失依赖。
 
-首次使用此版本前，先停止服务并备份 `sessions/`、`config.yaml`、`data.yaml`、`downloads/` 和 `temp/`。Kurigram 会原地升级旧 Session 数据库；回滚到旧 SDK 时，应停服并恢复升级前的 Session 备份。任务与 `.parts/` 检查点格式保持不变；离线迁移测试不替代真实 Telegram 下载验收。
+首次使用此版本前，先停止服务并备份 `data/sessions/`、`config.yaml`、`data/data.json`、`downloads/` 和 `downloads/.temp/`。Kurigram 会原地升级旧 Session 数据库；回滚到旧 SDK 时，应停服并恢复升级前的 Session 备份。任务与 `.parts/` 检查点格式保持不变；离线迁移测试不替代真实 Telegram 下载验收。
 
 1. Docker 镜像部署需要 Docker；Compose 部署还需 Docker Compose。手动安装需要 Python 3.14 和 pip。
 2. 有 Telegram API 凭证（api_id + api_hash），从 https://my.telegram.org 获取
@@ -64,22 +64,21 @@ Docker 部署使用本 fork 发布的 `ghcr.io/smilekevin/tgporter:latest`，由
 
 服务器或 NAS 已安装 Docker 后，可以直接运行本 fork 的预构建镜像。
 
-1. **准备配置和数据目录**：从本仓库下载 [config.yaml.example](./config.yaml.example)，复制为 `config.yaml`，并创建运行数据文件和持久化目录。下面的命令会保留已有的 `config.yaml` 和 `data.yaml`。
+1. **准备配置和数据目录**：从本仓库下载 [config.yaml.example](./config.yaml.example)，复制为 `config.yaml`，并创建 `downloads/` 和 `data/` 目录。无需预建数据文件，程序首次启动自动生成 `data/data.json`。
 
 ```bash
 mkdir -p tgporter
 cd tgporter
-mkdir -p downloads log sessions temp
+mkdir -p downloads data
 
 curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/master/config.yaml.example \
   -o config.yaml.example
 [ -f config.yaml ] || cp config.yaml.example config.yaml
-[ -f data.yaml ] || printf '{}\n' > data.yaml
 ```
 
 2. **填写配置**：使用文本编辑器打开 `config.yaml`，填写 `api_id`、`api_hash` 和 `bot_token`，并将 `web_login_secret` 改为自己的密码，按[配置说明](#配置说明)设置媒体类型、权限和并发数。模板自带示例代理，请按自己的环境修改 `proxy`；无需代理时设为 `proxy: {}`。使用下面的挂载和端口映射时，保留 `save_path: /app/downloads`、`web_host: 0.0.0.0` 和 `web_port: 5000`。
 
-3. **拉取镜像并首次启动**：挂载配置、运行数据、下载、日志、session 和临时目录，以交互模式完成 Telegram 登录。
+3. **拉取镜像并首次启动**：挂载配置文件、`data/` 和下载目录，以交互模式完成 Telegram 登录。
 
 ```bash
 docker pull ghcr.io/smilekevin/tgporter:latest
@@ -90,11 +89,8 @@ docker run -it \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
   -v "$PWD/config.yaml:/app/config.yaml:ro" \
-  -v "$PWD/data.yaml:/app/data.yaml" \
+  -v "$PWD/data:/app/data" \
   -v "$PWD/downloads:/app/downloads" \
-  -v "$PWD/log:/app/log" \
-  -v "$PWD/sessions:/app/sessions" \
-  -v "$PWD/temp:/app/temp" \
   ghcr.io/smilekevin/tgporter:latest
 ```
 
@@ -103,7 +99,7 @@ docker run -it \
 - **手机号**：输入带国家区号的手机号（例如 `+8613812345678`），再输入 Telegram 发送的验证码；启用两步验证时还需输入密码。
 - **Bot Token**：输入在[部署前准备](#部署前准备api-凭据与-bot-token)中获取的完整 Token，无需手机号验证码。
 
-登录成功后，按 `Ctrl+C` 停止当前前台运行。session 保存在挂载的 `sessions/`，保留有效 session 后重启无需再次登录。任务与下载历史保存在 `log/`；各挂载目录的用途见[Docker 数据持久化](#docker-数据持久化)。
+登录成功后，按 `Ctrl+C` 停止当前前台运行。session 保存在挂载的 `data/sessions/`，保留有效 session 后重启无需再次登录。任务与下载历史保存在 `data/log/`；各挂载目录的用途见[Docker 数据持久化](#docker-数据持久化)。
 
 5. **后台启动并访问 WebUI**：执行以下命令，停止容器后用 [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) 在后台启动已有容器：
 
@@ -124,12 +120,11 @@ cd TGPorter
 
 # 创建配置和持久化目录，保留已有配置与数据
 [ -f config.yaml ] || cp config.yaml.example config.yaml
-[ -f data.yaml ] || printf '{}\n' > data.yaml
-mkdir -p downloads log sessions temp
+mkdir -p downloads data
 # 编辑 config.yaml，填入 api_id / api_hash / bot_token，并修改 WebUI 密码
 ```
 
-配置文件和 `data.yaml` 的挂载源必须是文件，提前创建可避免 Docker 将缺失文件创建成目录。仓库 Compose 默认启用了示例代理环境变量，请按实际环境修改；无需代理时删除或注释这两项。下面是无需环境变量代理的完整配置示例：
+仅 `config.yaml` 的挂载源需要预先准备为文件。`data/` 挂载为可写目录，程序会自动创建 JSON、日志和 session；临时数据默认保存在 `save_path/.temp/`（示例为 `/app/downloads/.temp`），无需单独挂载。仓库 Compose 默认启用了示例代理环境变量，请按实际环境修改；无需代理时删除或注释这两项。下面是无需环境变量代理的完整配置示例：
 
 ```yaml
 services:
@@ -150,13 +145,7 @@ services:
       - "./downloads:/app/downloads/"
       # 配置文件
       - "./config.yaml:/app/config.yaml:ro"
-      - "./data.yaml:/app/data.yaml"
-      # 日志
-      - "./log:/app/log/"
-      # Telegram session
-      - "./sessions:/app/sessions"
-      # 临时文件
-      - "./temp:/app/temp"
+      - "./data:/app/data"
     restart: unless-stopped
 ```
 
@@ -180,7 +169,7 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-Compose 将 session 保存在宿主机的 `sessions/`；`--rm` 只删除一次性容器，不会删除挂载目录。保留有效 session 后，后续启动无需再次登录。
+Compose 将 session 保存在宿主机的 `data/sessions/`；`--rm` 只删除一次性容器，不会删除挂载目录。保留有效 session 后，后续启动无需再次登录。
 
 ### 手动安装
 
@@ -202,7 +191,7 @@ python -m pip install -r requirements.txt
 python media_downloader.py
 ```
 
-出现 `Enter phone number or bot token:` 时，输入带国家区号的手机号或完整 Bot Token，并在确认提示时输入 `y`。手机号登录还需输入验证码，以及两步验证密码（如已启用）；Bot Token 登录无需手机号验证码。登录成功后程序继续运行，session 保存在项目的 `sessions/`。保留有效 session 后，后续启动无需再次登录。
+出现 `Enter phone number or bot token:` 时，输入带国家区号的手机号或完整 Bot Token，并在确认提示时输入 `y`。手机号登录还需输入验证码，以及两步验证密码（如已启用）；Bot Token 登录无需手机号验证码。登录成功后程序继续运行，session 保存在项目的 `data/sessions/`。保留有效 session 后，后续启动无需再次登录。
 
 ### 本地开发模式
 
@@ -321,7 +310,7 @@ proxy:
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `date_format` | 日期目录格式 | `%Y_%m` |
 
-网页（含登录页）和 Bot 共用 `lang/*.json` 词典，支持简体中文（`zh-cn`）、繁体中文（`zh-tw`）、英语（`en`）、日语（`ja`）、西班牙语（`es`）、法语（`fr`）、俄语（`ru`）和乌克兰语（`uk`）。每种语言一个文件，共用词汇只翻译一次；英语 `messages` 只列出英文词条，其他语言使用英文词条到翻译的映射。网页可随时切换，首次访问按浏览器偏好依次匹配；`zh` 回退 `zh-cn`，`zh-TW` / `zh-HK` / `zh-Hant` 使用繁体中文，不支持的语言回退英语。手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页互不影响，例如 `language: zh-tw` 或 `/set_language ja`；旧配置 `ZH` 和命令 `zh` 仍代表简体中文，`UA` / `ua` 仍代表乌克兰语。Bot 语言随运行状态以规范代码写入 `data.yaml`，不会修改 `config.yaml`。运行代码、配置示例注释和 PWA 应用名称使用英语；测试可保留必要的语言数据。失败记录保存英文词条，在 Bot/网页显示时才翻译，无法识别的历史记录保留原文。缺失词条回退英语，再回退原文；原有俄语和乌克兰语保留已有翻译，新增且未翻译的词条使用英语。
+网页（含登录页）和 Bot 共用 `lang/*.json` 词典，支持简体中文（`zh-cn`）、繁体中文（`zh-tw`）、英语（`en`）、日语（`ja`）、西班牙语（`es`）、法语（`fr`）、俄语（`ru`）和乌克兰语（`uk`）。每种语言一个文件，共用词汇只翻译一次；英语 `messages` 只列出英文词条，其他语言使用英文词条到翻译的映射。网页可随时切换，首次访问按浏览器偏好依次匹配；`zh` 回退 `zh-cn`，`zh-TW` / `zh-HK` / `zh-Hant` 使用繁体中文，不支持的语言回退英语。手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页互不影响，例如 `language: zh-tw` 或 `/set_language ja`；旧配置 `ZH` 和命令 `zh` 仍代表简体中文，`UA` / `ua` 仍代表乌克兰语。Bot 语言随运行状态以规范代码写入 `data/data.json`，不会修改 `config.yaml`。运行代码、配置示例注释和 PWA 应用名称使用英语；测试可保留必要的语言数据。失败记录保存英文词条，在 Bot/网页显示时才翻译，无法识别的历史记录保留原文。缺失词条回退英语，再回退原文；原有俄语和乌克兰语保留已有翻译，新增且未翻译的词条使用英语。
 
 添加语言只需复制 `lang/fr.json` 等翻译文件为新语言文件，修改 `code`、`name`、`aliases` 和 `messages`，重启后网页和 Bot 自动识别，无需新增依赖或构建前端。完整步骤及占位符规则见[语言包指南](docs/languages.md)。
 
@@ -330,7 +319,7 @@ proxy:
 每个文件从一个连接开始，当前新连接收到并写入首块有效数据后，才允许启动下一个连接，且启动间隔至少一秒，最多达到 `file_download_concurrency` 个 worker。握手或首块数据卡住时不会继续扩展连接；启动失败后必须先关闭该连接并将未完成分片交回队列，再按现有失败预算逐个尝试；已有健康连接继续下载，不必等整片完成才扩展。每个 worker 下载完一片后从队列领取下一片，直到全部完成，再按切片顺序合并。
 每个 worker 使用独立的 Telegram 下载 TCP 连接，并在连续下载后续切片时沿用自己的连接；不同 worker 和文件不共用下载连接。
 暂停时保留连接，完成、取消或客户端重启时关闭连接。
-取消下载先关闭连接，再按文件删除选项处理该文件在 `temp/` 中的临时文件和 `.parts/` 目录。活动和失败任务的删除确认只提示是否存在缓存文件（临时文件或分片目录），不列出缓存路径；仅在文件和已记录路径的缓存均不存在时提示未找到。网页取消和删除失败任务默认勾选“同时删除本地文件和缓存”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
+取消下载先关闭连接，再按文件删除选项处理该文件在 `downloads/.temp/` 中的临时文件和 `.parts/` 目录。活动和失败任务的删除确认只提示是否存在缓存文件（临时文件或分片目录），不列出缓存路径；仅在文件和已记录路径的缓存均不存在时提示未找到。网页取消和删除失败任务默认勾选“同时删除本地文件和缓存”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
 文件任务入队时按需启动文件 worker，队列清空后退出，空队列启动不创建文件 worker。调高并发只为等待任务增加 worker；调低时正在下载的文件继续完成，再收缩并发。同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 个 worker 时，最多有 20 个并发下载 worker，没有额外的总并发配置。
 WebUI、Web API 和 MCP 调整的并发任务数仅在当前进程生效，不会将临时值写入 `config.yaml`；重启后恢复文件中的 `max_download_task`（未配置时为 `5`）。需要永久修改时，请手动编辑配置文件并重启服务。
 切片大小和 worker 数在文件首次开始时保存，暂停、重试和程序重启后继续使用该计划，不重复下载已完成切片。
@@ -341,11 +330,11 @@ Bot 的 `/query` 默认查询全部下载记录与 Pending 任务，每页 6 条
 Bot 在内容变化时约每 10 秒编辑原进度消息，不再等待 20% 里程碑。FLOOD_WAIT 提示剩余秒数；冷却结束后自动恢复，手动暂停仍保持暂停。若 Bot 消息接口本身被限流，冷却期间停止播报，结束后补报，并保留未送达的完成状态以便重试。单次播报最多等待 10 秒，失败不阻塞下载。
 旧版分片断点仍可续传。旧 `download_min_part_size_mb` 在没有新字段时作为切片大小的兼容值读取，不会自动重写配置；旧 `download_concurrency` 已移除。
 
-新下载的临时主文件统一为 `temp/timestamp_guid.tmp`，不包含频道名或原文件名。`timestamp` 使用消息时间的 Unix 秒数（无日期时为 `0`），GUID 根据消息所属客户端、聊天 ID、消息 ID 和媒体身份稳定生成；同一媒体重试、恢复和重启复用同一路径，不需要额外的索引文件。分片保存在对应的 `timestamp_guid.tmp.parts/manifest.json` 和分片文件中，SDK/合并过程可能使用 `timestamp_guid.tmp.temp`。已有旧路径断点继续沿用，直至完成或明确删除；最终下载文件名仍由现有命名配置决定。部署时应持久化整个 `temp` 目录。
+新下载的临时主文件统一为 `downloads/.temp/timestamp_guid.tmp`，不包含频道名或原文件名。`timestamp` 使用消息时间的 Unix 秒数（无日期时为 `0`），GUID 根据消息所属客户端、聊天 ID、消息 ID 和媒体身份稳定生成；同一媒体重试、恢复和重启复用同一路径，不需要额外的索引文件。分片保存在对应的 `timestamp_guid.tmp.parts/manifest.json` 和分片文件中，SDK/合并过程可能使用 `timestamp_guid.tmp.temp`。已有旧路径断点继续沿用，直至完成或明确删除；最终下载文件名仍由现有命名配置决定。部署时应持久化整个 `downloads/.temp` 目录。
 多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
 离线验证和真实下载验收步骤见 [分片下载测试说明](docs/parallel-download-testing.md)。
 普通媒体下载跨 DC 时，首次通过目标 DC 的普通端点创建密钥，同一账号、DC 和测试模式下的后续 worker／文件复用内存中的密钥，并用锁避免重复协商。每个 worker 仍建立自己的媒体会话和 TCP 连接，并执行现有授权流程；当前账号主 DC 继续复用已保存的密钥，CDN 继续使用自己的端点。缓存不跨账号、不写入日志或磁盘；客户端停止／重启时清空。服务端明确拒绝密钥时仅丢弃匹配的旧缓存，下一次尝试重新协商。密钥创建最多等待 60 秒，超时会关闭该连接并保留断点，交给现有连接重试机制；此上限不限制正常文件传输。DEBUG 日志包含媒体端点和密钥协商端点的地址、端口及 CDN 标记，不记录密钥或授权内容。
-应用仅写入 `log/tdl.log`，每个日志文件达到 10MB 时轮转，保留 30 天；不再生成 `download.log`，已有旧日志不会自动删除。其中的 `Waiting for first data` 记录独立下载连接开始等待数据，包含文件名、worker 编号和 DC；`Opened independent download connection #…` 表示已收到首块数据，`Confirmed independent download startup` 表示首块有效数据已写入，允许增加下一个连接；`Closed independent download connection #…` 表示连接资源已关闭。首块数据前取消也会记录资源释放。设置 `log_level: DEBUG` 可查看 DC 解析、存储读取、密钥创建、会话启动、授权导出/导入和首个媒体请求阶段；等待期间每 30 秒输出当前阶段及该阶段已等待秒数的 WARNING，不改变请求超时或重试策略。SDK 日志级别独立于此设置，应用诊断日志不输出授权内容。
+应用仅写入 `data/log/tdl.log`，每个日志文件达到 10MB 时轮转，保留 30 天；不再生成 `download.log`，已有旧日志不会自动删除。其中的 `Waiting for first data` 记录独立下载连接开始等待数据，包含文件名、worker 编号和 DC；`Opened independent download connection #…` 表示已收到首块数据，`Confirmed independent download startup` 表示首块有效数据已写入，允许增加下一个连接；`Closed independent download connection #…` 表示连接资源已关闭。首块数据前取消也会记录资源释放。设置 `log_level: DEBUG` 可查看 DC 解析、存储读取、密钥创建、会话启动、授权导出/导入和首个媒体请求阶段；等待期间每 30 秒输出当前阶段及该阶段已等待秒数的 WARNING，不改变请求超时或重试策略。SDK 日志级别独立于此设置，应用诊断日志不输出授权内容。
 
 ---
 
@@ -486,16 +475,18 @@ docker-compose up -d
 |------|------|
 | `./downloads/` | 下载的文件 |
 | `./config.yaml` | 只读启动配置；程序不会改写 |
-| `./data.yaml` | 可写运行状态：频道扫描位置、重试 ID、广告规则及 Bot 语言 |
-| `./log/` | 日志 + 任务持久化（bot_tasks.json / task_counter.json / download_history.json） |
-| `./sessions/` | Telegram session 文件 |
-| `./temp/` | 下载临时文件和 `.parts/` 分片断点 |
+| `./data/` | 整体挂载到 `/app/data`，下列运行内容由程序自动创建 |
+| `./data/data.json` | 频道扫描位置、重试 ID、广告规则及 Bot 语言 |
+| `./data/log/` | 日志 + 任务持久化（bot_tasks.json / task_counter.json / download_history.json） |
+| `./data/sessions/` | Telegram 登录会话 |
+| `./data/bot.yaml` | Bot 过滤配置，由程序管理 |
+| `./downloads/.temp/` | 下载临时文件和 `.parts/` 分片断点，随下载目录持久化 |
 
-程序仅读取 `config.yaml`，扫描、Bot 命令和退出均不会改写它；Docker 示例以 `:ro` 挂载该文件，`data.yaml` 仍需可写。`data.yaml` 原有的 `chat[].chat_id` 和 `ids_to_retry` 保持兼容，新增的 `chat[].last_read_message_id` 保存下一条待扫描位置。启动时取配置初始位置与已保存位置中较大的值；只有重试 ID 的旧数据继续使用配置中的扫描位置。未在本次配置启用的频道记录及其他数据键会保留。
+程序仅读取 `config.yaml`，扫描、Bot 命令和退出均不会改写它；Docker 示例以 `:ro` 挂载该文件，`data/` 则以目录方式挂载并保持可写。首次启动自动创建 `data/data.json`，无需预建数据文件。JSON 通过锁和临时文件原子替换保存；`chat[].chat_id` 标识频道，`ids_to_retry` 保存重试消息 ID，`last_read_message_id` 保存下一条待扫描位置。启动时取配置初始位置与已保存位置中较大的值。未在本次配置启用的频道记录及其他数据键会保留。
 
-广告相关的 `filter_advertisement_list`、`replace_advertisement_list`、`group_add_advertisement` 和 Bot 的 `language` 保存于 `data.yaml` 顶层。已有配置中的对应值仍作为初始值读取；一旦 `data.yaml` 有对应键，就优先使用该值，包括空列表和空字典。Bot 广告命令立即保存规则，Bot 语言随扫描/退出保存；网页语言仍只保存在浏览器。需要恢复配置中的初始规则或语言时，先停服并删除 `data.yaml` 中对应的键；不要删除整个文件，以免丢失下载状态。需要从更早的位置重新扫描时，同样应停服后调整该频道的数据检查点和配置初始位置。
+广告相关的 `filter_advertisement_list`、`replace_advertisement_list`、`group_add_advertisement` 和 Bot 的 `language` 保存于 `data/data.json` 顶层。已有配置中的对应值仍作为初始值读取；一旦 `data/data.json` 有对应键，就优先使用该值，包括空列表和空字典。Bot 广告命令立即保存规则，Bot 语言随扫描/退出保存；网页语言仍只保存在浏览器。需要恢复配置中的初始规则或语言时，先停服并删除 `data/data.json` 中对应的键；不要删除整个文件，以免丢失下载状态。需要从更早的位置重新扫描时，同样应停服后调整该频道的数据检查点和配置初始位置。
 
-保留所有挂载目录，容器移除或重建不会删除宿主机数据。迁移时同步保留配置、运行数据、任务日志、session 和分片断点；自定义的宿主机下载路径对应表中的 `./downloads/`。
+只需持久化 `config.yaml`、`data/` 和下载目录。程序会创建 `data/log/`、`data/sessions/` 和下载目录下的 `.temp/`，不需要单独挂载日志、session 或 temp。容器移除或重建不会删除这些宿主机数据；自定义的宿主机下载路径对应表中的 `./downloads/`。
 
 主下载账号使用 Bot 身份时，请在 `allowed_user_ids` 中填写操作人的数字 Telegram 用户 ID。数字 ID 不依赖该 Bot 的联系人缓存；`me` 指向主下载账号本身，不会自动授权真人用户。Bot 身份不会接收启动帮助通知。
 
@@ -526,7 +517,7 @@ environment:
 2. **无法连接 Telegram** — 检查代理配置，确保容器能访问 `149.154.167.50:443`
 3. **下载失败** — 在 Web UI 的"失败"Tab 查看具体原因
 4. **权限问题** — 确保挂载目录有写入权限
-5. **session 丢失** — 确保 `./sessions/` 目录已正确挂载
+5. **session 丢失** — 确保 `./data/sessions/` 目录已正确挂载
 6. **FLOOD_WAIT** — 频道消息过多触发了 Telegram 限速，等待冷却后自动恢复
 
 ### Bot 心跳与消息诊断
@@ -540,7 +531,7 @@ docker logs --since 30m --timestamps tgporter
 docker logs -f --since 5m --timestamps tgporter
 ```
 
-这些日志同时写入 `log/tdl.log`，遵守 `log_level`、轮转和保留设置。`INFO` 可看到 `Bot heartbeat OK`、往返耗时 `rtt_ms`、本地连接标记 `connected`、待处理更新数 `update_queue`、存活处理 worker 数 `workers_alive`、活动处理数 `active_handlers`、最长处理耗时和函数名，以及距离上次收到消息的秒数。`Bot heartbeat failed` 包含异常类型、等待耗时与连续失败数；重连尝试、结果与冷却也会记录；连接恢复显示 `Bot heartbeat recovered`，事件循环延迟超过 10 秒显示 `event_loop_delay_s`。消息入口日志 `Bot message received` 显示消息编号、类型、`authorized` 与消息发送至今的秒数 `message_age_s`，随后 `Bot handler started` / `Bot handler finished` 显示匹配处理函数、完成状态与耗时。日志不记录消息正文、命令参数、回调数据或 Token。
+这些日志同时写入 `data/log/tdl.log`，遵守 `log_level`、轮转和保留设置。`INFO` 可看到 `Bot heartbeat OK`、往返耗时 `rtt_ms`、本地连接标记 `connected`、待处理更新数 `update_queue`、存活处理 worker 数 `workers_alive`、活动处理数 `active_handlers`、最长处理耗时和函数名，以及距离上次收到消息的秒数。`Bot heartbeat failed` 包含异常类型、等待耗时与连续失败数；重连尝试、结果与冷却也会记录；连接恢复显示 `Bot heartbeat recovered`，事件循环延迟超过 10 秒显示 `event_loop_delay_s`。消息入口日志 `Bot message received` 显示消息编号、类型、`authorized` 与消息发送至今的秒数 `message_age_s`，随后 `Bot handler started` / `Bot handler finished` 显示匹配处理函数、完成状态与耗时。日志不记录消息正文、命令参数、回调数据或 Token。
 
 `message.forward_from_chat`、`message.forward_from_message_id` 和发送消息时的 `reply_to_message_id` 弃用警告不是网络断线证据。Bot 已改用 Kurigram 的 `forward_origin` 和 `ReplyParameters`，保留频道来源、Bot 私聊回退和回复目标。
 
@@ -556,7 +547,7 @@ The WebUI uses native HTML/CSS/JS and requires no Node.js installation or npm bu
 
 Install main-service dependencies from `requirements.txt`, which explicitly pins the tested Starlette, Uvicorn and Pydantic versions. Filter expressions use the pinned Lark parser; PLY and generated `parsetab.py` files are no longer needed. Flask-Login, Requests and PyCryptodome are no longer required. Recreate an older virtual environment when upgrading so leftover packages cannot hide missing dependencies.
 
-Before starting this version for the first time, stop the service and back up `sessions/`, `config.yaml`, `data.yaml`, `downloads/` and `temp/`. Kurigram upgrades existing session databases in place. To roll back to the previous SDK, stop the service and restore the session backup from before migration. Task and `.parts/` checkpoint formats remain unchanged; offline migration tests do not replace real Telegram download acceptance checks.
+Before starting this version for the first time, stop the service and back up `data/sessions/`, `config.yaml`, `data/data.json`, `downloads/` and `downloads/.temp/`. Kurigram upgrades existing session databases in place. To roll back to the previous SDK, stop the service and restore the session backup from before migration. Task and `.parts/` checkpoint formats remain unchanged; offline migration tests do not replace real Telegram download acceptance checks.
 
 - Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.14 and pip.
 - Actual downloads require Telegram API credentials and access to the target messages. Mock development mode does not require Telegram login.
@@ -595,22 +586,21 @@ After starting the Bot, send `/help` or `/start` and use “Join us” to open t
 
 With Docker installed on your server or NAS, run this fork's prebuilt image directly.
 
-1. **Prepare configuration and persistent data**: download [config.yaml.example](./config.yaml.example) from this repository, copy it to `config.yaml`, and create the runtime data file and persistent directories. These commands preserve existing `config.yaml` and `data.yaml` files.
+1. **Prepare configuration and persistent data**: download [config.yaml.example](./config.yaml.example) from this repository, copy it to `config.yaml`, and create the `downloads/` and `data/` directories. Do not pre-create a runtime data file; the application generates `data/data.json` on first startup.
 
 ```bash
 mkdir -p tgporter
 cd tgporter
-mkdir -p downloads log sessions temp
+mkdir -p downloads data
 
 curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/master/config.yaml.example \
   -o config.yaml.example
 [ -f config.yaml ] || cp config.yaml.example config.yaml
-[ -f data.yaml ] || printf '{}\n' > data.yaml
 ```
 
 2. **Edit the configuration**: open `config.yaml` in a text editor and enter `api_id`, `api_hash` and `bot_token`, and change `web_login_secret` to your own password. See [Configuration](#configuration) for media types, permissions and concurrency. The template includes an example proxy; adjust `proxy` for your environment or set `proxy: {}` if you do not need one. With the mounts and port mapping below, keep `save_path: /app/downloads`, `web_host: 0.0.0.0` and `web_port: 5000`.
 
-3. **Pull the image and start it for the first time**: mount configuration, runtime data, downloads, logs, sessions and temporary files, and use interactive mode for Telegram login.
+3. **Pull the image and start it for the first time**: mount the configuration file, `data/` and downloads, then use interactive mode for Telegram login.
 
 ```bash
 docker pull ghcr.io/smilekevin/tgporter:latest
@@ -621,11 +611,8 @@ docker run -it \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
   -v "$PWD/config.yaml:/app/config.yaml:ro" \
-  -v "$PWD/data.yaml:/app/data.yaml" \
+  -v "$PWD/data:/app/data" \
   -v "$PWD/downloads:/app/downloads" \
-  -v "$PWD/log:/app/log" \
-  -v "$PWD/sessions:/app/sessions" \
-  -v "$PWD/temp:/app/temp" \
   ghcr.io/smilekevin/tgporter:latest
 ```
 
@@ -634,7 +621,7 @@ docker run -it \
 - **Phone**: enter your phone number with its country code (for example, `+8613812345678`), then the verification code sent by Telegram. Enter your two-step verification password if enabled.
 - **Bot Token**: enter the complete Token obtained in [Before You Deploy](#before-you-deploy-api-credentials-and-bot-token). No phone verification code is needed.
 
-After login succeeds, press `Ctrl+C` to stop the current foreground run. The session persists in the mounted `sessions/` directory; a valid saved session avoids repeat login on restart. Tasks and download history persist in `log/`. See [Docker Data Persistence](#docker-data-persistence) for mount details.
+After login succeeds, press `Ctrl+C` to stop the current foreground run. The session persists in the mounted `data/sessions/` directory; a valid saved session avoids repeat login on restart. Tasks and download history persist in `data/log/`. See [Docker Data Persistence](#docker-data-persistence) for mount details.
 
 5. **Start in the background and access WebUI**: run the following commands to stop the container and use [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) to start the existing container in the background:
 
@@ -655,12 +642,11 @@ cd TGPorter
 
 # Preserve existing configuration and runtime data.
 [ -f config.yaml ] || cp config.yaml.example config.yaml
-[ -f data.yaml ] || printf '{}\n' > data.yaml
-mkdir -p downloads log sessions temp
+mkdir -p downloads data
 # Edit config.yaml with your credentials and change the WebUI password.
 ```
 
-Create configuration bind-mount sources as files before starting Docker. The repository Compose file enables example proxy environment variables; adjust or remove them for your network. A complete example without environment variable proxies is:
+Prepare only `config.yaml` as a file before starting Docker. Mount `data/` as a writable directory; JSON, logs and sessions are created automatically. Staging defaults to `save_path/.temp/` (`/app/downloads/.temp` in this example), without a separate mount. The repository Compose file enables example proxy environment variables; adjust or remove them for your network. A complete example without environment variable proxies is:
 
 ```yaml
 services:
@@ -681,13 +667,7 @@ services:
       - "./downloads:/app/downloads/"
       # Configuration files
       - "./config.yaml:/app/config.yaml:ro"
-      - "./data.yaml:/app/data.yaml"
-      # Logs
-      - "./log:/app/log/"
-      # Telegram sessions
-      - "./sessions:/app/sessions"
-      # Temporary files and part checkpoints
-      - "./temp:/app/temp"
+      - "./data:/app/data"
     restart: unless-stopped
 ```
 
@@ -711,7 +691,7 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-Compose saves the session in the host's `sessions/` directory. `--rm` removes only the one-off container, leaving mounted directories intact. A valid saved session avoids repeat login on later starts.
+Compose saves the session in the host's `data/sessions/` directory. `--rm` removes only the one-off container, leaving mounted directories intact. A valid saved session avoids repeat login on later starts.
 
 ### Manual Install
 
@@ -733,7 +713,7 @@ python -m pip install -r requirements.txt
 python media_downloader.py
 ```
 
-At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. The program continues running after login. The session is saved in the project's `sessions/` directory. A valid saved session avoids repeat login on later starts.
+At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. The program continues running after login. The session is saved in the project's `data/sessions/` directory. A valid saved session avoids repeat login on later starts.
 
 ### Local Dev Mode
 
@@ -852,7 +832,7 @@ Defaults apply when an option is omitted and may differ from the example configu
 | `enable_download_txt` | Save text-only messages as .txt | `false` |
 | `date_format` | Date directory format | `%Y_%m` |
 
-The WebUI (including sign-in) and Bot share `lang/*.json` catalogs: Simplified Chinese (`zh-cn`), Traditional Chinese (`zh-tw`), English (`en`), Japanese (`ja`), Spanish (`es`), French (`fr`), Russian (`ru`) and Ukrainian (`uk`). Each language has one file and shared vocabulary is translated once. English `messages` lists canonical keys; other languages map those keys to translations. The browser matches language preferences in order; `zh` falls back to `zh-cn`, while `zh-TW` / `zh-HK` / `zh-Hant` select Traditional Chinese. Unsupported languages fall back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. Configure the Bot independently, for example `language: zh-tw` or `/set_language ja`. Legacy `ZH` / `zh` still mean Simplified Chinese and `UA` / `ua` still mean Ukrainian. Bot language is saved with runtime state in `data.yaml` using canonical codes, leaving `config.yaml` unchanged. Runtime code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. Failure records store English keys and translate when displayed by the Bot or browser; unrecognized historical records retain their original text. Missing messages fall back to English, then the original text; existing Russian and Ukrainian translations are preserved, with English fallback for untranslated additions.
+The WebUI (including sign-in) and Bot share `lang/*.json` catalogs: Simplified Chinese (`zh-cn`), Traditional Chinese (`zh-tw`), English (`en`), Japanese (`ja`), Spanish (`es`), French (`fr`), Russian (`ru`) and Ukrainian (`uk`). Each language has one file and shared vocabulary is translated once. English `messages` lists canonical keys; other languages map those keys to translations. The browser matches language preferences in order; `zh` falls back to `zh-cn`, while `zh-TW` / `zh-HK` / `zh-Hant` select Traditional Chinese. Unsupported languages fall back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. Configure the Bot independently, for example `language: zh-tw` or `/set_language ja`. Legacy `ZH` / `zh` still mean Simplified Chinese and `UA` / `ua` still mean Ukrainian. Bot language is saved with runtime state in `data/data.json` using canonical codes, leaving `config.yaml` unchanged. Runtime code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. Failure records store English keys and translate when displayed by the Bot or browser; unrecognized historical records retain their original text. Missing messages fall back to English, then the original text; existing Russian and Ukrainian translations are preserved, with English fallback for untranslated additions.
 
 To add a language, copy a translated catalog such as `lang/fr.json` to a new language file, edit `code`, `name`, `aliases` and `messages`, then restart. Both Bot and browser discover it automatically; no extra dependency or frontend build is required. See the [catalog guide](docs/languages.md) for steps and placeholder rules.
 
@@ -864,7 +844,7 @@ TCP connection and uses it for successive parts; different workers and files do 
 Pauses retain connections; completion, cancellation and client restart close them. File workers start on demand when tasks enter the queue and exit when it empties; an empty startup creates none. Raising the limit adds workers only for queued tasks; lowering it lets active files finish before reducing concurrency. `max_download_task` limits
 simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
 Concurrency changes through WebUI, Web API or MCP apply only to the current process and never save the temporary value to `config.yaml`. Restarting restores the file's `max_download_task` value (`5` when omitted). For a permanent change, edit the configuration file and restart the service.
-Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `temp/`. For active and failed tasks, the deletion dialog indicates whether staging files or part directories exist without listing cache paths; it reports no files only when neither output nor cache at recorded paths exists. WebUI checks the file and cache option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
+Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `downloads/.temp/`. For active and failed tasks, the deletion dialog indicates whether staging files or part directories exist without listing cache paths; it reports no files only when neither output nor cache at recorded paths exists. WebUI checks the file and cache option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
 A failed download connection closes and returns its unfinished part to the queue while healthy connections keep running. A single worker failure does not end the file while another worker remains; only three consecutive failures of the last worker fail the download, without another file-level retry budget. Completing a part resets the counter. The last worker retries with up to 50% random jitter capped at 30 seconds: the two waits are 10–15 and 20–30 seconds. Local disk writes and checkpoint validation errors are not retried as connection errors. Explicit expired/invalid references refetch the original message and validate file identity and size before resuming; other BadRequest errors retain their actual exception type. FLOOD_WAIT / FLOOD_PREMIUM_WAIT does not consume attempts or impose cumulative limits or a 600-second manual-resume threshold. Throttled connections close with checkpoints retained; cooldown blocks new connections while healthy existing connections continue taking parts. If all connections are throttled, they wait for the longest shared cooldown, then automatically resume from checkpoints with gradual connection creation. The UI displays the shared FLOOD_WAIT countdown. Manual pause, resume and cancellation remain available; cooldown expiry does not clear a manual pause.
 The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
 Progress sums downloaded bytes across all parts; resumed bytes do not count toward new transfer speed.
@@ -874,12 +854,12 @@ The Bot edits the existing progress message about every 10 seconds when its cont
 Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
 legacy part-size value without rewriting the configuration file. The earlier `download_concurrency` setting has been removed.
 
-New downloads use `temp/timestamp_guid.tmp` without channel titles or original filenames. The timestamp is the message's Unix time in seconds (`0` when no date is available); the GUID is derived from the owning client, chat ID, message ID and media identity. Retries and restarts reuse the same path without an extra index file. Part plans and data live in `timestamp_guid.tmp.parts/`, including `manifest.json`; SDK/merge checkpoints may use `timestamp_guid.tmp.temp`. Existing legacy checkpoints keep their paths until completion or explicit deletion. Completed files retain the configured naming rules.
-Persist the entire `temp` directory. Merging multiple parts may
+New downloads use `downloads/.temp/timestamp_guid.tmp` without channel titles or original filenames. The timestamp is the message's Unix time in seconds (`0` when no date is available); the GUID is derived from the owning client, chat ID, message ID and media identity. Retries and restarts reuse the same path without an extra index file. Part plans and data live in `timestamp_guid.tmp.parts/`, including `manifest.json`; SDK/merge checkpoints may use `timestamp_guid.tmp.temp`. Existing legacy checkpoints keep their paths until completion or explicit deletion. Completed files retain the configured naming rules.
+Persist the entire `downloads/.temp` directory. Merging multiple parts may
 temporarily require twice the file size in disk space; a single part is moved without a full extra copy.
 See the [download test guide](docs/parallel-download-testing.md) for offline and live acceptance checks.
 For cross-DC regular media downloads, create the auth key through the target DC's regular endpoint once and reuse it in memory for subsequent workers/files of the same account, DC and test mode. A per-key lock prevents duplicate handshakes. Each worker still owns its media session and TCP connection and follows the existing authorization flow. The account's home DC still reuses its stored key; CDN connections retain their own endpoints. The cache is isolated by account, never written to disk or logs, and cleared when the client stops/restarts. Explicit key-rejection errors discard only the matching old cache entry so the next attempt can negotiate a new key. Auth-key creation has a 60-second limit; a timeout closes that connection and preserves checkpoints for the existing connection retry policy. This limit does not cap normal file transfers. DEBUG logs include media/auth endpoint addresses, ports and CDN flags, without key or authorization payloads.
-The application writes only `log/tdl.log`, rotating at 10MB and retaining logs for 30 days. It no longer creates `download.log`; existing historical logs are left in place. In this log, `Waiting for first data` identifies the file, worker and DC before data arrives.
+The application writes only `data/log/tdl.log`, rotating at 10MB and retaining logs for 30 days. It no longer creates `download.log`; existing historical logs are left in place. In this log, `Waiting for first data` identifies the file, worker and DC before data arrives.
 `Opened independent download connection #…` means the first block has arrived; `Confirmed independent download startup` confirms that a valid block was written and allows another connection to start. `Closed independent download connection #…` records resource cleanup. Cancellation before any data also logs resource release.
 Set `log_level: DEBUG` to trace DC resolution, storage reads, auth-key creation, session startup, authorization export/import and the first media request. While waiting for first data, a WARNING reports the current stage and time spent in that stage every 30 seconds, without changing request timeouts or retries. SDK log levels are separate; application diagnostics omit authorization payloads.
 
@@ -1014,16 +994,18 @@ After updating local source, run `docker-compose up -d --build`. See [Docker Com
 |------|-------------|
 | `./downloads/` | Downloaded files |
 | `./config.yaml` | Read-only startup configuration; never rewritten by the application |
-| `./data.yaml` | Writable runtime state: chat scan positions, retry IDs, ad rules and Bot language |
-| `./log/` | Logs + task persistence (bot_tasks.json / task_counter.json / download_history.json) |
-| `./sessions/` | Telegram session files |
-| `./temp/` | Download staging files and `.parts/` checkpoints |
+| `./data/` | Mounted as `/app/data`; the application creates the runtime contents below |
+| `./data/data.json` | Chat scan positions, retry IDs, ad rules and Bot language |
+| `./data/log/` | Logs + task persistence (bot_tasks.json / task_counter.json / download_history.json) |
+| `./data/sessions/` | Telegram login sessions |
+| `./data/bot.yaml` | Bot filter settings managed by the application |
+| `./downloads/.temp/` | Staging files and `.parts/` checkpoints, persisted with downloads |
 
-The application only reads `config.yaml`; scans, Bot commands and shutdown never rewrite it. Docker examples mount it with `:ro`, while `data.yaml` must remain writable. Existing `chat[].chat_id` and `ids_to_retry` records remain compatible. The new `chat[].last_read_message_id` stores the next scan position. Startup uses the later of the configured initial position and saved checkpoint; older retry-only data retains the configured position. Records for currently unconfigured chats and unrelated data keys are preserved.
+The application only reads `config.yaml`; scans, Bot commands and shutdown never rewrite it. Docker examples mount it with `:ro` and mount `data/` as a writable directory. First startup automatically creates `data/data.json`; no runtime file needs to be prepared. JSON saves use locked atomic replacement through a temporary file. Each `chat[]` record contains its `chat_id`, retry message IDs in `ids_to_retry` and the next scan position in `last_read_message_id`. Startup uses the later of the configured initial position and saved checkpoint. Records for currently unconfigured chats and unrelated data keys are preserved.
 
-The top-level `filter_advertisement_list`, `replace_advertisement_list`, `group_add_advertisement` and Bot `language` now live in `data.yaml`. Existing config values remain initial defaults; saved data takes precedence whenever its key exists, including empty lists and dictionaries. Bot ad commands save immediately; Bot language saves with scan/shutdown state. Browser language stays in browser storage. To restore initial ad rules or language, stop the service and remove only the corresponding data keys, preserving download state. To rescan earlier messages, also stop the service before adjusting that chat's saved checkpoint and configured initial position.
+The top-level `filter_advertisement_list`, `replace_advertisement_list`, `group_add_advertisement` and Bot `language` now live in `data/data.json`. Existing config values remain initial defaults; saved data takes precedence whenever its key exists, including empty lists and dictionaries. Bot ad commands save immediately; Bot language saves with scan/shutdown state. Browser language stays in browser storage. To restore initial ad rules or language, stop the service and remove only the corresponding data keys, preserving download state. To rescan earlier messages, also stop the service before adjusting that chat's saved checkpoint and configured initial position.
 
-Keep every data mount when recreating containers. Migration must retain configuration, runtime data, task logs, sessions and part checkpoints. A custom host download directory replaces `./downloads/` in this table.
+Persist only `config.yaml`, `data/` and the download directory. The application creates `data/log/`, `data/sessions/` and `.temp/` inside the download directory; no separate log, session or temp mount is needed. Recreating a container keeps this host data. A custom host download directory replaces `./downloads/` in this table.
 
 When the main download account is a Bot, list the human operator's numeric Telegram user ID in `allowed_user_ids`. Numeric IDs do not depend on that Bot's peer cache. `me` refers to the main download account itself and does not automatically authorize a human operator. Startup help notifications are sent only to a human main account.
 
@@ -1054,7 +1036,7 @@ Inside a container, `127.0.0.1` refers to the container itself. Use a reachable 
 2. **Cannot connect to Telegram**: check proxy reachability from the container.
 3. **Download fails**: inspect the failure reason in the WebUI Failed tab.
 4. **Permission errors**: ensure mounted directories are writable.
-5. **Session is lost**: check the `sessions/` mount and repeat interactive login.
+5. **Session is lost**: check the `data/sessions/` mount and repeat interactive login.
 6. **FLOOD_WAIT**: wait for the Telegram cooldown; pending tasks are retried automatically.
 
 ### Bot Heartbeat and Message Diagnostics
@@ -1068,7 +1050,7 @@ docker logs --since 30m --timestamps tgporter
 docker logs -f --since 5m --timestamps tgporter
 ```
 
-The same events go to `log/tdl.log` under the configured `log_level`, rotation and retention. At `INFO`, `Bot heartbeat OK` reports `rtt_ms`, the local `connected` flag, pending `update_queue`, `workers_alive`, `active_handlers`, the oldest handler's age and function name, and seconds since the last received message. `Bot heartbeat failed` includes the exception type, elapsed time and consecutive failure count. Reconnect attempts, outcomes and cooldowns are logged too; recovery emits `Bot heartbeat recovered`, and event-loop delays of at least 10 seconds report `event_loop_delay_s`. `Bot message received` records the message ID, type, `authorized` result and age since sending (`message_age_s`), followed by `Bot handler started` / `Bot handler finished` with the matching function, outcome and elapsed time. Logs exclude message bodies, command arguments, callback data and tokens.
+The same events go to `data/log/tdl.log` under the configured `log_level`, rotation and retention. At `INFO`, `Bot heartbeat OK` reports `rtt_ms`, the local `connected` flag, pending `update_queue`, `workers_alive`, `active_handlers`, the oldest handler's age and function name, and seconds since the last received message. `Bot heartbeat failed` includes the exception type, elapsed time and consecutive failure count. Reconnect attempts, outcomes and cooldowns are logged too; recovery emits `Bot heartbeat recovered`, and event-loop delays of at least 10 seconds report `event_loop_delay_s`. `Bot message received` records the message ID, type, `authorized` result and age since sending (`message_age_s`), followed by `Bot handler started` / `Bot handler finished` with the matching function, outcome and elapsed time. Logs exclude message bodies, command arguments, callback data and tokens.
 
 Deprecation warnings for `message.forward_from_chat`, `message.forward_from_message_id` or the `reply_to_message_id` sending argument do not indicate network loss. The Bot now uses Kurigram `forward_origin` and `ReplyParameters`, preserving channel origins, Bot-inbox fallback and reply targets.
 

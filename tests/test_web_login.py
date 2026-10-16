@@ -238,7 +238,7 @@ global.window = { location: { replace: url => { redirected = url; } } };
         self.assertEqual(self.client.get("/").status_code, 200)
 
     def test_config_parser_normalizes_null_and_numeric_passwords(self):
-        app = Application("unused-config.yaml", "unused-data.yaml")
+        app = Application("unused-config.yaml", "unused-data.json")
         self.addCleanup(app.loop.close)
         for value, expected in ((None, ""), ("", ""), (123, "123"), (0, "0")):
             with self.subTest(value=value):

@@ -12,6 +12,10 @@ env/
 venv/
 ENV/
 downloads/
+data/
+data.json
+config.yaml
+data.yaml
 log/
 sessions/
 temp/

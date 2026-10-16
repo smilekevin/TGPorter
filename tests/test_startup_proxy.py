@@ -34,7 +34,7 @@ class MainStartupProxyTests(unittest.TestCase):
     def test_main_reaches_telegram_start_with_disabled_and_configured_proxies(self):
         for settings in PROXY_CASES:
             with self.subTest(settings=settings), tempfile.TemporaryDirectory() as directory:
-                app = Application("unused-config.yaml", "unused-data.yaml")
+                app = Application("unused-config.yaml", "unused-data.json")
                 app.assign_config({"api_id": 123, "api_hash": "offline", "media_types": [],
                                    "file_formats": {}, **settings})
                 app.session_file_path = directory

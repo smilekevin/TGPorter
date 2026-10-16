@@ -423,7 +423,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
 class MCPConfigurationTests(unittest.TestCase):
     def configure(self, values):
-        app = Application("unused-config.yaml", "unused-data.yaml")
+        app = Application("unused-config.yaml", "unused-data.json")
         self.addCleanup(app.loop.close)
         app.assign_config({"api_id": "test", "api_hash": "test", "media_types": [], "file_formats": {}, **values})
         return app
