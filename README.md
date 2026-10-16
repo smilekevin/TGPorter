@@ -39,6 +39,7 @@
 - **大小不匹配重下** — 已有文件但大小不符时，备份原文件后重新下载
 - **连接容错** — 失败连接退出，未完成分片交给剩余连接；仅最后一个连接连续失败 3 次才判定下载失败，成功完成分片会重置计数；FLOOD_WAIT 不消耗尝试次数
 - **文件引用过期处理** — 分片遇到明确的引用过期或无效错误时刷新原消息，校验文件身份后续传；其他错误保留具体原因
+- **临时文件命名** — 新下载统一使用 `temp/timestamp_guid.tmp`，重试和重启复用相同名称，兼容旧路径断点；完成后按原规则保存文件名
 - **临时文件清理** — 删除或取消正在下载的任务时清理其临时文件和分片目录；暂停、断网和程序退出保留断点
 
 ### 转发
@@ -118,7 +119,7 @@
 - **代理支持** — Kurigram 原生代理 + Docker 环境变量代理；`proxy: {}` 可禁用 Telegram 代理
 - **依赖管理** — Python 依赖统一由 `requirements.txt` 管理，WebUI 无需 npm 安装或构建；Starlette、Uvicorn、Pydantic 固定版本；完整安装步骤见[部署指南](DEPLOY.md#手动安装)。
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
-- **日志分离** — `tdl.log`（主日志）+ `download.log`（下载日志），10MB 轮转，保留 30 天
+- **统一日志** — 仅写入 `log/tdl.log`，10MB 轮转，保留 30 天；首块数据前每 30 秒记录等待阶段，DEBUG 可查看连接准备和授权步骤，见 [部署指南](DEPLOY.md)
 
 ---
 
@@ -379,7 +380,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 | **大小不匹配** | 直接覆盖 | 备份 .bak 后重下，成功删备份 |
 | **文件引用过期** | 日志记录 | 自动 fetch_message 刷新引用 |
 | **Queue 初始化** | 模块导入时 | 事件循环启动后，避免 loop 不匹配 |
-| **日志** | 单文件 | `tdl.log` + `download.log`，10MB 轮转，30 天保留 |
+| **日志** | 单文件 | `tdl.log` 统一日志，10MB 轮转，30 天保留 |
 | **Bot 通知** | 简单状态 | 下载进度 + 完成文件列表 + 失败原因 + 限速暂停 + 恢复通知 |
 | **Docker** | 单阶段 | 多阶段构建（alpine），rclone 内置 |
 | **版本号** | v2.2.6 | v1.0.0（独立版本线） |
@@ -435,6 +436,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Size mismatch** — backs up existing file (.bak), re-downloads, deletes backup on success
 - **Connection recovery** — failed connections retire and surviving connections take their unfinished parts; only three consecutive failures of the last worker fail a download, with the counter reset by a completed part; FLOOD_WAIT does not consume attempts
 - **File reference refresh** — explicit expired/invalid reference errors refresh the source message and validate file identity before resuming parts; other errors retain their actual cause
+- **Staging names** — new downloads use `temp/timestamp_guid.tmp`; retries and restarts reuse the same name, existing legacy checkpoints remain resumable, and completed files keep the configured naming rules
 - **Temp file cleanup** — deleting or cancelling an active download removes its staging files and part directory; pauses, network interruptions and process exit retain checkpoints
 
 ### Forward
@@ -513,7 +515,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Proxy** — Kurigram native proxy + Docker environment variable proxy; `proxy: {}` disables the Telegram proxy
 - **Dependencies** — Python dependencies are managed in `requirements.txt`, and the WebUI needs no npm install or build. Starlette, Uvicorn and Pydantic are version-pinned; see the [installation guide](DEPLOY.md#manual-install).
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
-- **Log separation** — `tdl.log` + `download.log`, 10MB rotation, 30-day retention
+- **Unified log** — only `log/tdl.log`, 10MB rotation, 30-day retention; first-data waits report their stage every 30 seconds, with DEBUG startup and authorization traces; see the [deployment guide](DEPLOY.md)
 
 ---
 
@@ -774,7 +776,7 @@ Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegr
 | **Size mismatch** | Overwrite | Backup .bak, re-download, delete backup on success |
 | **File reference** | Log only | Auto fetch_message to refresh |
 | **Queue init** | Module import time | After event loop starts, avoids loop mismatch |
-| **Logging** | Single file | `tdl.log` + `download.log`, 10MB rotation, 30-day retention |
+| **Logging** | Single file | Unified `tdl.log`, 10MB rotation, 30-day retention |
 | **Bot notifications** | Simple status | Progress + completed file list + failure reasons + rate limit + recovery |
 | **Docker** | Single stage | Multi-stage build (alpine), rclone built-in |
 | **Version** | v2.2.6 | v1.0.0 (independent line) |

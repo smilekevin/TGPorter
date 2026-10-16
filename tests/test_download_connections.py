@@ -12,7 +12,8 @@ from module.telegram import pyrogram
 from pyrogram import Client, raw
 from pyrogram.file_id import FileId, FileType
 
-from module.download_connection import close_download_connections
+from loguru import logger
+from module.download_connection import DownloadConnection, close_download_connections
 from module.parallel_download import CHUNK_SIZE as MB, download_file, parts_path, discard_partial_download
 from module.parallel_download import DownloadWorkersExhausted
 from module.pyrogram_extension import HookClient
@@ -144,6 +145,93 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client._independent_download_connections, set())
         self.assertIs(self.client.media_sessions[2], self.existing)
         self.existing.stop.assert_not_awaited()
+
+    async def assert_startup_wait(self, stage):
+        records = []
+        sink = logger.add(lambda message: records.append(message.record), level="DEBUG")
+        self.addCleanup(lambda: logger.remove(sink))
+        self.file_id.dc_id = 4
+        gate = asyncio.Event()
+        if stage == "starting media session":
+            self.start_gate = gate
+        elif stage == "GetFile":
+            self.request_gate = gate
+        target, method = {
+            "resolving DC endpoint": (self.client, "get_dc_option"),
+            "creating auth key": (self.auth, "side_effect"),
+            "exporting authorization": (self.client, "invoke"),
+        }.get(stage, (self, "unused_gate"))
+
+        async def blocked(*args, **kwargs):
+            await gate.wait()
+
+        replacement = blocked if stage == "creating auth key" else AsyncMock(side_effect=blocked)
+        with patch.object(target, method, replacement, create=True), patch(
+                "module.download_connection.STARTUP_WARNING_INTERVAL", 0.01):
+            task = asyncio.create_task(self.download())
+            try:
+                await self.until(lambda: any(
+                    record["level"].name == "WARNING" and f"stage={stage}," in record["message"]
+                    for record in records))
+                self.assertFalse(task.done())
+            finally:
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 2)
+        self.assert_closed()
+        self.assertTrue(any("before first data" in record["message"] for record in records))
+        self.assertFalse(any("Opened independent" in record["message"] for record in records))
+        self.assertFalse(any(task.get_coro().__qualname__.endswith("warn_startup_wait")
+                             for task in asyncio.all_tasks() if not task.done()))
+        self.start_gate = self.request_gate = None
+
+    async def test_endpoint_wait_reports_stage_and_cancellation_stops_monitor(self):
+        await self.assert_startup_wait("resolving DC endpoint")
+
+    async def test_auth_key_wait_reports_stage_and_cancellation_stops_monitor(self):
+        await self.assert_startup_wait("creating auth key")
+
+    async def test_session_wait_reports_stage_and_cancellation_stops_monitor(self):
+        await self.assert_startup_wait("starting media session")
+
+    async def test_export_wait_reports_stage_and_cancellation_stops_monitor(self):
+        await self.assert_startup_wait("exporting authorization")
+
+    async def test_request_wait_reports_stage_and_cancellation_stops_monitor(self):
+        await self.assert_startup_wait("GetFile")
+
+    async def test_first_data_stops_warning_monitor_and_traces_authorization_without_payloads(self):
+        records = []
+        sink = logger.add(lambda message: records.append(message.record), level="DEBUG")
+        self.addCleanup(lambda: logger.remove(sink))
+        self.file_id.dc_id = 4
+        with patch("module.download_connection.STARTUP_WARNING_INTERVAL", 0.01):
+            async with DownloadConnection(self.client, "offline worker") as connection:
+                stream = connection.get_file(self.file_id, len(self.data), 1, 0, self.progress)
+                try:
+                    self.assertEqual(await anext(stream), self.data[:MB])
+                    self.assertFalse(connection.download_client.diagnosing)
+                    await asyncio.sleep(0.03)
+                    self.assertFalse(any(record["level"].name == "WARNING" for record in records))
+                    self.assertFalse(any(task.get_coro().__qualname__.endswith("warn_startup_wait")
+                                         for task in asyncio.all_tasks() if not task.done()))
+                finally:
+                    await stream.aclose()
+        messages = "\n".join(record["message"] for record in records)
+        for stage in ("creating auth key", "starting media session", "exporting authorization",
+                      "importing authorization", "GetFile"):
+            self.assertIn(stage, messages)
+        self.assertNotIn(repr(b"authorization"), messages)
+        self.assertNotIn(repr(b"a" * 256), messages)
+        self.assertNotIn(repr(b"reference"), messages)
+        self.assert_closed()
+
+    async def test_unicode_directory_and_filename_complete_part_download(self):
+        path = self.path.parent / "XXX全球优质集合地 ｜XXX🐝" / "飞，一.mov"
+        await self.download(path)
+        self.assertEqual(path.read_bytes(), self.data)
+        self.assertFalse(parts_path(str(path)).exists())
+        self.assert_closed()
 
     async def test_two_files_in_same_dc_use_eight_independent_connections(self):
         # A shared SDK semaphore must not silently turn ranges into one TCP stream.

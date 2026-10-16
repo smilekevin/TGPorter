@@ -340,10 +340,10 @@ Bot 的 `/query` 默认查询全部下载记录与 Pending 任务，每页 6 条
 Bot 在内容变化时约每 10 秒编辑原进度消息，不再等待 20% 里程碑。FLOOD_WAIT 提示剩余秒数；冷却结束后自动恢复，手动暂停仍保持暂停。若 Bot 消息接口本身被限流，冷却期间停止播报，结束后补报，并保留未送达的完成状态以便重试。单次播报最多等待 10 秒，失败不阻塞下载。
 旧版分片断点仍可续传。旧 `download_min_part_size_mb` 在没有新字段时作为切片大小的兼容值读取，保存配置时迁移为 `download_part_size_mb`；旧 `download_concurrency` 已移除。
 
-分片断点保存在 `temp/…/文件名.parts/` 中，部署时应持久化整个 `temp` 目录。
+新下载的临时主文件统一为 `temp/timestamp_guid.tmp`，不包含频道名或原文件名。`timestamp` 使用消息时间的 Unix 秒数（无日期时为 `0`），GUID 根据消息所属客户端、聊天 ID、消息 ID 和媒体身份稳定生成；同一媒体重试、恢复和重启复用同一路径，不需要额外的索引文件。分片保存在对应的 `timestamp_guid.tmp.parts/manifest.json` 和分片文件中，SDK/合并过程可能使用 `timestamp_guid.tmp.temp`。已有旧路径断点继续沿用，直至完成或明确删除；最终下载文件名仍由现有命名配置决定。部署时应持久化整个 `temp` 目录。
 多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
 离线验证和真实下载验收步骤见 [分片下载测试说明](docs/parallel-download-testing.md)。
-`log/tdl.log` 和 `log/download.log` 中的 `Opened independent download connection #…` 记录独立下载连接的打开，包含文件名和 worker 编号；对应的 `Closed independent download connection #…` 记录连接关闭。
+应用仅写入 `log/tdl.log`，每个日志文件达到 10MB 时轮转，保留 30 天；不再生成 `download.log`，已有旧日志不会自动删除。其中的 `Waiting for first data` 记录独立下载连接开始等待数据，包含文件名、worker 编号和 DC；`Opened independent download connection #…` 表示已收到首块数据，`Closed independent download connection #…` 表示连接资源已关闭。首块数据前取消也会记录资源释放。设置 `log_level: DEBUG` 可查看 DC 解析、存储读取、密钥创建、会话启动、授权导出/导入和首个媒体请求阶段；等待期间每 30 秒输出当前阶段及该阶段已等待秒数的 WARNING，不改变请求超时或重试策略。SDK 日志级别独立于此设置，应用诊断日志不输出授权内容。
 
 ---
 
@@ -850,11 +850,13 @@ The Bot edits the existing progress message about every 10 seconds when its cont
 Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
 legacy part-size value and migrated to `download_part_size_mb` when saving. The earlier `download_concurrency` setting has been removed.
 
-Persist the entire `temp` directory, including `filename.parts/` checkpoints. Merging multiple parts may
+New downloads use `temp/timestamp_guid.tmp` without channel titles or original filenames. The timestamp is the message's Unix time in seconds (`0` when no date is available); the GUID is derived from the owning client, chat ID, message ID and media identity. Retries and restarts reuse the same path without an extra index file. Part plans and data live in `timestamp_guid.tmp.parts/`, including `manifest.json`; SDK/merge checkpoints may use `timestamp_guid.tmp.temp`. Existing legacy checkpoints keep their paths until completion or explicit deletion. Completed files retain the configured naming rules.
+Persist the entire `temp` directory. Merging multiple parts may
 temporarily require twice the file size in disk space; a single part is moved without a full extra copy.
 See the [download test guide](docs/parallel-download-testing.md) for offline and live acceptance checks.
-In `log/tdl.log` and `log/download.log`, `Opened independent download connection #…` records a connection opening
-with its file and worker number; the matching `Closed independent download connection #…` records its closure.
+The application writes only `log/tdl.log`, rotating at 10MB and retaining logs for 30 days. It no longer creates `download.log`; existing historical logs are left in place. In this log, `Waiting for first data` identifies the file, worker and DC before data arrives.
+`Opened independent download connection #…` means the first block has arrived; `Closed independent download connection #…` records resource cleanup. Cancellation before any data also logs resource release.
+Set `log_level: DEBUG` to trace DC resolution, storage reads, auth-key creation, session startup, authorization export/import and the first media request. While waiting for first data, a WARNING reports the current stage and time spent in that stage every 30 seconds, without changing request timeouts or retries. SDK log levels are separate; application diagnostics omit authorization payloads.
 
 ---
 
