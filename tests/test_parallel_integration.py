@@ -757,28 +757,31 @@ class DownloadConfigTests(unittest.TestCase):
         self.assertEqual(self.app.download_part_size_mb, 64)
         self.assertFalse(hasattr(self.app, "download_concurrency"))
 
-    def test_removed_global_setting_is_dropped_on_save(self):
+    def test_removed_global_setting_is_ignored_without_rewriting_config(self):
         self.app.config = {**self.base, "download_concurrency": 1}
         self.app.assign_config(self.app.config)
-        self.app.update_config(False)
-        self.assertNotIn("download_concurrency", self.app.config)
+        self.app.save_app_data(False)
+        self.assertEqual(self.app.config["download_concurrency"], 1)
+        self.assertFalse(hasattr(self.app, "download_concurrency"))
 
-    def test_settings_survive_config_save_and_raise_transport_limit_if_needed(self):
+    def test_runtime_saves_do_not_copy_download_settings_into_config(self):
         self.app.assign_config({**self.base, "max_download_task": 3,
                                 "file_download_concurrency": 12,
                                 "download_part_size_mb": 8})
-        self.app.update_config(False)
-        self.assertEqual(self.app.config["file_download_concurrency"], 12)
-        self.assertEqual(self.app.config["download_part_size_mb"], 8)
+        self.app.save_app_data(False)
+        self.assertEqual(self.app.file_download_concurrency, 12)
+        self.assertEqual(self.app.download_part_size_mb, 8)
+        self.assertNotIn("file_download_concurrency", self.app.config)
+        self.assertNotIn("download_part_size_mb", self.app.config)
         self.assertEqual(self.app.max_concurrent_transmissions, 36)
 
-    def test_legacy_minimum_is_imported_as_part_size_and_migrated_on_save(self):
+    def test_legacy_minimum_is_read_without_rewriting_config(self):
         self.app.config = {**self.base, "download_min_part_size_mb": 16}
         self.app.assign_config(self.app.config)
-        self.app.update_config(False)
+        self.app.save_app_data(False)
         self.assertEqual(self.app.download_part_size_mb, 16)
-        self.assertEqual(self.app.config["download_part_size_mb"], 16)
-        self.assertNotIn("download_min_part_size_mb", self.app.config)
+        self.assertEqual(self.app.config["download_min_part_size_mb"], 16)
+        self.assertNotIn("download_part_size_mb", self.app.config)
 
     def test_invalid_concurrency_and_part_size_are_rejected(self):
         for key in ("file_download_concurrency", "download_part_size_mb"):

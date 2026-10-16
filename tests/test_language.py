@@ -99,7 +99,7 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(lang.translate('Download returned no file (failed after 3 retries)', 'es'),
                          'La descarga no devolvió ningún archivo (falló tras 3 reintentos)')
 
-    def test_configuration_accepts_legacy_codes_and_saves_canonical_codes(self):
+    def test_configuration_accepts_legacy_codes_and_saves_canonical_codes_in_data(self):
         from module.app import Application
         for value in ('ZH', 'zh-cn', 'zh-tw', 'ja', 'es', 'fr', 'UA'):
             with self.subTest(value=value):
@@ -109,8 +109,9 @@ class LanguageTests(unittest.TestCase):
                 try:
                     app.assign_config({'api_id': 'test', 'api_hash': 'test',
                                        'media_types': [], 'file_formats': {}, 'language': value})
-                    app.update_config()
-                    self.assertEqual(app.config['language'], lang.normalize_language(value))
+                    app.save_app_data()
+                    self.assertEqual(app.app_data['language'], lang.normalize_language(value))
+                    self.assertFalse(Path(app.config_file).exists())
                 finally:
                     app.loop.close()
                     directory.cleanup()

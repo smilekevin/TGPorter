@@ -89,7 +89,7 @@ docker run -it \
   --restart unless-stopped \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
-  -v "$PWD/config.yaml:/app/config.yaml" \
+  -v "$PWD/config.yaml:/app/config.yaml:ro" \
   -v "$PWD/data.yaml:/app/data.yaml" \
   -v "$PWD/downloads:/app/downloads" \
   -v "$PWD/log:/app/log" \
@@ -149,7 +149,7 @@ services:
       # 下载目录 (修改为你的实际路径)
       - "./downloads:/app/downloads/"
       # 配置文件
-      - "./config.yaml:/app/config.yaml"
+      - "./config.yaml:/app/config.yaml:ro"
       - "./data.yaml:/app/data.yaml"
       # 日志
       - "./log:/app/log/"
@@ -321,7 +321,7 @@ proxy:
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `date_format` | 日期目录格式 | `%Y_%m` |
 
-网页（含登录页）和 Bot 共用 `lang/*.json` 词典，支持简体中文（`zh-cn`）、繁体中文（`zh-tw`）、英语（`en`）、日语（`ja`）、西班牙语（`es`）、法语（`fr`）、俄语（`ru`）和乌克兰语（`uk`）。每种语言一个文件，共用词汇只翻译一次；英语 `messages` 只列出英文词条，其他语言使用英文词条到翻译的映射。网页可随时切换，首次访问按浏览器偏好依次匹配；`zh` 回退 `zh-cn`，`zh-TW` / `zh-HK` / `zh-Hant` 使用繁体中文，不支持的语言回退英语。手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页互不影响，例如 `language: zh-tw` 或 `/set_language ja`；旧配置 `ZH` 和命令 `zh` 仍代表简体中文，`UA` / `ua` 仍代表乌克兰语。保存配置时使用规范语言代码。运行代码、配置示例注释和 PWA 应用名称使用英语；测试可保留必要的语言数据。失败记录保存英文词条，在 Bot/网页显示时才翻译，无法识别的历史记录保留原文。缺失词条回退英语，再回退原文；原有俄语和乌克兰语保留已有翻译，新增且未翻译的词条使用英语。
+网页（含登录页）和 Bot 共用 `lang/*.json` 词典，支持简体中文（`zh-cn`）、繁体中文（`zh-tw`）、英语（`en`）、日语（`ja`）、西班牙语（`es`）、法语（`fr`）、俄语（`ru`）和乌克兰语（`uk`）。每种语言一个文件，共用词汇只翻译一次；英语 `messages` 只列出英文词条，其他语言使用英文词条到翻译的映射。网页可随时切换，首次访问按浏览器偏好依次匹配；`zh` 回退 `zh-cn`，`zh-TW` / `zh-HK` / `zh-Hant` 使用繁体中文，不支持的语言回退英语。手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页互不影响，例如 `language: zh-tw` 或 `/set_language ja`；旧配置 `ZH` 和命令 `zh` 仍代表简体中文，`UA` / `ua` 仍代表乌克兰语。Bot 语言随运行状态以规范代码写入 `data.yaml`，不会修改 `config.yaml`。运行代码、配置示例注释和 PWA 应用名称使用英语；测试可保留必要的语言数据。失败记录保存英文词条，在 Bot/网页显示时才翻译，无法识别的历史记录保留原文。缺失词条回退英语，再回退原文；原有俄语和乌克兰语保留已有翻译，新增且未翻译的词条使用英语。
 
 添加语言只需复制 `lang/fr.json` 等翻译文件为新语言文件，修改 `code`、`name`、`aliases` 和 `messages`，重启后网页和 Bot 自动识别，无需新增依赖或构建前端。完整步骤及占位符规则见[语言包指南](docs/languages.md)。
 
@@ -332,13 +332,14 @@ proxy:
 暂停时保留连接，完成、取消或客户端重启时关闭连接。
 取消下载先关闭连接，再按文件删除选项处理该文件在 `temp/` 中的临时文件和 `.parts/` 目录。活动和失败任务的删除确认只提示是否存在缓存文件（临时文件或分片目录），不列出缓存路径；仅在文件和已记录路径的缓存均不存在时提示未找到。网页取消和删除失败任务默认勾选“同时删除本地文件和缓存”，已完成任务默认不勾选，批量操作一致；不勾选则保留文件和断点。Web API/MCP 的 `delete_file` 默认 `false`，Bot 取消继续默认清理临时数据。旧失败记录若未保存临时路径，仅处理可定位的文件。
 文件任务入队时按需启动文件 worker，队列清空后退出，空队列启动不创建文件 worker。调高并发只为等待任务增加 worker；调低时正在下载的文件继续完成，再收缩并发。同时下载的文件数仍由 `max_download_task` 控制；5 个文件各 4 个 worker 时，最多有 20 个并发下载 worker，没有额外的总并发配置。
+WebUI、Web API 和 MCP 调整的并发任务数仅在当前进程生效，不会将临时值写入 `config.yaml`；重启后恢复文件中的 `max_download_task`（未配置时为 `5`）。需要永久修改时，请手动编辑配置文件并重启服务。
 切片大小和 worker 数在文件首次开始时保存，暂停、重试和程序重启后继续使用该计划，不重复下载已完成切片。
 连接下载失败时关闭该连接并将未完成分片交回队列，保留其他健康连接。只要还有可用 worker，单个 worker 失败不会结束文件任务；仅最后一个 worker 连续失败 3 次才算下载失败，不再叠加文件级重试。完成一个分片会重置计数。最后一个 worker 重试使用最多 50% 随机退避，上限 30 秒，前两次等待分别为 10–15 秒和 20–30 秒。磁盘写入和文件计划校验错误不作为连接错误重试。明确的文件引用过期或无效错误会重新获取原消息，并检查文件身份和大小后续传；普通 BadRequest 保留真实异常类型。FLOOD_WAIT / FLOOD_PREMIUM_WAIT 不消耗失败次数，也没有累计等待或 600 秒手动恢复门槛。受限连接关闭并保留断点，冷却期间不创建新连接，已有健康连接继续领取分片；全部连接受限时等待最长的共享冷却截止时间，到期后自动从断点恢复并逐步增加连接。UI 显示共享 FLOOD_WAIT 倒计时；仍可手动暂停、恢复或取消，手动暂停不会因冷却结束而解除。
 进度条汇总所有切片的已下载字节，续传恢复的已有字节不计入新传输速度。
 WebUI 顶部显示当前下载流数总和，文件卡片、Bot 进度播报和 `/query` 显示各文件的当前下载流数。该数值统计正在执行下载请求（含等待数据）的流，不是配置的 worker 上限；等待启动、空闲、退避、冷却等待和本地合并不计入。暂停的文件显示 0，全局暂停时总数为 0；恢复后继续统计，结束、失败、取消或重启后不会保留旧计数。
 Bot 的 `/query` 默认查询全部下载记录与 Pending 任务，每页 6 条，附各分类总数；支持分类、翻页和刷新按钮，也可输入 `/query active`、`/query pending`、`/query completed 2` 或 `/query failed`。下载中列表包含暂停任务。命令和按钮沿用 `allowed_user_ids` 白名单，查询不会修改任务。
 Bot 在内容变化时约每 10 秒编辑原进度消息，不再等待 20% 里程碑。FLOOD_WAIT 提示剩余秒数；冷却结束后自动恢复，手动暂停仍保持暂停。若 Bot 消息接口本身被限流，冷却期间停止播报，结束后补报，并保留未送达的完成状态以便重试。单次播报最多等待 10 秒，失败不阻塞下载。
-旧版分片断点仍可续传。旧 `download_min_part_size_mb` 在没有新字段时作为切片大小的兼容值读取，保存配置时迁移为 `download_part_size_mb`；旧 `download_concurrency` 已移除。
+旧版分片断点仍可续传。旧 `download_min_part_size_mb` 在没有新字段时作为切片大小的兼容值读取，不会自动重写配置；旧 `download_concurrency` 已移除。
 
 新下载的临时主文件统一为 `temp/timestamp_guid.tmp`，不包含频道名或原文件名。`timestamp` 使用消息时间的 Unix 秒数（无日期时为 `0`），GUID 根据消息所属客户端、聊天 ID、消息 ID 和媒体身份稳定生成；同一媒体重试、恢复和重启复用同一路径，不需要额外的索引文件。分片保存在对应的 `timestamp_guid.tmp.parts/manifest.json` 和分片文件中，SDK/合并过程可能使用 `timestamp_guid.tmp.temp`。已有旧路径断点继续沿用，直至完成或明确删除；最终下载文件名仍由现有命名配置决定。部署时应持久化整个 `temp` 目录。
 多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
@@ -484,11 +485,15 @@ docker-compose up -d
 | 路径 | 说明 |
 |------|------|
 | `./downloads/` | 下载的文件 |
-| `./config.yaml` | 配置文件 |
-| `./data.yaml` | 运行时数据（ids_to_retry 等） |
+| `./config.yaml` | 只读启动配置；程序不会改写 |
+| `./data.yaml` | 可写运行状态：频道扫描位置、重试 ID、广告规则及 Bot 语言 |
 | `./log/` | 日志 + 任务持久化（bot_tasks.json / task_counter.json / download_history.json） |
 | `./sessions/` | Telegram session 文件 |
 | `./temp/` | 下载临时文件和 `.parts/` 分片断点 |
+
+程序仅读取 `config.yaml`，扫描、Bot 命令和退出均不会改写它；Docker 示例以 `:ro` 挂载该文件，`data.yaml` 仍需可写。`data.yaml` 原有的 `chat[].chat_id` 和 `ids_to_retry` 保持兼容，新增的 `chat[].last_read_message_id` 保存下一条待扫描位置。启动时取配置初始位置与已保存位置中较大的值；只有重试 ID 的旧数据继续使用配置中的扫描位置。未在本次配置启用的频道记录及其他数据键会保留。
+
+广告相关的 `filter_advertisement_list`、`replace_advertisement_list`、`group_add_advertisement` 和 Bot 的 `language` 保存于 `data.yaml` 顶层。已有配置中的对应值仍作为初始值读取；一旦 `data.yaml` 有对应键，就优先使用该值，包括空列表和空字典。Bot 广告命令立即保存规则，Bot 语言随扫描/退出保存；网页语言仍只保存在浏览器。需要恢复配置中的初始规则或语言时，先停服并删除 `data.yaml` 中对应的键；不要删除整个文件，以免丢失下载状态。需要从更早的位置重新扫描时，同样应停服后调整该频道的数据检查点和配置初始位置。
 
 保留所有挂载目录，容器移除或重建不会删除宿主机数据。迁移时同步保留配置、运行数据、任务日志、session 和分片断点；自定义的宿主机下载路径对应表中的 `./downloads/`。
 
@@ -615,7 +620,7 @@ docker run -it \
   --restart unless-stopped \
   -p 5000:5000 \
   -e TZ=Asia/Shanghai \
-  -v "$PWD/config.yaml:/app/config.yaml" \
+  -v "$PWD/config.yaml:/app/config.yaml:ro" \
   -v "$PWD/data.yaml:/app/data.yaml" \
   -v "$PWD/downloads:/app/downloads" \
   -v "$PWD/log:/app/log" \
@@ -675,7 +680,7 @@ services:
       # Downloads (change the host path if needed)
       - "./downloads:/app/downloads/"
       # Configuration files
-      - "./config.yaml:/app/config.yaml"
+      - "./config.yaml:/app/config.yaml:ro"
       - "./data.yaml:/app/data.yaml"
       # Logs
       - "./log:/app/log/"
@@ -847,7 +852,7 @@ Defaults apply when an option is omitted and may differ from the example configu
 | `enable_download_txt` | Save text-only messages as .txt | `false` |
 | `date_format` | Date directory format | `%Y_%m` |
 
-The WebUI (including sign-in) and Bot share `lang/*.json` catalogs: Simplified Chinese (`zh-cn`), Traditional Chinese (`zh-tw`), English (`en`), Japanese (`ja`), Spanish (`es`), French (`fr`), Russian (`ru`) and Ukrainian (`uk`). Each language has one file and shared vocabulary is translated once. English `messages` lists canonical keys; other languages map those keys to translations. The browser matches language preferences in order; `zh` falls back to `zh-cn`, while `zh-TW` / `zh-HK` / `zh-Hant` select Traditional Chinese. Unsupported languages fall back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. Configure the Bot independently, for example `language: zh-tw` or `/set_language ja`. Legacy `ZH` / `zh` still mean Simplified Chinese and `UA` / `ua` still mean Ukrainian. Saved configuration uses canonical language codes. Runtime code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. Failure records store English keys and translate when displayed by the Bot or browser; unrecognized historical records retain their original text. Missing messages fall back to English, then the original text; existing Russian and Ukrainian translations are preserved, with English fallback for untranslated additions.
+The WebUI (including sign-in) and Bot share `lang/*.json` catalogs: Simplified Chinese (`zh-cn`), Traditional Chinese (`zh-tw`), English (`en`), Japanese (`ja`), Spanish (`es`), French (`fr`), Russian (`ru`) and Ukrainian (`uk`). Each language has one file and shared vocabulary is translated once. English `messages` lists canonical keys; other languages map those keys to translations. The browser matches language preferences in order; `zh` falls back to `zh-cn`, while `zh-TW` / `zh-HK` / `zh-Hant` select Traditional Chinese. Unsupported languages fall back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. Configure the Bot independently, for example `language: zh-tw` or `/set_language ja`. Legacy `ZH` / `zh` still mean Simplified Chinese and `UA` / `ua` still mean Ukrainian. Bot language is saved with runtime state in `data.yaml` using canonical codes, leaving `config.yaml` unchanged. Runtime code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. Failure records store English keys and translate when displayed by the Bot or browser; unrecognized historical records retain their original text. Missing messages fall back to English, then the original text; existing Russian and Ukrainian translations are preserved, with English fallback for untranslated additions.
 
 To add a language, copy a translated catalog such as `lang/fr.json` to a new language file, edit `code`, `name`, `aliases` and `messages`, then restart. Both Bot and browser discover it automatically; no extra dependency or frontend build is required. See the [catalog guide](docs/languages.md) for steps and placeholder rules.
 
@@ -858,6 +863,7 @@ all parts are complete, then the parts are merged in order. Each worker owns an 
 TCP connection and uses it for successive parts; different workers and files do not share download connections.
 Pauses retain connections; completion, cancellation and client restart close them. File workers start on demand when tasks enter the queue and exit when it empties; an empty startup creates none. Raising the limit adds workers only for queued tasks; lowering it lets active files finish before reducing concurrency. `max_download_task` limits
 simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
+Concurrency changes through WebUI, Web API or MCP apply only to the current process and never save the temporary value to `config.yaml`. Restarting restores the file's `max_download_task` value (`5` when omitted). For a permanent change, edit the configuration file and restart the service.
 Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `temp/`. For active and failed tasks, the deletion dialog indicates whether staging files or part directories exist without listing cache paths; it reports no files only when neither output nor cache at recorded paths exists. WebUI checks the file and cache option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
 A failed download connection closes and returns its unfinished part to the queue while healthy connections keep running. A single worker failure does not end the file while another worker remains; only three consecutive failures of the last worker fail the download, without another file-level retry budget. Completing a part resets the counter. The last worker retries with up to 50% random jitter capped at 30 seconds: the two waits are 10–15 and 20–30 seconds. Local disk writes and checkpoint validation errors are not retried as connection errors. Explicit expired/invalid references refetch the original message and validate file identity and size before resuming; other BadRequest errors retain their actual exception type. FLOOD_WAIT / FLOOD_PREMIUM_WAIT does not consume attempts or impose cumulative limits or a 600-second manual-resume threshold. Throttled connections close with checkpoints retained; cooldown blocks new connections while healthy existing connections continue taking parts. If all connections are throttled, they wait for the longest shared cooldown, then automatically resume from checkpoints with gradual connection creation. The UI displays the shared FLOOD_WAIT countdown. Manual pause, resume and cancellation remain available; cooldown expiry does not clear a manual pause.
 The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
@@ -866,7 +872,7 @@ The WebUI header shows the total active stream count; file cards, Bot progress r
 The Bot `/query` command lists download records and pending tasks, six rows per page with category totals. Use the category, paging and refresh buttons or enter `/query active`, `/query pending`, `/query completed 2` or `/query failed`. Active lists include paused tasks. Commands and buttons use the existing `allowed_user_ids` allowlist and do not modify tasks.
 The Bot edits the existing progress message about every 10 seconds when its content changes, without waiting for 20% milestones. FLOOD_WAIT notices show remaining seconds; downloads resume automatically after cooldown while manual pauses remain in effect. If the Bot messaging endpoint itself is rate limited, reports stop during its cooldown and resume with a notice afterward; undelivered completion reports remain available for retry. Each report waits at most 10 seconds, so notification failures do not stall downloads.
 Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
-legacy part-size value and migrated to `download_part_size_mb` when saving. The earlier `download_concurrency` setting has been removed.
+legacy part-size value without rewriting the configuration file. The earlier `download_concurrency` setting has been removed.
 
 New downloads use `temp/timestamp_guid.tmp` without channel titles or original filenames. The timestamp is the message's Unix time in seconds (`0` when no date is available); the GUID is derived from the owning client, chat ID, message ID and media identity. Retries and restarts reuse the same path without an extra index file. Part plans and data live in `timestamp_guid.tmp.parts/`, including `manifest.json`; SDK/merge checkpoints may use `timestamp_guid.tmp.temp`. Existing legacy checkpoints keep their paths until completion or explicit deletion. Completed files retain the configured naming rules.
 Persist the entire `temp` directory. Merging multiple parts may
@@ -1007,11 +1013,15 @@ After updating local source, run `docker-compose up -d --build`. See [Docker Com
 | Path | Description |
 |------|-------------|
 | `./downloads/` | Downloaded files |
-| `./config.yaml` | Config file |
-| `./data.yaml` | Runtime data (ids_to_retry, etc.) |
+| `./config.yaml` | Read-only startup configuration; never rewritten by the application |
+| `./data.yaml` | Writable runtime state: chat scan positions, retry IDs, ad rules and Bot language |
 | `./log/` | Logs + task persistence (bot_tasks.json / task_counter.json / download_history.json) |
 | `./sessions/` | Telegram session files |
 | `./temp/` | Download staging files and `.parts/` checkpoints |
+
+The application only reads `config.yaml`; scans, Bot commands and shutdown never rewrite it. Docker examples mount it with `:ro`, while `data.yaml` must remain writable. Existing `chat[].chat_id` and `ids_to_retry` records remain compatible. The new `chat[].last_read_message_id` stores the next scan position. Startup uses the later of the configured initial position and saved checkpoint; older retry-only data retains the configured position. Records for currently unconfigured chats and unrelated data keys are preserved.
+
+The top-level `filter_advertisement_list`, `replace_advertisement_list`, `group_add_advertisement` and Bot `language` now live in `data.yaml`. Existing config values remain initial defaults; saved data takes precedence whenever its key exists, including empty lists and dictionaries. Bot ad commands save immediately; Bot language saves with scan/shutdown state. Browser language stays in browser storage. To restore initial ad rules or language, stop the service and remove only the corresponding data keys, preserving download state. To rescan earlier messages, also stop the service before adjusting that chat's saved checkpoint and configured initial position.
 
 Keep every data mount when recreating containers. Migration must retain configuration, runtime data, task logs, sessions and part checkpoints. A custom host download directory replaces `./downloads/` in this table.
 

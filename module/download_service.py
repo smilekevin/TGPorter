@@ -320,7 +320,7 @@ class DownloadService:
         return {'max_workers': self.app.max_download_task}
 
     def set_max_workers(self, n=None):
-        """Set max download task count (1-6, hot-applies to the live worker pool)"""
+        """Set the runtime download task limit (1-6) until the next restart."""
         if n is None or n < 1 or n > 6:
             return {'error': "n must be 1-6"}, 400
         self.app.max_download_task = n
@@ -346,8 +346,6 @@ class DownloadService:
                 logger.warning("set_max_workers: __main__ has no _worker_pool_set_target")
         except Exception as e:
             logger.warning(f"set_max_workers: worker pool adjust failed: {e}")
-        # Persist to config file
-        self.app.update_config(True)
         return {'max_workers': n}
 
     def get_download_list(self, already_down=None, offset=0, limit=0, search=""):

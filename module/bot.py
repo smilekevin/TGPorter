@@ -1463,7 +1463,7 @@ async def add_filter_advertisement_filter(
 
     _bot.app.filter_advertisement_list.append(filter_str)
     await client.send_message(message.from_user.id, f"{_t('Add filter')}: {filter_str}")
-    _bot.app.update_config(True)
+    _bot.app.save_app_data(True)
 
 
 async def remove_filter_advertisement_filter(
@@ -1488,7 +1488,7 @@ async def remove_filter_advertisement_filter(
             message.from_user.id, f"{_t('Remove filter')} : {args[1]}"
         )
 
-        _bot.app.update_config(True)
+        _bot.app.save_app_data(True)
     else:
         await client.send_message(
             message.from_user.id, f"{_t('Filter')} : {args[1]} {_t('not exist')}"
@@ -1517,14 +1517,14 @@ async def set_add_advertisement(
         chat_id, _, _ = await parse_link(_bot.client, mesage_link)
         if advertisement_str:
             _bot.app.group_add_advertisement[chat_id] = advertisement_str
-            _bot.app.update_config(True)
+            _bot.app.save_app_data(True)
             await client.send_message(
                 message.from_user.id, _t("Set advertisement: {advertisement}", advertisement=advertisement_str)
             )
         else:
             if chat_id in _bot.app.group_add_advertisement:
                 del _bot.app.group_add_advertisement[chat_id]
-                _bot.app.update_config(True)
+                _bot.app.save_app_data(True)
                 await client.send_message(
                     message.from_user.id, _t("Removed advertisement for chat {chat}", chat=chat_id)
                 )
@@ -1653,7 +1653,7 @@ async def add_replace_advertisement_filter(
     try:
         filter_str = await proc_replace_advertisement(mesage_link, filter_str)
         _bot.app.replace_advertisement_list.append(filter_str)
-        _bot.app.update_config(True)
+        _bot.app.save_app_data(True)
         await client.send_message(
             message.from_user.id, f"{_t('Add filter')} : {filter_str}"
         )
@@ -1704,7 +1704,7 @@ async def remove_replace_advertisement_filter(
                 message.from_user.id,
                 f"{_t('Filter not found')}: {filter_str}",
             )
-        _bot.app.update_config(True)
+        _bot.app.save_app_data(True)
     except Exception as e:
         await client.send_message(
             message.from_user.id, f"{_t('Add filter')} : {filter_str}\n{e}"

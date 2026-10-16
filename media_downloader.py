@@ -1566,12 +1566,12 @@ async def download_chat_task(client: pyrogram.Client, chat_download_config: Chat
             chat_download_config.last_read_message_id, message.id
         )
         if message.id % 200 == 0:
-            app.update_config(immediate=True)
+            app.save_app_data(immediate=True)
     # Persist the final scan position for correct restart recovery.
     chat_download_config.need_check = True
     chat_download_config.total_task = node.total_task
     node.is_running = True
-    app.update_config(immediate=True)
+    app.save_app_data(immediate=True)
 
 
 async def download_all_chat(client: pyrogram.Client):
@@ -2014,10 +2014,10 @@ def main():
         app.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
         app.loop.run_until_complete(stop_server(client))
         logger.info(_t("Stopped"))
-        logger.info(f"{_t('update config')}......")
-        app.update_config()
+        logger.info("Saving runtime data to data.yaml")
+        app.save_app_data()
         logger.success(
-            f"{_t('Updated last read message_id to config file')},"
+            "Saved scan checkpoints to data.yaml, "
             f"{_t('total download')} {app.total_download_task}, "
             f"{_t('total upload file')} {app.cloud_drive_config.total_upload_success_file_count}"
         )

@@ -1,9 +1,11 @@
 # TG Porter configuration
+# Read-only startup configuration. Runtime progress, ad rules and Bot language save to data.yaml.
 api_hash: your_api_hash
 api_id: your_api_id
 # Bot for commands and notifications; set to "" when submitting tasks only through MCP.
 bot_token: your_bot_token
 #chat:
+# Initial scan bounds; saved data.yaml checkpoints take precedence when further ahead.
 #- chat_id: telegram_chat_id
 #  last_read_message_id: 0
 #  download_filter: message_date >= 2022-12-01 00:00:00 and message_date <= 2023-01-17 00:00:00
@@ -39,6 +41,7 @@ hide_file_name: false
 file_name_prefix:
 - file_name
 #file_name_prefix_split: ' - '
+# Startup file limit; WebUI/MCP changes last until restart and do not update this file.
 max_download_task: 5
 # Workers per file; each uses an independent connection and takes another part when finished.
 file_download_concurrency: 4
@@ -61,7 +64,8 @@ allowed_user_ids:
 - 'me'
 date_format: ''
 enable_download_txt: false
-# Bot/log language; WebUI uses its own browser preference.
+# Initial Bot/log language; a saved data.yaml language takes precedence.
+# WebUI uses its own browser preference. Legacy ad settings here are initial values only.
 # en / zh-cn / zh-tw / ja / es / fr / ru / uk (legacy ZH and UA still work).
 language: zh-cn
 proxy:

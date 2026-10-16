@@ -143,7 +143,7 @@ def create_server(service, *, read_only: bool = False) -> MCPServer:
 
     @server.tool(annotations=WRITE)
     async def set_max_workers(workers: WorkerCount) -> dict[str, Any]:
-        """Change the number of simultaneously downloaded files (1-6) and persist the setting."""
+        """Change simultaneous file downloads (1-6) until restart, without modifying config.yaml."""
         return await execute(service.set_max_workers, workers)
 
     @server.tool(annotations=WRITE)

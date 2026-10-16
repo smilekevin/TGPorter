@@ -31,7 +31,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.done_file.write_bytes(b"completed")
         self.config = SimpleNamespace(
             web_login_secret="test-browser-password", mcp_token="test-mcp-token",
-            max_download_task=2, update_config=Mock(), loop=None,
+            max_download_task=2, save_app_data=Mock(), loop=None,
             mcp_enabled=True, mcp_read_only=False,
             mcp_allowed_hosts=["NAS.EXAMPLE.COM", "192.168.1.20:5000"],
         )
@@ -161,7 +161,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             workers = self.assert_success(await client.call_tool("set_max_workers", {"workers": 3}))
             self.assertEqual(workers, {"max_workers": 3})
             self.assertEqual(self.config.max_download_task, 3)
-            self.config.update_config.assert_called_once_with(True)
+            self.config.save_app_data.assert_not_called()
 
     async def test_api_business_failure_is_a_tool_error_instead_of_false_success(self):
         async with Client(self.server) as client:

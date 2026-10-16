@@ -53,7 +53,7 @@ class MainStartupProxyTests(unittest.TestCase):
                         for replacement in (
                             patch.object(downloader, "app", app),
                             patch.object(app, "pre_run", Mock()),
-                            patch.object(app, "update_config", Mock()),
+                            patch.object(app, "save_app_data", Mock()),
                             patch.object(downloader, "_cleanup_stale_temp_files", Mock()),
                             patch.object(downloader, "init_web", Mock()),
                             patch.object(downloader, "save_downloads", Mock()),

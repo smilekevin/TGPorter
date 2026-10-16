@@ -20,7 +20,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | Path | Responsibility |
 | --- | --- |
 | `media_downloader.py` | Main application, file task queue, worker pool, download execution, startup, and shutdown |
-| `module/app.py` | Configuration loading/saving, Application, TaskNode, and task status types |
+| `module/app.py` | Read-only configuration loading, runtime data persistence, Application, TaskNode, and task status types |
 | `module/bot.py` | Bot commands, message entry points, task recovery, Pending consumer, forwarding, and listening |
 | `module/bot_query.py` | Read-only `/query` task lists and pagination using the shared download service |
 | `module/task_store.py` | Persistent tasks and daily task sequence numbers, using locks and atomic file replacement |
@@ -89,6 +89,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 - Write application file logs only to `log/tdl.log` with the existing rotation, retention and configured level. Do not add a duplicate download log sink.
 - Use the existing Loguru logging setup for important lifecycle events. Preserve connection-open and connection-close logs used by download acceptance checks.
 - Configuration changes must update `module/app.py`, `config.yaml.example`, and relevant documentation together. Bot command or Web API changes must be reflected in both README languages.
+- Never write `config.yaml` at runtime. Use `Application.save_app_data()` for `data.yaml` scan checkpoints, retry IDs, ad rules and Bot language. Restore legacy config values as initial defaults; empty saved ad rules override legacy values. Keep WebUI/API/MCP concurrency changes in memory only. Match saved chat records by ID and preserve unrelated runtime data. Serialize runtime writes under the application lock and retain the data file inode for Docker file bind mounts.
 - Filtering uses Lark in `module/filter.py` and does not generate parser tables. Do not edit or depend on legacy `module/parsetab.py` files. Preserve saved-expression precedence, byte/date literals, eager boolean evaluation and missing-value behavior when changing the grammar; verify with `tests/test_filter.py`.
 - Never commit real `config.yaml`, `data.yaml`, sessions, Bot Tokens, API credentials, runtime logs, downloaded files, or checkpoints. Keep these out of debug output and PR descriptions as well.
 
@@ -145,6 +146,7 @@ python media_downloader.py
 - The image repository is `ghcr.io/smilekevin/tgporter`. Docker uses a multi-stage Alpine build with `python media_downloader.py` as the runtime command.
 - The main image includes MCP. Enable it in `config.yaml`; reuse port 5000 and the existing Compose service and mounts. No separate MCP image, sidecar, optional dependency file or port mapping is required. Main-image CI and Release builds include the integrated MCP dependencies automatically.
 - Persist `downloads/`, `log/`, `sessions/`, `temp/`, `config.yaml`, and `data.yaml`. Configuration bind-mount sources must be files. Removing a container must not delete this host data.
+- Mount `config.yaml` read-only and `data.yaml` writable. Session files contain Telegram authorization, not application preferences or ad rules.
 - Before deployment tests, check host ports and proxy reachability. Do not assume the example proxy address works on the current machine. Keep test overrides and temporary data in an isolated directory and out of the PR.
 - `.github/workflows/tests.yml` runs tests and amd64/arm64 builds for PRs, `master` pushes, and manual runs. Publishable CI runs push only `sha-<full-commit-sha>` tags and do not update `latest`.
 - `.github/workflows/docker-build.yml` publishes version, SHA, and `latest` tags when a GitHub Release is published, then updates the Release notes with image references. Do not make ordinary PRs publish or overwrite `latest`.

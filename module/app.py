@@ -1,8 +1,11 @@
 """Application module"""
 
 import asyncio
+import copy
 import functools
+import io
 import os
+import threading
 import time
 from asyncio import Lock
 from concurrent.futures import ThreadPoolExecutor
@@ -366,7 +369,7 @@ def get_config(config, key, default=None, val_type=str, verbose=True):
 
 
 class Application:
-    """Application load config and update config."""
+    """Load startup configuration and persist runtime data separately."""
 
     def __init__(
         self,
@@ -411,6 +414,7 @@ class Application:
         self.restart_program = False
         self.config: dict = {}
         self.app_data: dict = {}
+        self._app_data_lock = threading.RLock()
         self.file_path_prefix: List[str] = ["chat_title", "media_datetime"]
         self.file_name_prefix: List[str] = ["message_id", "file_name"]
         self.file_name_prefix_split: str = " - "
@@ -610,22 +614,22 @@ class Application:
             _config, "enable_download_txt", self.enable_download_txt, bool
         )
 
-        self.filter_advertisement_list = get_config(
+        self.filter_advertisement_list = copy.deepcopy(get_config(
             _config,
             "filter_advertisement_list",
             self.filter_advertisement_list,
             yaml.comments.CommentedSeq,
-        )
+        ))
 
-        self.replace_advertisement_list = get_config(
+        self.replace_advertisement_list = copy.deepcopy(get_config(
             _config,
             "replace_advertisement_list",
             self.replace_advertisement_list,
             yaml.comments.CommentedSeq,
-        )
+        ))
 
         if _config.get("group_add_advertisement"):
-            self.group_add_advertisement = _config["group_add_advertisement"]
+            self.group_add_advertisement = copy.deepcopy(_config["group_add_advertisement"])
         try:
             date = datetime(2023, 10, 31)
             date.strftime(self.date_format)
@@ -703,17 +707,19 @@ class Application:
         return True
 
     def assign_app_data(self, app_data: dict) -> bool:
-        """Assign config from str.
-
-        Parameters
-        ----------
-        app_data: dict
-            application data dict
-
-        Returns
-        -------
-        bool
-        """
+        """Restore runtime overrides, falling back to existing startup configuration."""
+        if "language" in app_data:
+            try:
+                self.language = parse_language(app_data["language"])
+            except ValueError:
+                logger.warning("Invalid runtime language; using configured language")
+        for key in ("filter_advertisement_list", "replace_advertisement_list"):
+            if key in app_data:
+                setattr(self, key, get_config(app_data, key, getattr(self, key),
+                                             yaml.comments.CommentedSeq))
+        if "group_add_advertisement" in app_data:
+            self.group_add_advertisement = get_config(
+                app_data, "group_add_advertisement", self.group_add_advertisement, dict)
         if app_data.get("ids_to_retry"):
             if self._chat_id:
                 self.chat_download_config[self._chat_id].ids_to_retry = app_data[
@@ -740,6 +746,12 @@ class Application:
                             self.chat_download_config[chat_id].ids_to_retry_dict[
                                 it
                             ] = True
+        for chat in app_data.get("chat", []):
+            chat_id = chat.get("chat_id")
+            if chat_id in self.chat_download_config and "last_read_message_id" in chat:
+                config = self.chat_download_config[chat_id]
+                config.last_read_message_id = max(
+                    config.last_read_message_id, chat["last_read_message_id"])
         return True
 
     async def upload_file(
@@ -884,89 +896,42 @@ class Application:
 
         return True
 
-    # pylint: disable = R0912
-    def update_config(self, immediate: bool = True):
-        """update config
+    def save_app_data(self, immediate: bool = True):
+        """Snapshot runtime state and optionally write data.yaml; never write config.yaml."""
+        with self._app_data_lock:
+            chats = self.app_data.setdefault("chat", [])
+            for chat_id, value in self.chat_download_config.items():
+                unfinished_ids = set(value.ids_to_retry)
+                for message_id in value.ids_to_retry:
+                    if value.node.download_status.get(message_id) in (
+                        DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload
+                    ):
+                        unfinished_ids.discard(message_id)
+                for message_id, status in value.node.download_status.items():
+                    if status not in (DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload):
+                        unfinished_ids.add(message_id)
+                value.ids_to_retry = sorted(unfinished_ids)
+                record = next((chat for chat in chats if chat.get("chat_id") == chat_id), None)
+                if record is None:
+                    record = {"chat_id": chat_id}
+                    chats.append(record)
+                # Preserve the existing next-message checkpoint convention, including scans
+                # with only filtered or text messages. Match records by chat ID, not order.
+                record["last_read_message_id"] = value.last_read_message_id + 1
+                record["ids_to_retry"] = value.ids_to_retry
 
-        Parameters
-        ----------
-        immediate: bool
-            If update config immediate,default True
-        """
-        # TODO: fix this not exist chat
-        if not self.app_data.get("chat") and self.config.get("chat"):
-            self.app_data["chat"] = [
-                {"chat_id": i} for i in range(0, len(self.config["chat"]))
-            ]
-        idx = 0
-        # pylint: disable = R1733
-        for key, value in self.chat_download_config.items():
-            # pylint: disable = W0201
-            unfinished_ids = set(value.ids_to_retry)
+            self.app_data["language"] = self.language.value
+            for key in ("filter_advertisement_list", "replace_advertisement_list",
+                        "group_add_advertisement"):
+                self.app_data[key] = copy.deepcopy(getattr(self, key))
 
-            for it in value.ids_to_retry:
-                if value.node.download_status.get(
-                    it, DownloadStatus.FailedDownload
-                ) in [DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload]:
-                    unfinished_ids.remove(it)
-
-            for _idx, _value in value.node.download_status.items():
-                if _value not in (
-                    DownloadStatus.SuccessDownload,
-                    DownloadStatus.SkipDownload,
-                ):
-                    unfinished_ids.add(_idx)
-
-            self.chat_download_config[key].ids_to_retry = list(unfinished_ids)
-
-            if idx >= len(self.app_data["chat"]):
-                self.app_data["chat"].append({})
-
-            # Persist last_read_message_id even if nothing downloaded, so text-only or filtered
-            # scans retain their progress.
-            self.config["chat"][idx]["last_read_message_id"] = (
-                value.last_read_message_id + 1
-            )
-
-            self.app_data["chat"][idx]["chat_id"] = key
-            self.app_data["chat"][idx]["ids_to_retry"] = value.ids_to_retry
-            idx += 1
-
-        self.config["save_path"] = self.save_path
-        self.config["file_path_prefix"] = self.file_path_prefix
-
-        if self.config.get("ids_to_retry"):
-            self.config.pop("ids_to_retry")
-
-        if self.config.get("chat_id"):
-            self.config.pop("chat_id")
-
-        if self.config.get("download_filter"):
-            self.config.pop("download_filter")
-
-        if self.config.get("last_read_message_id"):
-            self.config.pop("last_read_message_id")
-
-        self.config["max_download_task"] = self.max_download_task
-        self.config.pop("download_concurrency", None)  # Removed setting from earlier versions.
-        self.config["file_download_concurrency"] = self.file_download_concurrency
-        self.config.pop("download_min_part_size_mb", None)
-        self.config["download_part_size_mb"] = self.download_part_size_mb
-
-        self.config["language"] = self.language.value
-        # for it in self.downloaded_ids:
-        #    self.already_download_ids_set.add(it)
-
-        # self.app_data["already_download_ids"] = list(self.already_download_ids_set)
-        self.config["filter_advertisement_list"] = self.filter_advertisement_list
-        self.config["replace_advertisement_list"] = self.replace_advertisement_list
-        self.config["group_add_advertisement"] = self.group_add_advertisement
-
-        if immediate:
-            with open(self.config_file, "w", encoding="utf-8") as yaml_file:
-                _yaml.dump(self.config, yaml_file)
-            with open(self.app_data_file, "w", encoding="utf-8") as yaml_file:
-                _yaml.dump(self.app_data, yaml_file)
+            if immediate:
+                # Serialize before opening the file, and retain its inode for Docker file
+                # bind mounts. The lock serializes snapshots and writes within this process.
+                stream = io.StringIO()
+                yaml.YAML().dump(self.app_data, stream)
+                with open(self.app_data_file, "w", encoding="utf-8") as yaml_file:
+                    yaml_file.write(stream.getvalue())
 
     def set_language(self, language: Language):
         """Set Language"""
