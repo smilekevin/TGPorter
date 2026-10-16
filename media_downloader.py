@@ -13,6 +13,7 @@ from rich.logging import RichHandler
 
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.retry_policy import network_backoff
+from module.staging import get_staging_path, is_staging_name
 from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
@@ -402,6 +403,10 @@ def _cleanup_stale_temp_files():
                 except OSError:
                     pass
             else:
+                # Generated names do not encode an output path. Their nonempty
+                # SDK/merge checkpoints must survive startup for recovery.
+                if is_staging_name(f[:-5]):
+                    continue
                 # Non-zero: check if target already exists in downloads/
                 # temp path: temp/chat_id/filename.ext.temp
                 # target path: downloads/chat_id/filename.ext
@@ -501,7 +506,19 @@ async def _get_media_meta(
         file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name)
         temp_file_name = os.path.join(app.temp_save_path, dirname, gen_file_name)
         file_name = os.path.join(file_save_path, gen_file_name)
-    return truncate_filename(file_name), truncate_filename(temp_file_name), file_format
+    media_identity = getattr(media_obj, "file_unique_id", None)
+    if not media_identity:
+        from pyrogram.file_id import FileId
+        decoded = FileId.decode(media_obj.file_id)
+        media_identity = f"{decoded.file_type}:{decoded.dc_id}:{decoded.media_id}"
+    account = getattr(getattr(message, "_client", None), "name", "")
+    date = message.date or getattr(media_obj, "date", None)
+    timestamp = int(date.timestamp()) if date else 0
+    temp_file_name = get_staging_path(
+        app.temp_save_path, account, chat_id, message.id, media_identity,
+        timestamp, truncate_filename(temp_file_name),
+    )
+    return truncate_filename(file_name), temp_file_name, file_format
 
 
 def _move_task_to_failed(node, message, error_message):
@@ -1265,14 +1282,6 @@ def _check_config() -> bool:
             rotation="10 MB",
             retention="30 days",
             level=app.log_level,
-        )
-
-        logger.add(
-            os.path.join(app.log_file_path, "download.log"),
-            rotation="10 MB",
-            retention="30 days",
-            level=app.log_level,
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} - {message}",
         )
 
         load_downloads()

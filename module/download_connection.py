@@ -6,11 +6,14 @@ from itertools import count
 from loguru import logger
 from module.telegram import pyrogram
 from pyrogram import Client, raw
-from pyrogram.errors import AuthBytesInvalid
+from pyrogram.errors import AuthBytesInvalid, AuthKeyDuplicated, AuthKeyInvalid, AuthKeyUnregistered
 from pyrogram.session import Auth, Session
 
 
 _connection_ids = count(1)
+STARTUP_WARNING_INTERVAL = 30
+AUTH_KEY_TIMEOUT = 60
+_INVALID_AUTH_KEYS = (AuthKeyInvalid, AuthKeyUnregistered, AuthKeyDuplicated)
 
 
 class _MediaSession:
@@ -27,6 +30,7 @@ class _MediaSession:
         # The pool must see even short FloodWaits before it creates more
         # connections; SDK-internal sleeping would hide the account cooldown.
         kwargs["sleep_threshold"] = 0
+        self.owner.set_stage(type(query).__name__, self.session.dc_id)
         result = await self.session.invoke(query, **kwargs)
         if isinstance(result, raw.types.upload.FileCdnRedirect):
             self.owner.cdn_dc_id = result.dc_id
@@ -36,8 +40,14 @@ class _MediaSession:
 class _DownloadClient:
     """Share account settings, but never share the DC media-session cache."""
 
-    def __init__(self, client):
+    def __init__(self, client, connection_id, label):
         self.client = client
+        self.connection_id = connection_id
+        self.label = label
+        self.diagnosing = False
+        self.stage = ""
+        self.stage_dc = None
+        self.stage_started = 0
         self.media_sessions = {}
         self.cdn_dc_id = None
         # Each worker downloads one part at a time. The SDK's shared semaphore
@@ -49,6 +59,72 @@ class _DownloadClient:
 
     def __getattr__(self, name):
         return getattr(self.client, name)
+
+    def set_stage(self, stage, dc_id):
+        """Record startup boundaries without logging RPC payloads or credentials."""
+        if not self.diagnosing:
+            return
+        self.stage = stage
+        self.stage_dc = dc_id
+        self.stage_started = asyncio.get_running_loop().time()
+        logger.debug("Download connection #{} for {} (DC {}): {}",
+                     self.connection_id, self.label, dc_id, stage)
+
+    async def warn_startup_wait(self):
+        """Report silent SDK waits without cancelling or retrying requests."""
+        while True:
+            await asyncio.sleep(STARTUP_WARNING_INTERVAL)
+            elapsed = asyncio.get_running_loop().time() - self.stage_started
+            logger.warning("Download connection #{} for {} (DC {}) still waiting for first data: "
+                           "stage={}, stage_elapsed={:.1f}s",
+                           self.connection_id, self.label, self.stage_dc, self.stage, elapsed)
+
+    async def create_auth_key(self, dc_id, option, test_mode, *, is_cdn):
+        """Keep key exchange bounded while tracking transports on this worker."""
+        self.set_stage("creating auth key", dc_id)
+        logger.debug("Download connection #{} for {} (DC {}): auth endpoint {}:{}, CDN={}",
+                     self.connection_id, self.label, dc_id, option.ip_address, option.port, is_cdn)
+        try:
+            return await asyncio.wait_for(
+                Auth(self, dc_id, option.ip_address, option.port, test_mode).create(),
+                timeout=AUTH_KEY_TIMEOUT,
+            )
+        except asyncio.TimeoutError as error:
+            raise ConnectionError(
+                f"Auth key creation timed out on DC {dc_id} after {AUTH_KEY_TIMEOUT} seconds"
+            ) from error
+
+    async def get_dc_auth_key(self, dc_id, test_mode):
+        """Share key bytes within one account/DC, never sessions or sockets."""
+        if not hasattr(self.client, "_download_auth_keys"):
+            self.client._download_auth_keys = {}
+            self.client._download_auth_locks = {}
+        keys = self.client._download_auth_keys
+        cache_key = (dc_id, test_mode)
+        lock = self.client._download_auth_locks.setdefault(cache_key, asyncio.Lock())
+        self.set_stage("waiting for shared DC auth key", dc_id)
+        async with lock:
+            if cache_key in keys:
+                self.set_stage("reusing DC auth key", dc_id)
+                return keys[cache_key]
+            # Match Kurigram's regular-DC bootstrap, without creating a second
+            # shared media session or coupling worker transport lifetimes.
+            self.set_stage("resolving auth endpoint", dc_id)
+            option = await self.client.get_dc_option(dc_id, ipv6=self.ipv6)
+            auth_key = await self.create_auth_key(dc_id, option, test_mode, is_cdn=False)
+            keys[cache_key] = auth_key
+            return auth_key
+
+    def discard_invalid_auth_keys(self):
+        """Invalidate only the rejected key, preserving newer keys and other DCs."""
+        keys = getattr(self.client, "_download_auth_keys", {})
+        for session in self.media_sessions.values():
+            if session.is_cdn:
+                continue
+            cache_key = (session.dc_id, session.test_mode)
+            if keys.get(cache_key) == session.auth_key:
+                keys.pop(cache_key)
+                logger.debug("Discarded rejected download auth key for DC {}", session.dc_id)
 
     async def get_session(self, dc_id, *, is_media=False, is_cdn=False, temporary=False):
         """Own every media/CDN session, including one interrupted during startup."""
@@ -62,24 +138,33 @@ class _DownloadClient:
             # one registered for interrupted cleanup, but never reuse it.
             key = (dc_id, is_cdn, len(self.media_sessions))
 
+        self.set_stage("resolving DC endpoint", dc_id)
         option = await self.client.get_dc_option(
             dc_id, is_media=is_media, ipv6=self.ipv6, is_cdn=is_cdn)
+        logger.debug("Download connection #{} for {} (DC {}): media endpoint {}:{}, CDN={}",
+                     self.connection_id, self.label, dc_id, option.ip_address, option.port, is_cdn)
+        self.set_stage("reading account storage", dc_id)
         test_mode = await self.storage.test_mode()
         current_dc = await self.storage.dc_id() == dc_id
         if current_dc and not is_cdn:
             auth_key = await self.storage.auth_key()
+        elif is_cdn:
+            auth_key = await self.create_auth_key(dc_id, option, test_mode, is_cdn=True)
         else:
-            auth_key = await Auth(self, dc_id, option.ip_address, option.port, test_mode).create()
+            auth_key = await self.get_dc_auth_key(dc_id, test_mode)
         session = Session(self, dc_id, option.ip_address, option.port, auth_key,
                           test_mode, is_media=is_media, is_cdn=is_cdn)
         # Register before start: cancellation must still stop its background tasks.
         self.media_sessions[key] = session
+        self.set_stage("starting media session", dc_id)
         await session.start()
         if not current_dc and not is_cdn:
             for _ in range(3):
+                self.set_stage("exporting authorization", dc_id)
                 exported = await self.client.invoke(raw.functions.auth.ExportAuthorization(dc_id=dc_id),
                                                     sleep_threshold=0)
                 try:
+                    self.set_stage("importing authorization", dc_id)
                     await session.invoke(raw.functions.auth.ImportAuthorization(
                         id=exported.id, bytes=exported.bytes), sleep_threshold=0)
                 except AuthBytesInvalid:
@@ -123,8 +208,9 @@ class DownloadConnection:
     def __init__(self, client, label):
         self.client = client
         self.label = label
-        self.download_client = _DownloadClient(client) if isinstance(client, Client) else None
         self.connection_id = next(_connection_ids)
+        self.download_client = (_DownloadClient(client, self.connection_id, label)
+                                if isinstance(client, Client) else None)
         self.opened = False
         self.stream = None
 
@@ -157,6 +243,9 @@ class DownloadConnection:
             if self.opened:
                 logger.info("Closed independent download connection #{} for {}",
                             self.connection_id, self.label)
+            elif self.download_client is not None:
+                logger.info("Released independent download resources #{} for {} before first data",
+                            self.connection_id, self.label)
         finally:
             if self.download_client is not None:
                 self.client._independent_download_connections.discard(self.download_client)
@@ -174,14 +263,35 @@ class DownloadConnection:
             stream = Client.get_file(self.download_client, file_id, size, limit, offset,
                                      progress=progress)
         self.stream = stream
+        monitor = None
+        if self.download_client is not None:
+            self.download_client.diagnosing = True
+            self.download_client.set_stage("waiting for SDK download slot", file_id.dc_id)
+            logger.info("Waiting for first data on independent download connection #{} for {} (DC {})",
+                        self.connection_id, self.label, file_id.dc_id)
+            monitor = asyncio.create_task(self.download_client.warn_startup_wait())
         try:
             async for chunk in stream:
+                if monitor is not None:
+                    self.download_client.diagnosing = False
+                    monitor.cancel()
+                    await asyncio.gather(monitor, return_exceptions=True)
+                    monitor = None
                 if self.download_client is not None and not self.opened:
                     self.opened = True
                     logger.info("Opened independent download connection #{} for {} (DC {})",
                                 self.connection_id, self.label, file_id.dc_id)
                 yield chunk
+        except _INVALID_AUTH_KEYS:
+            if self.download_client is not None:
+                self.download_client.discard_invalid_auth_keys()
+            raise
         finally:
+            if self.download_client is not None:
+                self.download_client.diagnosing = False
+            if monitor is not None:
+                monitor.cancel()
+                await asyncio.gather(monitor, return_exceptions=True)
             # Pyrogram also owns temporary CDN sessions inside this generator.
             await stream.aclose()
             self.stream = None
@@ -199,3 +309,7 @@ async def close_download_connections(client):
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    # All key creators and lock waiters belong to the stopped workers. Clear
+    # account-scoped key state only after their cancellation/cleanup finishes.
+    getattr(client, "_download_auth_keys", {}).clear()
+    getattr(client, "_download_auth_locks", {}).clear()

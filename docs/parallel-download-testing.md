@@ -77,11 +77,13 @@ python -B tools/benchmark_download.py --chat me --message-id 123 --lanes 1 4
    ```
 
 3. 对原文件和每轮下载结果运行 `shasum -a 256 文件路径`（Linux 可用 `sha256sum`）。
-   三者哈希必须一致，不能只比较文件长度。日志中的 `in N part(s) with M worker(s)` 表示切片数和实际启动的 worker 数。
+   三者哈希必须一致，不能只比较文件长度。日志中的 `in N part(s) with M worker(s)` 表示切片数和计划使用的 worker 数上限；实际连接数取决于确认启动和剩余分片。
    `Opened independent download connection #…` 表示已通过独立连接收到文件数据，包含文件名和 worker 编号；
-   `Closed independent download connection #…` 表示该连接已清理。应用运行时，这些 INFO 日志同时写入 `log/tdl.log` 和 `log/download.log`。
+   `Confirmed independent download startup` 表示该 worker 的首块有效数据已写入，在该确认前不得为同一文件启动下一个新连接；启动间隔仍至少一秒。
+   若首个连接一直停在密钥创建或等待首块数据，其余 worker 不应发起下载；若启动失败，确认关闭连接后才尝试下一个。
+   `Closed independent download connection #…` 表示该连接已清理。应用运行时，这些 INFO 日志写入统一的 `log/tdl.log`。
    切片数本身不能证明 TCP 连接数。实际连接验收还应通过系统 socket 信息或代理连接页面，
-   确认同一个下载进程存在不同源端口的下载 TCP；同时下载两个至少四片的文件、每文件四个 worker 时，应能看到八条下载连接。
+   确认同一个下载进程存在不同源端口的下载 TCP；同时下载两个至少四片的文件、每文件四个 worker 时，逐个确认并扩展后最多可看到八条媒体下载连接。
    统计同时活跃的连接数，不要将网络重连产生的累计连接次数当作并发数。
    同一 worker 连续下载后续切片时会沿用自己的连接；控制连接和 CDN 连接可能额外出现。
 4. 新建一次多分片测试任务，在有进度后暂停，确认进度停止；恢复后确认分片数不变且哈希一致。

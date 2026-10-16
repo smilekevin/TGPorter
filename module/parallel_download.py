@@ -38,7 +38,7 @@ class _PartConnectionError(Exception):
 
 
 class _ConnectionGate:
-    """Stagger connection creation and honor extending local/shared cooldowns."""
+    """Confirm each new connection before expansion, with spacing and cooldowns."""
 
     def __init__(self, wait_ready, flood_wait, flood_remaining):
         self.wait_ready = wait_ready
@@ -47,6 +47,9 @@ class _ConnectionGate:
         self.cooldown_until = 0
         self.next_start = 0
         self.lock = asyncio.Lock()
+        self.start_confirmed = asyncio.Event()
+        self.start_confirmed.set()
+        self.starting_task = None
 
     def throttled(self, error):
         self.cooldown_until = max(self.cooldown_until, time.monotonic() + error.value)
@@ -64,10 +67,19 @@ class _ConnectionGate:
                 return
             await asyncio.sleep(min(0.25, delay))
 
+    def finish_start(self):
+        """Only the starting worker can confirm data or release a failed attempt."""
+        if self.starting_task is asyncio.current_task():
+            self.starting_task = None
+            self.start_confirmed.set()
+            return True
+        return False
+
     async def start(self, queue, available):
         while True:
             await available.wait()
             async with self.lock:
+                await self.start_confirmed.wait()
                 await self.wait(creating=True)
                 try:
                     part = queue.get_nowait()
@@ -78,6 +90,8 @@ class _ConnectionGate:
                 # Otherwise an idle worker could open its first socket later,
                 # after another worker has already published a FloodWait.
                 self.next_start = time.monotonic() + CONNECTION_START_INTERVAL
+                self.starting_task = asyncio.current_task()
+                self.start_confirmed.clear()
                 return part
 
 
@@ -322,6 +336,10 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
                     file.write(chunk)
                     file.flush()
                     downloaded[index] += len(chunk)
+                    # Confirm transport startup only after a valid block is on
+                    # disk; unrelated healthy workers cannot unlock this slot.
+                    if gate.finish_start():
+                        logger.info("Confirmed independent download startup for {}", connection.label)
                     await report()
             if downloaded[index] != end - start:
                 # Pyrogram can swallow network/reference errors in get_file.
@@ -357,6 +375,7 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
                     queue.task_done()
                     part = None
                     last_failures = 0
+                    gate.finish_start()
                     continue
                 try:
                     async with DownloadConnection(client, f"{file_name} worker {index + 1}/{workers}") as connection:
@@ -377,6 +396,9 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
                     available.set()
                     queue.task_done()
                     part = None
+                    # __aexit__ has stopped the failed writer and closed its
+                    # connections before another worker may start.
+                    gate.finish_start()
                     error = failure.error
                     if getattr(client, "_download_connections_closing", False):
                         raise ConnectionError("Download client is restarting") from error
@@ -414,6 +436,7 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
                                    file_name, last_failures, delay)
                     await _wait_network_retry(delay, wait_ready)
         finally:
+            gate.finish_start()
             live.discard(task)
 
     tasks = {asyncio.create_task(worker(index)) for index in range(workers)}

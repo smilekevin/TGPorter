@@ -42,6 +42,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.node = TaskNode(chat_id=100, task_id=1, limit=1)
         self.node.total_task = 1
         self.result = {}
+        self.real_get_media_meta = downloader._get_media_meta
         real_sleep = asyncio.sleep
 
         async def short_sleep(delay):
@@ -82,6 +83,142 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             video=SimpleNamespace(file_size=len(self.data), date=datetime.now(),
                                   file_id=file_id, file_unique_id="stable-file-identity"),
         )
+
+    def use_real_media_metadata(self):
+        self.app.temp_save_path = str(self.path / "temp")
+        self.app.date_format = ""
+        self.app.get_file_save_path = Mock(return_value=str(self.path / "downloads"))
+        self.app.get_file_name = lambda message_id, name, caption: f"{message_id} - {name}"
+        self.app.get_caption_name = Mock(return_value=None)
+        self.message.chat.title = "XXX全球优质集合地 ｜XXX🐝"
+        self.message.date = datetime(2026, 10, 16, 11, 2, 57)
+        self.message.video.mime_type = "video/quicktime"
+        self.message.video.file_name = "飞，一.mov"
+        return patch.object(downloader, "_get_media_meta", self.real_get_media_meta)
+
+    async def test_generated_staging_resumes_with_fresh_task_and_preserves_original_output_name(self):
+        from module.staging import is_staging_name
+        with self.use_real_media_metadata():
+            entered = asyncio.Event()
+            async def block(index):
+                if index >= 1:
+                    entered.set()
+                    await asyncio.Event().wait()
+            self.client.before_chunk = block
+            task = asyncio.create_task(downloader.download_media(
+                self.client, self.message, self.app.media_types, self.app.file_formats, self.node))
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+                staging = Path(self.node.download_temp_paths[61])
+                self.assertEqual(staging.parent, self.path / "temp")
+                self.assertTrue(is_staging_name(staging.name))
+                self.assertTrue((parts_path(str(staging)) / "manifest.json").exists())
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            self.assertGreater(sum(path.stat().st_size for path in parts_path(str(staging)).glob("*.part")), 0)
+            self.result.clear()
+            self.client.calls.clear()
+            self.client.before_chunk = None
+            self.message.chat.title = "Renamed channel"
+            self.message.video.file_name = "renamed.mov"
+            self.node = TaskNode(chat_id=100, task_id=2, limit=1)
+            self.app.file_download_concurrency = 1
+            self.app.download_part_size_mb = 100
+            status, output, _ = await downloader.download_media(
+                self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+            self.assertEqual(status, DownloadStatus.SuccessDownload)
+            self.assertEqual(Path(output).name, "61 - renamed.mov")
+            self.assertEqual(Path(output).read_bytes(), self.data)
+            self.assertEqual(self.node.download_temp_paths[61], str(staging))
+            self.assertNotIn(0, [offset for offset, _ in self.client.calls])
+            self.assertFalse(staging.exists())
+            self.assertFalse(parts_path(str(staging)).exists())
+
+    async def test_legacy_parts_resume_through_real_metadata_after_upgrade(self):
+        with self.use_real_media_metadata():
+            legacy = str(Path(self.app.temp_save_path) / self.message.chat.title / "61 - 飞，一.mov")
+            entered = asyncio.Event()
+            async def block(index):
+                if index >= 1:
+                    entered.set()
+                    await asyncio.Event().wait()
+            self.client.before_chunk = block
+            task = asyncio.create_task(parallel_download.download_file(
+                self.client, FileId.decode(self.message.video.file_id), len(self.data),
+                legacy, self.message.video.file_unique_id, 3, AsyncMock(), AsyncMock(), 2 * MB))
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            self.client.calls.clear()
+            self.client.before_chunk = None
+            status, output, _ = await downloader.download_media(
+                self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+            self.assertEqual(status, DownloadStatus.SuccessDownload)
+            self.assertEqual(self.node.download_temp_paths[61], legacy)
+            self.assertEqual(Path(output).read_bytes(), self.data)
+            self.assertNotIn(0, [offset for offset, _ in self.client.calls])
+            self.assertFalse(parts_path(legacy).exists())
+
+    async def test_metadata_identity_without_unique_id_survives_reference_refresh(self):
+        with self.use_real_media_metadata():
+            self.message.video.file_unique_id = None
+            _, first, _ = await downloader._get_media_meta(100, self.message, self.message.video, "video")
+            decoded = FileId.decode(self.message.video.file_id)
+            decoded.file_reference = b"new-reference"
+            self.message.video.file_id = decoded.encode()
+            _, second, _ = await downloader._get_media_meta(100, self.message, self.message.video, "video")
+            self.assertEqual(first, second)
+
+    async def test_web_cancellation_finds_generated_staging_and_keeps_other_downloads(self):
+        with self.use_real_media_metadata():
+            entered = asyncio.Event()
+            async def block(index):
+                if index >= 1:
+                    entered.set()
+                    await asyncio.Event().wait()
+            self.client.before_chunk = block
+            other = self.path / "temp" / "other.tmp"
+            other.parent.mkdir(parents=True)
+            other.write_bytes(b"keep")
+            task = asyncio.create_task(downloader.download_media(
+                self.client, self.message, self.app.media_types, self.app.file_formats, self.node))
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+                staging = self.node.download_temp_paths[61]
+                cache = self.web_request("/check_file_exists?task_id=100_61")
+                self.assertTrue(cache["cache_exists"])
+                self.assertIn(staging + ".parts", cache["cache_paths"])
+                self.web_request("/delete_task?task_id=100_61&delete_file=true")
+                status, _, _ = await asyncio.wait_for(task, 2)
+                self.assertEqual(status, DownloadStatus.SkipDownload)
+                self.assertFalse(parts_path(staging).exists())
+                self.assertEqual(other.read_bytes(), b"keep")
+                self.assertEqual(self.client.tracker["active"], 0)
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_startup_keeps_generated_merge_checkpoints_without_inferring_output_paths(self):
+        from module.staging import get_staging_path
+        root = self.path / "temp"
+        root.mkdir()
+        self.app.temp_save_path = str(root)
+        staging = get_staging_path(str(root), "main", 100, 61, "media", 1792119777, "")
+        generated = Path(staging + ".temp")
+        generated.write_bytes(b"resume")
+        legacy = root / "legacy.mov.temp"
+        legacy.write_bytes(b"old")
+        downloads = self.path / "downloads"
+        downloads.mkdir()
+        (downloads / Path(staging).name).write_bytes(b"finished")
+        (downloads / "legacy.mov").write_bytes(b"finished")
+        with patch.object(downloader.os.path, "abspath", return_value=str(self.path)):
+            downloader._cleanup_stale_temp_files()
+        self.assertEqual(generated.read_bytes(), b"resume")
+        self.assertFalse(legacy.exists())
 
     async def test_entry_point_downloads_and_records_only_one_aggregate_ui_entry(self):
         counts = []
