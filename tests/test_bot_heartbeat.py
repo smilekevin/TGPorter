@@ -10,6 +10,7 @@ from loguru import logger
 
 from module import bot, pyrogram_extension as extension
 from module.telegram import pyrogram
+from pyrogram.session import Session
 
 
 class BotHeartbeatTests(unittest.IsolatedAsyncioTestCase):
@@ -60,23 +61,67 @@ class BotHeartbeatTests(unittest.IsolatedAsyncioTestCase):
         await self.backend._check_bot_health()
         call = self.backend.bot.invoke.call_args
         self.assertIsInstance(call.args[0], pyrogram.raw.functions.Ping)
-        self.assertEqual(call.kwargs, dict(retries=0, timeout=10, sleep_threshold=0))
+        self.assertEqual(call.kwargs, dict(retries=1, timeout=10, sleep_threshold=0, retry_delay=0))
         self.assertEqual(self.backend._heartbeat_failures, 0)
         self.assertTrue(any("Bot heartbeat OK" in line and "rtt_ms=" in line for line in self.logs))
         self.reconnect.assert_not_awaited()
 
     async def test_probe_uses_the_pinned_sdk_invoke_path(self):
+        client = self.use_sdk_session(self.pong)
+        self.backend._heartbeat_failures = 2
+        for _ in range(3):
+            await self.backend._check_bot_health()
+            self.assertEqual(self.backend._heartbeat_failures, 0)
+        self.assertEqual(client.session.send.await_count, 3)
+        self.assertIsInstance(client.session.send.call_args.args[0],
+                              pyrogram.raw.functions.Ping)
+        self.assertEqual(client.session.send.call_args.kwargs["timeout"], 10)
+        self.reconnect.assert_not_awaited()
+        self.assertTrue(any("Bot heartbeat OK" in line for line in self.logs))
+
+    def use_sdk_session(self, send):
+        """Keep both SDK invoke layers real; replace only the network send boundary."""
         client = pyrogram.Client("offline-heartbeat", api_id=1, api_hash="offline", in_memory=True)
         self.addCleanup(client.executor.shutdown)
         client.is_connected = True
-        client.session = SimpleNamespace(invoke=AsyncMock(side_effect=self.pong))
+        client.session = Session(client, 2, "149.154.167.51", 443, b"k" * 256, False)
+        client.session.is_started.set()
+        client.session.send = AsyncMock(side_effect=send)
         client.fetch_peers = AsyncMock()
         self.backend.bot = client
-        await self.backend._check_bot_health()
+        return client
+
+    async def test_sdk_send_failure_makes_one_attempt_per_probe(self):
+        client = self.use_sdk_session(ConnectionError("Offline test transport"))
+        for _ in range(3):
+            await self.backend._check_bot_health()
+        self.assertEqual(client.session.send.await_count, 3)
+        self.reconnect.assert_awaited_once()
+
+    async def test_sdk_hung_send_is_cancelled_at_probe_deadline(self):
+        cancelled = asyncio.Event()
+
+        async def hang(*args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        client = self.use_sdk_session(hang)
+        with patch.object(bot, "_BOT_HEARTBEAT_TIMEOUT", 0.01):
+            await asyncio.wait_for(self.backend._check_bot_health(), 1)
+        client.session.send.assert_awaited_once()
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(self.backend._heartbeat_failures, 1)
+
+    async def test_sdk_flood_wait_does_not_retry_or_count_a_connection_failure(self):
+        client = self.use_sdk_session(pyrogram.errors.FloodWait(120))
+        with patch.object(extension, "time", SimpleNamespace(time=lambda: self.clock)):
+            await self.backend._check_bot_health()
+        client.session.send.assert_awaited_once()
         self.assertEqual(self.backend._heartbeat_failures, 0)
-        self.assertIsInstance(client.session.invoke.call_args.kwargs["query"],
-                              pyrogram.raw.functions.Ping)
-        self.assertTrue(any("Bot heartbeat OK" in line for line in self.logs))
+        self.assertEqual(extension._bot_flood_wait["until"], self.clock + 120)
+        self.reconnect.assert_not_awaited()
 
     async def test_monitor_reports_event_loop_stalls(self):
         async def delayed_sleep(seconds):

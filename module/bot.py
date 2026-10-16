@@ -264,9 +264,10 @@ class DownloadBot:
         ping_id = time.monotonic_ns() & ((1 << 63) - 1)
         try:
             async with asyncio.timeout(_BOT_HEARTBEAT_TIMEOUT):
+                # Kurigram counts total attempts here; zero skips the send entirely.
                 pong = await self.bot.invoke(
-                    pyrogram.raw.functions.Ping(ping_id=ping_id), retries=0,
-                    timeout=_BOT_HEARTBEAT_TIMEOUT, sleep_threshold=0)
+                    pyrogram.raw.functions.Ping(ping_id=ping_id), retries=1,
+                    timeout=_BOT_HEARTBEAT_TIMEOUT, sleep_threshold=0, retry_delay=0)
                 if not isinstance(pong, pyrogram.raw.types.Pong) or pong.ping_id != ping_id:
                     raise ConnectionError("Unexpected heartbeat response")
         except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
