@@ -14,7 +14,7 @@ English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api
 
 Telegram SDK 使用 `requirements.txt` 中固定版本的 Kurigram（仍通过 `pyrogram` 导入）。不要在同一虚拟环境中混装 Pyrogram、Pyrofork 和 Kurigram；从旧版本手动安装迁移时，请重新创建虚拟环境，再安装完整依赖。
 
-WebUI 使用原生 HTML/CSS/JS，无需安装 Node.js 或运行 npm 构建；CI 工作流脚本测试单独使用 Node.js 24。工作流使用 `actions/checkout@v5`、`actions/setup-node@v5` 和 `actions/setup-python@v6`，这些 action 原生运行于 Node.js 24。
+WebUI 使用原生 HTML/CSS/JS，无需安装 Node.js 或运行 npm 构建；CI 工作流脚本测试单独使用 Node.js 24。工作流使用 `actions/checkout@v5`、`actions/setup-node@v5` 和 `actions/setup-python@v6`，以及 `docker/build-push-action@v7`、`docker/login-action@v4`、`docker/setup-buildx-action@v4` 和 `docker/setup-qemu-action@v4`；这些 action 均原生运行于 Node.js 24。
 
 主服务通过 `requirements.txt` 安装依赖，直接使用的 Starlette、Uvicorn、Pydantic 固定为已验证版本。过滤表达式由固定版本的 Lark 解析，不再使用 PLY 或生成 `parsetab.py`。不再需要 Flask-Login、Requests 或 PyCryptodome；从旧环境升级时重新创建虚拟环境，可避免残留包掩盖缺失依赖。
 
@@ -529,7 +529,7 @@ environment:
 
 The Telegram SDK is the Kurigram version pinned in `requirements.txt`, imported as `pyrogram`. Do not co-install Pyrogram, Pyrofork and Kurigram in one virtual environment. For an existing manual installation, recreate the virtual environment before installing the full requirements.
 
-The WebUI uses native HTML/CSS/JS and requires no Node.js installation or npm build. CI workflow script tests use Node.js 24 separately. Workflows use `actions/checkout@v5`, `actions/setup-node@v5` and `actions/setup-python@v6`, which run natively on Node.js 24.
+The WebUI uses native HTML/CSS/JS and requires no Node.js installation or npm build. CI workflow script tests use Node.js 24 separately. Workflows use `actions/checkout@v5`, `actions/setup-node@v5` and `actions/setup-python@v6`, alongside `docker/build-push-action@v7`, `docker/login-action@v4`, `docker/setup-buildx-action@v4` and `docker/setup-qemu-action@v4`; these actions all run natively on Node.js 24.
 
 Install main-service dependencies from `requirements.txt`, which explicitly pins the tested Starlette, Uvicorn and Pydantic versions. Filter expressions use the pinned Lark parser; PLY and generated `parsetab.py` files are no longer needed. Flask-Login, Requests and PyCryptodome are no longer required. Recreate an older virtual environment when upgrading so leftover packages cannot hide missing dependencies.
 
