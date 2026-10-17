@@ -281,6 +281,13 @@ class DownloadBot:
     async def _heartbeat_loop(self):
         try:
             while self.is_running:
+                # Confirm startup health before the first interval elapses.
+                try:
+                    await self._check_bot_health()
+                except Exception as error:
+                    logger.error("Bot heartbeat monitor error: {}", type(error).__name__)
+                if not self.is_running:
+                    break
                 expected = time.monotonic() + _BOT_HEARTBEAT_INTERVAL
                 await asyncio.sleep(_BOT_HEARTBEAT_INTERVAL)
                 if not self.is_running:
@@ -288,10 +295,6 @@ class DownloadBot:
                 delay = max(0, time.monotonic() - expected)
                 if delay >= _BOT_HEARTBEAT_TIMEOUT:
                     logger.warning("Bot heartbeat delayed: event_loop_delay_s={:.1f}", delay)
-                try:
-                    await self._check_bot_health()
-                except Exception as error:
-                    logger.error("Bot heartbeat monitor error: {}", type(error).__name__)
         finally:
             logger.info("Bot heartbeat stopped")
 

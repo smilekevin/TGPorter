@@ -81,16 +81,20 @@ def create_server(service, *, read_only: bool = False) -> MCPServer:
 
     @server.tool(annotations=READ)
     async def get_status() -> dict[str, Any]:
-        """Get version, global download state, transfer speed, cooldown, workers and completed count."""
-        version, state, transfer, cooldown, workers, completed = await asyncio.gather(
+        """Get version, cached Telegram Bot health, download state, speed, cooldown, workers and count.
+
+        bot_status matches the WebUI heartbeat snapshot; querying never probes Telegram.
+        """
+        version, state, transfer, cooldown, workers, completed, bot_status = await asyncio.gather(
             execute(service.get_app_version),
             execute(service.web_get_download_state),
             execute(service.get_download_speed), execute(service.get_flood_wait),
             execute(service.get_max_workers), execute(service.get_completed_count),
+            execute(service.get_bot_status),
         )
         return {"version": version, "download_state": state, "transfer": transfer,
                 "cooldown": cooldown, "max_workers": workers["max_workers"],
-                "completed_total": completed["total"]}
+                "completed_total": completed["total"], "bot_status": bot_status}
 
     @server.tool(annotations=READ)
     async def list_downloads(

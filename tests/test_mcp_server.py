@@ -16,7 +16,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 import utils
-from module import download_stat, task_store, web
+from module import bot, download_stat, task_store, web
 from module.mcp_server import create_server
 from module.download_service import DownloadService
 from module.app import Application
@@ -125,12 +125,44 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status["download_state"], "downloading")
             self.assertEqual(status["max_workers"], 2)
             self.assertEqual(status["completed_total"], 1)
+            self.assertEqual(status["bot_status"]["status"], "disabled")
             expected = {"active": "100_1", "completed": "100_2", "pending": "7", "failed": "failed-1"}
             for state, task_id in expected.items():
                 with self.subTest(state=state):
                     result = self.assert_success(await client.call_tool("list_downloads", {"status": state}))
                     self.assertEqual(result["total"], 1)
                     self.assertEqual(result["tasks"][0]["task_id"], task_id)
+
+    async def test_http_status_shares_bot_health_with_web_without_probing_telegram(self):
+        backend = bot.DownloadBot()
+        backend.app = self.config
+        backend.bot = SimpleNamespace(is_connected=True, invoke=AsyncMock())
+        flood_wait = {"until": 0}
+        clock = SimpleNamespace(time=lambda: 1000, monotonic=lambda: 1000)
+        headers = {"Authorization": "Bearer " + self.config.mcp_token}
+        with patch.object(bot, "_bot", backend), patch.object(bot, "time", clock), \
+                patch("module.pyrogram_extension._bot_flood_wait", flood_wait):
+            async with httpx2.AsyncClient(headers=headers, trust_env=False, timeout=5) as http:
+                # MCP credentials alone must not authenticate the Web API.
+                self.assertEqual((await http.get(self.url + "/get_bot_status")).status_code, 401)
+                await self.login_browser(http)
+                async with Client(streamable_http_client(self.url + "/mcp", http_client=http)) as client:
+                    for state in ("connected", "unresponsive", "reconnecting", "disconnected",
+                                  "unknown", "flood_wait", "stopped", "disabled"):
+                        with self.subTest(state=state):
+                            self.config.bot_token = "private-bot-token" if state != "disabled" else ""
+                            backend.is_running = state != "stopped"
+                            backend.bot.is_connected = state != "disconnected"
+                            flood_wait["until"] = 1120 if state == "flood_wait" else 0
+                            backend._publish_connection_status(
+                                "unknown" if state == "flood_wait" else state,
+                                checked=True, rtt_ms=42 if state == "connected" else None)
+                            result = self.assert_success(await client.call_tool("get_status"))
+                            browser = await http.get(self.url + "/get_bot_status")
+                            self.assertEqual(result["bot_status"], browser.json())
+                            self.assertEqual(result["bot_status"]["status"], state)
+                            self.assertNotIn("private-bot-token", str(result))
+                backend.bot.invoke.assert_not_called()
 
     async def test_completed_search_and_pagination_preserve_totals(self):
         async with Client(self.server) as client:
@@ -302,6 +334,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 status = self.assert_success(await client.call_tool("get_status"))
                 self.assertEqual(status["download_state"], "downloading")
+                self.assertEqual(status["bot_status"]["status"], "disabled")
 
     async def test_unexpected_operation_errors_never_expose_credentials(self):
         with patch.object(self.service, "web_pause_task", side_effect=RuntimeError(self.config.mcp_token)):
@@ -414,6 +447,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue((await client.call_tool("set_download_state", {"state": "paused"})).is_error)
                 status = self.assert_success(await client.call_tool("get_status"))
                 self.assertEqual(status["download_state"], "downloading")
+                self.assertEqual(status["bot_status"]["status"], "disabled")
                 self.assertEqual((await http.post(self.url + "/set_download_state?state=pause")).status_code, 400)
                 response = await http.post(self.url + "/set_download_state?state=pause",
                                            headers={"X-CSRF-Token": csrf})

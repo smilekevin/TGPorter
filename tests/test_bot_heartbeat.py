@@ -171,12 +171,41 @@ class BotHeartbeatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(extension._bot_flood_wait["until"], self.clock + 120)
         self.reconnect.assert_not_awaited()
 
+    async def test_monitor_publishes_startup_health_before_waiting_for_next_interval(self):
+        async def wait_interval(seconds):
+            self.assertEqual(seconds, 60)
+            self.backend.bot.invoke.assert_awaited_once()
+            self.assertEqual(self.backend.get_connection_status()["status"], "connected")
+            self.backend.is_running = False
+
+        with patch.object(bot.asyncio, "sleep", wait_interval):
+            await self.backend._heartbeat_loop()
+        self.backend.bot.invoke.assert_awaited_once()
+
+    async def test_immediate_startup_probe_respects_existing_flood_wait(self):
+        extension._bot_flood_wait["until"] = self.clock + 120
+
+        async def wait_interval(seconds):
+            self.assertEqual(self.backend.get_connection_status()["status"], "flood_wait")
+            self.backend.is_running = False
+
+        with patch.object(bot.asyncio, "sleep", wait_interval):
+            await self.backend._heartbeat_loop()
+        self.backend.bot.invoke.assert_not_awaited()
+        self.reconnect.assert_not_awaited()
+        self.assertEqual(self.backend._heartbeat_failures, 0)
+
     async def test_monitor_reports_event_loop_stalls(self):
         async def delayed_sleep(seconds):
             self.clock += seconds + 30
 
+        probes = 0
+
         async def finish_probe():
-            self.backend.is_running = False
+            nonlocal probes
+            probes += 1
+            if probes == 2:
+                self.backend.is_running = False
 
         with patch.object(bot.asyncio, "sleep", delayed_sleep), \
                 patch.object(self.backend, "_check_bot_health", finish_probe):
@@ -274,14 +303,14 @@ class BotHeartbeatTests(unittest.IsolatedAsyncioTestCase):
                 cancelled.set()
 
         self.backend.bot.invoke.side_effect = hang
-        with patch.object(bot, "_BOT_HEARTBEAT_INTERVAL", 0.001):
-            task = self.backend._ensure_heartbeat()
-            self.assertIs(task, self.backend._ensure_heartbeat())
-            await asyncio.wait_for(entered.wait(), 1)
-            with patch.object(bot, "_bot", self.backend), \
-                    patch.object(self.backend, "update_config"), \
-                    patch.object(self.backend, "stop_task"):
-                await bot.stop_download_bot()
+        task = self.backend._ensure_heartbeat()
+        self.assertIs(task, self.backend._ensure_heartbeat())
+        # The initial probe must start within one second with the real 60s interval.
+        await asyncio.wait_for(entered.wait(), 1)
+        with patch.object(bot, "_bot", self.backend), \
+                patch.object(self.backend, "update_config"), \
+                patch.object(self.backend, "stop_task"):
+            await bot.stop_download_bot()
         self.assertTrue(task.done())
         self.assertTrue(cancelled.is_set())
         self.assertEqual(self.backend._heartbeat_failures, 0)
