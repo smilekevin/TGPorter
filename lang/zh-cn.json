@@ -359,6 +359,17 @@
     "Previous": "上一页",
     "Next": "下一页",
     "Refresh": "刷新",
-    "Usage: /query [all|active|pending|completed|failed] [page]": "用法：/query [all|active|pending|completed|failed] [页码]"
+    "Usage: /query [all|active|pending|completed|failed] [page]": "用法：/query [all|active|pending|completed|failed] [页码]",
+    "Telegram Bot": "Telegram Bot",
+    "Not configured": "未配置",
+    "Connecting": "连接中",
+    "Connected": "已连接",
+    "Disconnected": "已断开",
+    "Unresponsive": "无响应",
+    "Reconnecting": "重连中",
+    "Rate limited": "限流等待",
+    "Latency: {ms} ms": "延迟：{ms} 毫秒",
+    "Last checked: {time}": "最近检查：{time}",
+    "Retry in {seconds}s": "{seconds} 秒后重试"
   }
 }

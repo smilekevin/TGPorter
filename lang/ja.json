@@ -355,6 +355,17 @@
     "Previous": "前へ",
     "Next": "次へ",
     "Refresh": "更新",
-    "Usage: /query [all|active|pending|completed|failed] [page]": "使い方：/query [all|active|pending|completed|failed] [ページ]"
+    "Usage: /query [all|active|pending|completed|failed] [page]": "使い方：/query [all|active|pending|completed|failed] [ページ]",
+    "Telegram Bot": "Telegram Bot",
+    "Not configured": "未設定",
+    "Connecting": "接続中",
+    "Connected": "接続済み",
+    "Disconnected": "切断",
+    "Unresponsive": "応答なし",
+    "Reconnecting": "再接続中",
+    "Rate limited": "レート制限中",
+    "Latency: {ms} ms": "遅延：{ms} ミリ秒",
+    "Last checked: {time}": "最終確認：{time}",
+    "Retry in {seconds}s": "{seconds}秒後に再試行"
   }
 }

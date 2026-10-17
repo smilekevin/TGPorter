@@ -359,6 +359,17 @@
     "Previous": "上一頁",
     "Next": "下一頁",
     "Refresh": "重新整理",
-    "Usage: /query [all|active|pending|completed|failed] [page]": "用法：/query [all|active|pending|completed|failed] [頁碼]"
+    "Usage: /query [all|active|pending|completed|failed] [page]": "用法：/query [all|active|pending|completed|failed] [頁碼]",
+    "Telegram Bot": "Telegram Bot",
+    "Not configured": "未設定",
+    "Connecting": "連線中",
+    "Connected": "已連線",
+    "Disconnected": "已中斷",
+    "Unresponsive": "無回應",
+    "Reconnecting": "重新連線中",
+    "Rate limited": "限流等待",
+    "Latency: {ms} ms": "延遲：{ms} 毫秒",
+    "Last checked: {time}": "最近檢查：{time}",
+    "Retry in {seconds}s": "{seconds} 秒後重試"
   }
 }

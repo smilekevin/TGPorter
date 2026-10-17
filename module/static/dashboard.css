@@ -3,6 +3,12 @@ body.bg-gray-50 { background: #f3f6fb; color: #17243b; -webkit-font-smoothing: a
 .dashboard-header { background: #fff; box-shadow: 0 4px 24px rgb(31 51 86 / 5%); }
 .dashboard-header header { border-top: 3px solid #2563eb; box-shadow: none; }
 .dashboard-header h1 { letter-spacing: -.035em; }
+.bot-connection { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: #64748b; }
+.bot-connection-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 7px; background: #f1f5f9; color: #475569; }
+.bot-connection-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.bot-connection-badge[data-state="connected"] { background: #ecfdf5; color: #047857; }
+.bot-connection-badge[data-state="disconnected"], .bot-connection-badge[data-state="unresponsive"] { background: #fef2f2; color: #b91c1c; }
+.bot-connection-badge[data-state="connecting"], .bot-connection-badge[data-state="reconnecting"], .bot-connection-badge[data-state="flood_wait"] { background: #fffbeb; color: #b45309; }
 .submission-panel { background: #fff; }
 .submission-panel input { background: #f8fafc; min-height: 44px; border-color: #dbe3f0; border-radius: 12px; }
 .submission-panel button { border-radius: 12px; font-weight: 600; box-shadow: 0 3px 8px rgb(37 99 235 / 16%); }

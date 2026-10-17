@@ -122,6 +122,7 @@
 - **本地开发模式** — `run_local.py` 无需 Telegram 账号，Mock 数据调试 WebUI
 - **跨 DC 连接初始化** — 普通媒体下载首次通过普通 DC 端点创建密钥，同一账号和 DC 的后续 worker／文件在内存中复用该密钥；媒体会话和 TCP 连接仍各自独立；密钥协商超过 60 秒会关闭该连接并按现有规则重试，保留断点
 - **Kurigram 接口兼容** — 转发来源使用 `forward_origin`，Bot 回复使用 `ReplyParameters`，避免旧接口弃用警告并保留来源与回复关系
+- **Bot 连接状态** — 网页顶部显示 Telegram Bot 连接状态、心跳延迟和最近检查时间，区分无响应、重连、限流和未配置
 - **Bot 心跳与诊断** — 每 60 秒进行一次实际 Ping/Pong 探测，10 秒超时，连续 3 次失败尝试重连；记录消息授权、处理耗时和队列状态，见[部署指南](DEPLOY.md#bot-心跳与消息诊断)
 - **统一日志** — 仅写入 `data/log/tdl.log`，10MB 轮转，保留 30 天；首块数据前每 30 秒记录等待阶段，DEBUG 可查看连接准备和授权步骤，见 [部署指南](DEPLOY.md)
 
@@ -195,6 +196,7 @@ Agent 可通过主服务同端口的 `/mcp` 获取结构化结果和明确的参
 | `/get_pending_list` | GET | Pending 队列，支持 `offset` / `limit` 分页及 `search` 按任务 ID/文件名搜索 |
 | `/get_failed_downloads` | GET | 失败列表 |
 | `/get_download_status` | GET | 总下载速度及当前下载流数（`active_streams`） |
+| `/get_bot_status` | GET | 缓存的 Bot 心跳状态（`status`）、延迟（`rtt_ms`）、最近检查/成功时间（Unix 秒）、连续失败次数、限流剩余秒数及探测间隔 |
 | `/get_download_state` | GET | 全局下载状态（downloading / paused） |
 | `/get_completed_count` | GET | 已完成数量（轻量轮询） |
 | `/get_flood_wait` | GET | FloodWait 冷却状态 + 剩余秒数 |
@@ -522,6 +524,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
 - **Cross-DC startup** — regular media downloads create a key through the regular DC endpoint once per account/DC and reuse it in memory across workers/files, with separate media sessions and TCP connections; key exchange exceeding 60 seconds retires the connection under the existing retry policy, preserving checkpoints
 - **Kurigram compatibility** — uses `forward_origin` for forwarded media and `ReplyParameters` for Bot replies, preserving source identity and reply targets without deprecated API warnings
+- **Bot connection status** — the dashboard header shows Telegram Bot health, heartbeat latency and last check time, including unresponsive, reconnecting, rate-limited and unconfigured states
 - **Bot heartbeat and diagnostics** — makes one actual Ping/Pong attempt every 60 seconds with a 10-second timeout; attempts reconnection after 3 consecutive failures and logs authorization, handler timing and queue state; see the [deployment guide](DEPLOY.md#bot-heartbeat-and-message-diagnostics)
 - **Unified log** — only `data/log/tdl.log`, 10MB rotation, 30-day retention; first-data waits report their stage every 30 seconds, with DEBUG startup and authorization traces; see the [deployment guide](DEPLOY.md)
 
@@ -595,6 +598,7 @@ The main service exposes typed tools, structured results and actionable errors a
 | `/get_pending_list` | GET | Pending queue with `offset` / `limit` pagination and `search` by task ID/filename |
 | `/get_failed_downloads` | GET | Failed list |
 | `/get_download_status` | GET | Total download speed and current stream count (`active_streams`) |
+| `/get_bot_status` | GET | Cached Bot heartbeat `status`, `rtt_ms`, last check/success times (Unix seconds), consecutive failures, remaining cooldown seconds and probe interval |
 | `/get_download_state` | GET | Global state (downloading / paused) |
 | `/get_completed_count` | GET | Completed count (lightweight polling) |
 | `/get_flood_wait` | GET | FloodWait cooldown status + remaining seconds |

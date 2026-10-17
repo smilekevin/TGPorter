@@ -237,6 +237,13 @@ def get_flood_wait():
     return _service_response(_download_service().get_flood_wait())
 
 
+@_flask_app.route("/get_bot_status")
+def get_bot_status():
+    response = _service_response(_download_service().get_bot_status())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @_flask_app.route("/get_download_state")
 def web_get_download_state():
     return _service_response(_download_service().web_get_download_state())

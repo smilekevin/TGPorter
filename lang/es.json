@@ -355,6 +355,17 @@
     "Previous": "Anterior",
     "Next": "Siguiente",
     "Refresh": "Actualizar",
-    "Usage: /query [all|active|pending|completed|failed] [page]": "Uso: /query [all|active|pending|completed|failed] [página]"
+    "Usage: /query [all|active|pending|completed|failed] [page]": "Uso: /query [all|active|pending|completed|failed] [página]",
+    "Telegram Bot": "Bot de Telegram",
+    "Not configured": "Sin configurar",
+    "Connecting": "Conectando",
+    "Connected": "Conectado",
+    "Disconnected": "Desconectado",
+    "Unresponsive": "Sin respuesta",
+    "Reconnecting": "Reconectando",
+    "Rate limited": "Límite de solicitudes",
+    "Latency: {ms} ms": "Latencia: {ms} ms",
+    "Last checked: {time}": "Última comprobación: {time}",
+    "Retry in {seconds}s": "Reintento en {seconds}s"
   }
 }
