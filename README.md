@@ -29,7 +29,7 @@
 
 ## 界面预览
 
-[查看英文主界面截图](#webui-preview)，直观了解下载进度、速度、并发设置和任务操作。截图使用本地 Mock 演示数据（含模拟的 Bot 连接状态）；[本地开发模式](./DEPLOY.md#本地开发模式)无需 Telegram 账号即可预览。
+从 Telegram 链接到本地文件，用[清晰直观的界面](#webui-preview)掌控每一次下载。
 
 ## 功能特性
 
@@ -439,7 +439,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 
 ![TG Porter English WebUI showing Telegram link submission, task tabs, concurrency settings and an active download with progress and speed](./docs/images/webui-en.jpg)
 
-Track download progress, speed and active streams, adjust concurrency, and manage tasks from the English WebUI. Captured with local Mock demo data, including a simulated Bot connection status; try it without a Telegram account in [Local Dev Mode](./DEPLOY.md#local-dev-mode).
+From Telegram links to local files, take control of every download in one clean dashboard.
 
 ## Features
 

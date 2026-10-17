@@ -206,7 +206,7 @@ python run_local.py
 # 访问 http://localhost:5000
 ```
 
-打开后，在右上角语言菜单选择 **English**，即可预览 [README 中的英文主界面](./README.md#webui-preview)。截图来自本地 Mock 模式，显示演示数据，不执行真实下载。
+打开后，在右上角语言菜单选择 **English**，即可预览 [README 中的英文主界面](./README.md#webui-preview)。README 提供 2560 × 1440 高清截图，来自本地 Mock 模式，下载数据和 Bot 已连接状态均为演示，不执行真实下载。
 
 ---
 
@@ -732,7 +732,7 @@ python run_local.py
 # Open http://localhost:5000
 ```
 
-Select **English** from the language menu at the top right to preview the [English dashboard shown in the README](./README.md#webui-preview). The screenshot uses local Mock demo data; this mode does not perform real downloads.
+Select **English** from the language menu at the top right to preview the [English dashboard shown in the README](./README.md#webui-preview). The README provides a 2560 × 1440 screenshot captured in local Mock mode, with demo download data and a simulated Connected Bot status; this mode does not perform real downloads.
 
 ---
 
