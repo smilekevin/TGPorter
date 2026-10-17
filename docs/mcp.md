@@ -8,7 +8,7 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 
 | 工具 | 参数 | 用途 |
 | --- | --- | --- |
-| `get_status` | 无 | 查询版本、全局下载状态、速度、限速、并发和已完成数量 |
+| `get_status` | 无 | 查询版本、Bot 连接状态、全局下载状态、速度、限速、并发和已完成数量 |
 | `list_downloads` | `status`, `offset`, `limit`, `search` | 分页查询 active、completed、pending、failed；completed 支持搜索 |
 | `check_task_file` | `task_id` | 查询已完成任务的文件是否存在、路径和文件名 |
 | `submit_download` | `url` | 提交单条 Telegram 消息链接，持久化进入待下载队列 |
@@ -25,6 +25,19 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 `submit_download` 接受长度不超过 2048 的 HTTPS `t.me` 消息链接。返回 `task_id`（进行中/已完成）、`pending_task_id`（待执行/取消）和展示用的 `task_id_display`；尚未完成的重复提交返回原任务，`duplicate: true`。账号权限、链接形式、超时和入队语义见 [提交下载](../DEPLOY.md#提交下载)。
 
 ## 结果与错误
+
+`get_status` 的 `bot_status` 与网页 `/get_bot_status` 返回相同快照，不发送 Telegram 请求，`mcp_read_only` 模式也可读取：
+
+| 字段 | 含义 |
+| --- | --- |
+| `status` | `connected` / `connecting` / `disconnected` / `unresponsive` / `reconnecting` / `flood_wait` / `stopped` / `disabled` / `unknown` |
+| `rtt_ms` | 已记录的心跳往返延迟（毫秒）；不可用时为 `null` |
+| `last_checked_at` / `last_success_at` | 最近探测结束 / 成功时间，Unix 秒；尚无记录时为 `null` |
+| `failures` | 连续心跳失败次数 |
+| `flood_wait_remaining` | Bot 限流剩余秒数 |
+| `heartbeat_interval` | 后续心跳间隔，默认 `60` 秒 |
+
+心跳启动时立即探测；`connected` 需要近期匹配的 Pong，成功探测超过 70 秒未更新显示 `unknown`。未配置 `bot_token` 返回 `disabled`。这只描述 Bot 会话，不代表主账号或下载连接。启动与诊断见 [Bot 心跳与消息诊断](../DEPLOY.md#bot-心跳与消息诊断)。
 
 - 工具返回结构化对象，列表包含 `tasks` 和 `total`。状态查询汇总共用任务逻辑的数据。
 - 共用任务逻辑返回 `code="0"` 时转为 MCP 工具错误，不能当成操作成功。HTTP 缺少或错误 Token 返回 `401`。
@@ -52,7 +65,7 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `get_status` | None | Version, global state, speed, cooldown, workers and completed count |
+| `get_status` | None | Version, Bot connection health, global state, speed, cooldown, workers and completed count |
 | `list_downloads` | `status`, `offset`, `limit`, `search` | Active/completed/pending/failed lists; completed supports search |
 | `check_task_file` | `task_id` | Check a completed file's existence, path and name |
 | `submit_download` | `url` | Persist a single Telegram post in the download queue |
@@ -66,6 +79,19 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 Use exact `task_id` values, not `task_id_display`. Lists default to active, offset zero and 100 entries, with at most 500 per page; active includes individually paused tasks, identified by each record's `status`. Only completed supports search. Batches accept up to 100 task IDs.
 
 `submit_download` accepts HTTPS `t.me` post links up to 2048 characters and returns `task_id` for active/completed records, `pending_task_id` for pending/cancellation, and a display-only `task_id_display`. Repeating an unfinished post returns the same task with `duplicate: true`. See [Submit a Download](../DEPLOY.md#submit-a-download) for account requirements, supported links, timeouts and queue semantics.
+
+`get_status.bot_status` returns the same cached snapshot as the WebUI `/get_bot_status` endpoint, including in `mcp_read_only` mode, without sending Telegram requests:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `connected` / `connecting` / `disconnected` / `unresponsive` / `reconnecting` / `flood_wait` / `stopped` / `disabled` / `unknown` |
+| `rtt_ms` | Recorded heartbeat round-trip latency in milliseconds; `null` when unavailable |
+| `last_checked_at` / `last_success_at` | Last completed probe / success time, in Unix seconds; `null` before an observation |
+| `failures` | Consecutive failed heartbeat probes |
+| `flood_wait_remaining` | Remaining Bot cooldown seconds |
+| `heartbeat_interval` | Subsequent probe interval, default `60` seconds |
+
+The heartbeat probes immediately on startup. `connected` requires a recent matching Pong; a successful probe older than 70 seconds becomes `unknown`. Without `bot_token`, the status is `disabled`. This describes only the Bot session, independently of the main account and media connections. See [Bot Heartbeat and Message Diagnostics](../DEPLOY.md#bot-heartbeat-and-message-diagnostics).
 
 Results are structured objects; lists contain `tasks` and `total`. Shared-operation failures (`code="0"`) become MCP tool errors; missing or invalid HTTP tokens return `401`. Batch retries report `queued` and `errors` for partial failures, and acceptance does not imply download completion. Check task state before repeating timed-out writes.
 
