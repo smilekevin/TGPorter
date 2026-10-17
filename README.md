@@ -17,6 +17,7 @@
 
 <p align="center">
   <a href="#features">English</a> ·
+  <a href="#界面预览">界面预览</a> ·
   <a href="#功能特性">功能特性</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="./DEPLOY.md">部署指南</a> ·
@@ -25,6 +26,10 @@
   <a href="#架构设计">架构设计</a> ·
   <a href="#相比上游的改动">相比上游的改动</a>
 </p>
+
+## 界面预览
+
+[查看英文主界面截图](#webui-preview)，直观了解下载进度、速度、并发设置和任务操作。截图使用本地 Mock 演示数据（含模拟的 Bot 连接状态）；[本地开发模式](./DEPLOY.md#本地开发模式)无需 Telegram 账号即可预览。
 
 ## 功能特性
 
@@ -418,6 +423,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 <!-- END CHINESE README -->
 
 <p align="center">
+  <a href="#webui-preview">WebUI Preview</a> ·
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="./DEPLOY.md#prerequisites">Deployment Guide</a> ·
@@ -428,6 +434,12 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
 </p>
 
 ---
+
+## WebUI Preview
+
+![TG Porter English WebUI showing Telegram link submission, task tabs, concurrency settings and an active download with progress and speed](./docs/images/webui-en.jpg)
+
+Track download progress, speed and active streams, adjust concurrency, and manage tasks from the English WebUI. Captured with local Mock demo data, including a simulated Bot connection status; try it without a Telegram account in [Local Dev Mode](./DEPLOY.md#local-dev-mode).
 
 ## Features
 
