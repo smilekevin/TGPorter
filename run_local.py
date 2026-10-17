@@ -92,6 +92,12 @@ def get_download_status():
 def get_app_version():
     return utils.__version__
 
+@app.route("/get_bot_status")
+def get_bot_status():
+    # Mock mode has no Telegram session to probe.
+    return jsonify(status="disabled", last_checked_at=None, last_success_at=None,
+                   rtt_ms=None, failures=0, flood_wait_remaining=0, heartbeat_interval=60)
+
 @app.route("/set_download_state", methods=["POST"])
 def set_download_state():
     return "pause"

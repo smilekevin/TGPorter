@@ -355,6 +355,17 @@
     "Previous",
     "Next",
     "Refresh",
-    "Usage: /query [all|active|pending|completed|failed] [page]"
+    "Usage: /query [all|active|pending|completed|failed] [page]",
+    "Telegram Bot",
+    "Not configured",
+    "Connecting",
+    "Connected",
+    "Disconnected",
+    "Unresponsive",
+    "Reconnecting",
+    "Rate limited",
+    "Latency: {ms} ms",
+    "Last checked: {time}",
+    "Retry in {seconds}s"
   ]
 }

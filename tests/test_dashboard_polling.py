@@ -106,7 +106,7 @@ vm.runInContext(SOURCE, context);
 (async () => {
     const app = context.app();
     const names = ['fetchVersion', 'fetchActive', 'fetchPending',
-        'fetchCompleted', 'fetchMaxWorkers', 'fetchDownloadStatus', 'fetchFloodWait'];
+        'fetchCompleted', 'fetchMaxWorkers', 'fetchDownloadStatus', 'fetchFloodWait', 'fetchBotStatus'];
     let calls = 0;
     let releases = [];
     names.forEach(name => app[name] = () => {
@@ -115,7 +115,7 @@ vm.runInContext(SOURCE, context);
     });
     const initial = app.init();
     await app.init();
-    assert.equal(calls, 7, 'all initial requests should start without serial waits');
+    assert.equal(calls, 8, 'all initial requests should start without serial waits');
     assert.equal(polls, 0);
     releases.forEach(done => done());
     await initial;
@@ -132,6 +132,42 @@ vm.runInContext(SOURCE, context);
     await startup;
     assert.equal(polls, 0, 'removed components must not begin polling after startup');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+'''.replace('SOURCE', json.dumps(script)))
+
+    def test_bot_status_refresh_and_failed_reads_clear_healthy_state(self):
+        page = (ROOT / 'module/templates/index.html').read_text()
+        script = re.sub(r'{{.*?}}', "''", re.findall(r'<script>(.*?)</script>', page, re.S)[-1])
+        self.run_script(r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const context = {WebI18n: {language:'en', t: value => value}};
+vm.createContext(context);
+vm.runInContext(SOURCE, context);
+(async () => {
+    const app = context.app();
+    const status = {status:'connected', rtt_ms:42, last_checked_at:1000};
+    context.authenticatedFetch = async url => {
+        assert.equal(url, '/get_bot_status');
+        return {ok:true, json:async () => status};
+    };
+    await app.fetchBotStatus();
+    assert.equal(app.botStatus.status, 'connected');
+    assert.equal(app.botStatus.rtt_ms, 42);
+    assert.equal(app.botStatusLabel, 'Connected');
+    assert.ok(app.botLastChecked);
+    for (const failure of [async () => {throw Error('network');},
+        async () => ({ok:false}), async () => ({ok:true, json:async () => {throw Error('invalid JSON');}})]) {
+        app.botStatus = status;
+        context.authenticatedFetch = failure;
+        await app.fetchBotStatus();
+        assert.equal(app.botStatus.status, 'unknown');
+        assert.equal(app.botStatus.rtt_ms, null);
+        assert.equal(app.botLastChecked, '');
+    }
+    context.authenticatedFetch = async () => ({ok:true, json:async () => ({status:'disabled', last_checked_at:null})});
+    await app.fetchBotStatus();
+    assert.equal(app.botStatusLabel, 'Not configured');
+})().catch(error => {console.error(error); process.exitCode=1;});
 '''.replace('SOURCE', json.dumps(script)))
 
     def test_request_timeout_and_server_countdown(self):

@@ -522,6 +522,8 @@ environment:
 
 ### Bot 心跳与消息诊断
 
+网页顶部自动刷新 Bot 状态，显示连接正常、连接中、已断开、无响应、重连中、限流等待、已停止或未配置，并显示成功心跳的往返延迟和最近检查时间。`GET /get_bot_status` 只读取内存快照，遵循现有 Web 登录保护，不触发额外 Telegram 请求。`connected` 仅表示近期收到匹配的 Pong；首次心跳前显示连接中，成功探测超过 70 秒未更新显示未知，网页请求失败也显示未知。未配置 `bot_token`（包括 Mock 模式）显示未配置；该状态只描述 Bot 会话，不代表主下载账号或各下载连接的状态。
+
 配置了 Bot 时，应用会独立于下载和进度通知，每 60 秒发送一次 MTProto Ping 并等待匹配的 Pong，最多等待 10 秒。每轮仅尝试一次；Kurigram 的 `retries=1` 表示总共一次尝试，设为 `0` 不会发送请求，会立即产生超时误报。无需新增配置。Kurigram 自身约每 5 秒发送一次不等待回复的保活 Ping；应用心跳额外验证 Telegram 确实返回了响应。连续 3 次失败会尝试重连 Bot，成功重启后 300 秒内不再重连；重启失败则最早在 60 秒后重试。已有的进度通知连接错误阈值也由该独立循环处理。Bot 的已知 FLOOD_WAIT 期间暂停探测；探测遇到 FLOOD_WAIT 时记录并遵守冷却，不计为网络失败。关闭服务时取消并等待心跳任务；无 Bot 模式不启动心跳。
 
 使用项目默认容器名查看日志：
@@ -1040,6 +1042,8 @@ Inside a container, `127.0.0.1` refers to the container itself. Use a reachable 
 6. **FLOOD_WAIT**: wait for the Telegram cooldown; pending tasks are retried automatically.
 
 ### Bot Heartbeat and Message Diagnostics
+
+The dashboard header automatically refreshes Bot health, showing connected, connecting, disconnected, unresponsive, reconnecting, rate limited, stopped or not configured, with successful heartbeat round-trip latency and the last check time. `GET /get_bot_status` reads an in-memory snapshot under the existing Web login protection and sends no additional Telegram requests. `connected` requires a recent matching Pong; before the first probe it shows connecting, a successful probe older than 70 seconds becomes unknown, and failed Web reads also show unknown. Without `bot_token` (including Mock mode), it shows not configured. This describes the Bot session only, independently of the main account and media connections.
 
 When a Bot is configured, an independent loop sends an MTProto Ping every 60 seconds and waits up to 10 seconds for a matching Pong. Each probe makes one attempt: Kurigram counts total attempts in `retries`, so `retries=1` sends once while `0` sends nothing and immediately reports a false timeout. No new configuration is required. Kurigram also sends its own keepalive Ping about every 5 seconds without waiting for a response; the application probe additionally verifies that Telegram responds. Three consecutive failures trigger a Bot reconnect attempt. A successful restart has a 300-second reconnect cooldown; a failed restart can retry after 60 seconds. The same independent loop handles the existing progress-report connection-error threshold. Probes defer during a known Bot FLOOD_WAIT; a FLOOD_WAIT from the probe records and respects the cooldown instead of counting as a network failure. Shutdown cancels and awaits the heartbeat; operation without a Bot does not start it.
 

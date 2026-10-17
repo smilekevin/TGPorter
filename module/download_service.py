@@ -277,6 +277,18 @@ class DownloadService:
         return {'download_speed': format_byte(get_total_download_speed()) + "/s",
                 'upload_speed': "0.00 B/s", 'active_streams': get_active_download_streams()}
 
+    def get_bot_status(self):
+        """Return cached health of this application's Bot session, without network I/O."""
+        from module.bot import _bot, _BOT_HEARTBEAT_INTERVAL
+
+        enabled = bool(getattr(self.app, "bot_token", ""))
+        if enabled and _bot.app is self.app:
+            return _bot.get_connection_status()
+        return {"status": "connecting" if enabled else "disabled",
+                "last_checked_at": None, "last_success_at": None,
+                "rtt_ms": None, "failures": 0, "flood_wait_remaining": 0,
+                "heartbeat_interval": _BOT_HEARTBEAT_INTERVAL}
+
     def get_flood_wait(self):
         """Get unified FloodWait cooldown status for WebUI display."""
         from module.pyrogram_extension import is_flood_wait_active, get_flood_wait_remaining, _unified_flood_wait

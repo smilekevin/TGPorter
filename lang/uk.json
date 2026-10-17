@@ -218,6 +218,17 @@
     "Previous": "Назад",
     "Next": "Далі",
     "Refresh": "Оновити",
-    "Usage: /query [all|active|pending|completed|failed] [page]": "Використання: /query [all|active|pending|completed|failed] [сторінка]"
+    "Usage: /query [all|active|pending|completed|failed] [page]": "Використання: /query [all|active|pending|completed|failed] [сторінка]",
+    "Telegram Bot": "Бот Telegram",
+    "Not configured": "Не налаштовано",
+    "Connecting": "Підключення",
+    "Connected": "Підключено",
+    "Disconnected": "Відключено",
+    "Unresponsive": "Немає відповіді",
+    "Reconnecting": "Повторне підключення",
+    "Rate limited": "Обмеження запитів",
+    "Latency: {ms} ms": "Затримка: {ms} мс",
+    "Last checked: {time}": "Остання перевірка: {time}",
+    "Retry in {seconds}s": "Повтор через {seconds}с"
   }
 }

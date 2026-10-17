@@ -116,6 +116,19 @@
                 </div>
             </div>
         </div>
+        <div class="bot-connection max-w-7xl mx-auto px-4 sm:px-6 pb-3" role="status" aria-live="polite">
+            <span class="bot-connection-badge" :data-state="botStatus.status">
+                <span class="bot-connection-dot" aria-hidden="true"></span>
+                <span x-text="t('Telegram Bot')"></span>
+                <span x-text="botStatusLabel"></span>
+            </span>
+            <span x-show="botStatus.status === 'connected' && botStatus.rtt_ms !== null"
+                  x-text="t('Latency: {ms} ms', {ms: botStatus.rtt_ms})"></span>
+            <span x-show="botStatus.last_checked_at !== null"
+                  x-text="t('Last checked: {time}', {time: botLastChecked})"></span>
+            <span x-show="botStatus.status === 'flood_wait'"
+                  x-text="t('Retry in {seconds}s', {seconds: botStatus.flood_wait_remaining})"></span>
+        </div>
     </header>
 
     <form @submit.prevent="submitDownload()" class="submission-panel max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap gap-2">
@@ -955,6 +968,19 @@
             version: '',
             downloadSpeed: '0.00 B/s',
             activeStreams: 0,
+            botStatus: { status: 'unknown', last_checked_at: null, rtt_ms: null, flood_wait_remaining: 0 },
+            get botStatusLabel() {
+                return this.t({
+                    disabled: 'Not configured', connecting: 'Connecting', connected: 'Connected',
+                    disconnected: 'Disconnected', unresponsive: 'Unresponsive',
+                    reconnecting: 'Reconnecting', flood_wait: 'Rate limited',
+                    stopped: 'Stopped', unknown: 'Unknown',
+                }[this.botStatus.status] || 'Unknown');
+            },
+            get botLastChecked() {
+                return this.botStatus.last_checked_at === null ? '' :
+                    new Date(this.botStatus.last_checked_at * 1000).toLocaleTimeString(this.locale);
+            },
             floodWait: { active: false, remaining: 0, reason: '' },
             throttle: { active: false, elapsed: 0 },
             maxWorkers: 5,
@@ -1054,14 +1080,14 @@
                 await Promise.allSettled([
                     this.fetchVersion(), this.fetchActive(),
                     this.fetchPending(true), this.fetchCompleted(true), this.fetchMaxWorkers(),
-                    this.fetchDownloadStatus(), this.fetchFloodWait(),
+                    this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchBotStatus(),
                 ]);
                 if (this.disposed) return;
                 let lastPending = Date.now();
                 let lastCompleted = Date.now();
                 this.stopPolling = startDashboardPolling(async () => {
                     const now = Date.now();
-                    const requests = [this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchActive()];
+                    const requests = [this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchActive(), this.fetchBotStatus()];
                     if (now - lastPending >= 5000) {
                         lastPending = now;
                         requests.push(this.pollPendingRefresh(), this.fetchFailed());
@@ -1193,6 +1219,17 @@
                     this.downloadSpeed = data.download_speed;
                     this.activeStreams = data.active_streams ?? 0;
                 } catch(e) {}
+            },
+
+            async fetchBotStatus() {
+                try {
+                    const res = await authenticatedFetch('/get_bot_status');
+                    if (!res.ok) throw new Error('Bot status request failed');
+                    this.botStatus = await res.json();
+                } catch(e) {
+                    // A failed Web API read cannot prove the Telegram session is healthy.
+                    this.botStatus = { status: 'unknown', last_checked_at: null, rtt_ms: null, flood_wait_remaining: 0 };
+                }
             },
 
             async fetchFloodWait() {

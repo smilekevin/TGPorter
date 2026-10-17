@@ -1,6 +1,7 @@
 """Bot for media downloader"""
 
 import asyncio
+import math
 import os
 import time
 from datetime import datetime
@@ -208,6 +209,11 @@ class DownloadBot:
         self._bot_reconnect_after = 0.0
         self._last_message_at = None
         self._active_handlers = {}
+        self._connection_status = {
+            "status": "connecting", "last_checked_at": None,
+            "last_success_at": None, "rtt_ms": None, "failures": 0,
+            "checked_monotonic": None,
+        }
 
         # In-memory set of task_ids that are in asyncio Queue but not yet picked
         # up by a worker. Replaces the "queued" download_state — no longer written
@@ -220,6 +226,46 @@ class DownloadBot:
         self._active_downloads = 0
         self._pending_consumer_task = None
         self._range_tasks: dict = {}
+
+    def get_connection_status(self):
+        """Read a heartbeat snapshot from Flask threads without sending Telegram RPCs."""
+        from module.pyrogram_extension import _bot_flood_wait
+
+        # Writers replace the whole dictionary on the downloader loop. Readers
+        # copy one published snapshot and never mutate shared heartbeat state.
+        snapshot = self._connection_status.copy()
+        checked = snapshot.pop("checked_monotonic")
+        remaining = max(0, math.ceil(_bot_flood_wait["until"] - time.time()))
+        status = snapshot["status"]
+        if not self.is_running:
+            status = "stopped"
+        elif status == "reconnecting":
+            pass
+        elif self.bot is None:
+            status = "connecting"
+        elif not self.bot.is_connected:
+            status = "disconnected"
+        elif remaining:
+            status = "flood_wait"
+        elif status == "connected" and (
+                checked is None or time.monotonic() - checked >
+                _BOT_HEARTBEAT_INTERVAL + _BOT_HEARTBEAT_TIMEOUT):
+            status = "unknown"
+        snapshot["status"] = status
+        snapshot["flood_wait_remaining"] = remaining
+        snapshot["heartbeat_interval"] = _BOT_HEARTBEAT_INTERVAL
+        return snapshot
+
+    def _publish_connection_status(self, status, *, checked=False, rtt_ms=None):
+        """Publish one coherent observation for read-only WebUI queries."""
+        snapshot = {**self._connection_status, "status": status,
+                    "rtt_ms": rtt_ms, "failures": self._heartbeat_failures}
+        if checked:
+            snapshot["last_checked_at"] = time.time()
+            snapshot["checked_monotonic"] = time.monotonic()
+            if status == "connected":
+                snapshot["last_success_at"] = snapshot["last_checked_at"]
+        self._connection_status = snapshot
 
     def _ensure_heartbeat(self):
         """Monitor the Bot session independently of downloads and progress replies."""
@@ -273,10 +319,14 @@ class DownloadBot:
                     raise ConnectionError("Unexpected heartbeat response")
         except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
             _record_bot_flood_wait(error.value)
+            # Record the attempt without treating a rate-limit response as Pong.
+            # The reader displays the shared cooldown until another probe is due.
+            self._publish_connection_status("unknown", checked=True)
             logger.warning("Bot heartbeat deferred: FLOOD_WAIT {}s", error.value)
             return
         except Exception as error:
             self._heartbeat_failures += 1
+            self._publish_connection_status("unresponsive", checked=True)
             logger.warning("Bot heartbeat failed: error={} elapsed_s={:.1f} failures={}/{} connected={}",
                            type(error).__name__, time.monotonic() - started,
                            self._heartbeat_failures, _BOT_HEARTBEAT_FAILURES,
@@ -286,6 +336,8 @@ class DownloadBot:
                 logger.info("Bot heartbeat recovered: failed_probes={}", self._heartbeat_failures)
             self._heartbeat_failures = 0
             now = time.monotonic()
+            self._publish_connection_status(
+                "connected", checked=True, rtt_ms=round((now - started) * 1000))
             dispatcher = getattr(self.bot, "dispatcher", None)
             workers = getattr(dispatcher, "handler_worker_tasks", [])
             queue = getattr(dispatcher, "updates_queue", None)
@@ -312,7 +364,13 @@ class DownloadBot:
             logger.warning("Bot heartbeat triggering reconnect: heartbeat_failures={} report_errors={}",
                            self._heartbeat_failures, _bot_conn_errors["count"])
             _bot_conn_errors["count"] = 0
-            success = await self._reconnect_bot()
+            self._publish_connection_status("reconnecting")
+            success = False
+            try:
+                success = await self._reconnect_bot()
+            finally:
+                # A restarted transport still needs a Pong before it is healthy.
+                self._publish_connection_status("connecting" if success else "disconnected")
             cooldown = _BOT_RECONNECT_COOLDOWN if success else _BOT_HEARTBEAT_INTERVAL
             self._bot_reconnect_after = time.monotonic() + cooldown
 
@@ -865,6 +923,7 @@ class DownloadBot:
         download_chat_task: Callable,
     ):
         """Start bot"""
+        self._publish_connection_status("connecting")
         self.bot = pyrogram.Client(
             app.application_name + "_bot",
             api_hash=app.api_hash,

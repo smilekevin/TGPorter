@@ -66,6 +66,54 @@ class BotHeartbeatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("Bot heartbeat OK" in line and "rtt_ms=" in line for line in self.logs))
         self.reconnect.assert_not_awaited()
 
+    async def test_health_snapshot_tracks_probes_without_extra_rpc_and_expires(self):
+        self.assertEqual(self.backend.get_connection_status()["status"], "connecting")
+        self.backend.bot.invoke.assert_not_awaited()
+        await self.backend._check_bot_health()
+        result = self.backend.get_connection_status()
+        self.assertEqual(result["status"], "connected")
+        self.assertEqual(result["rtt_ms"], 0)
+        self.assertEqual(result["last_checked_at"], self.clock)
+        self.assertEqual(result["last_success_at"], self.clock)
+        self.assertNotIn("checked_monotonic", result)
+        result["status"] = "modified"
+        self.assertEqual(self.backend.get_connection_status()["status"], "connected")
+        self.clock += 71
+        self.assertEqual(self.backend.get_connection_status()["status"], "unknown")
+        self.backend.bot.invoke.assert_awaited_once()
+        await self.fail()
+        result = self.backend.get_connection_status()
+        self.assertEqual(result["status"], "unresponsive")
+        self.assertEqual(result["failures"], 1)
+        self.assertIsNone(result["rtt_ms"])
+        self.assertEqual(result["last_success_at"], 1000)
+        self.backend.bot.invoke.side_effect = self.pong
+        await self.backend._check_bot_health()
+        self.assertEqual(self.backend.get_connection_status()["status"], "connected")
+
+    async def test_snapshot_distinguishes_transport_loss_flood_wait_and_shutdown(self):
+        await self.backend._check_bot_health()
+        extension._bot_flood_wait["until"] = self.clock + 120.5
+        result = self.backend.get_connection_status()
+        self.assertEqual(result["status"], "flood_wait")
+        self.assertEqual(result["flood_wait_remaining"], 121)
+        self.backend.bot.is_connected = False
+        self.assertEqual(self.backend.get_connection_status()["status"], "disconnected")
+        self.backend.is_running = False
+        self.assertEqual(self.backend.get_connection_status()["status"], "stopped")
+
+    async def test_reconnect_snapshot_stays_unconfirmed_until_next_pong(self):
+        async def restart():
+            self.assertEqual(self.backend.get_connection_status()["status"], "reconnecting")
+            return True
+
+        self.reconnect.side_effect = restart
+        await self.fail(3)
+        self.assertEqual(self.backend.get_connection_status()["status"], "connecting")
+        self.backend.bot.invoke.side_effect = self.pong
+        await self.backend._check_bot_health()
+        self.assertEqual(self.backend.get_connection_status()["status"], "connected")
+
     async def test_probe_uses_the_pinned_sdk_invoke_path(self):
         client = self.use_sdk_session(self.pong)
         self.backend._heartbeat_failures = 2
@@ -195,11 +243,16 @@ class BotHeartbeatTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(extension, "time", SimpleNamespace(time=lambda: self.clock)):
             await self.backend._check_bot_health()
         self.assertEqual(extension._bot_flood_wait["until"], self.clock + 120)
+        snapshot = self.backend.get_connection_status()
+        self.assertEqual(snapshot["status"], "flood_wait")
+        self.assertEqual(snapshot["last_checked_at"], self.clock)
+        self.assertIsNone(snapshot["last_success_at"])
         await self.backend._check_bot_health()
         self.backend.bot.invoke.assert_awaited_once()
         self.assertEqual(self.backend._heartbeat_failures, 2)
         self.reconnect.assert_not_awaited()
         self.clock += 121
+        self.assertEqual(self.backend.get_connection_status()["status"], "unknown")
         self.backend.bot.invoke.side_effect = self.pong
         await self.backend._check_bot_health()
         self.assertEqual(self.backend._heartbeat_failures, 0)
