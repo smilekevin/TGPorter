@@ -151,3 +151,52 @@ jobs:
               echo 'This run validates the build; no pullable image was published.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-python@v6
+        if: steps.publication.outputs.publish == 'true'
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      - name: Install dependencies for skill packaging
+        id: skill_dependencies
+        if: steps.publication.outputs.publish == 'true'
+        run: python -m pip install -r requirements.txt
+
+      - name: Build CI preview skill
+        id: skill
+        if: steps.publication.outputs.publish == 'true'
+        env:
+          SHA: ${{ steps.version.outputs.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          CI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python tools/build_skill.py --tag "sha-${SHA}" --commit "$SHA" \
+            --repository "$GITHUB_REPOSITORY" --image "$IMAGE" --digest "$DIGEST" \
+            --ci-run-url "$CI_RUN_URL" --output-dir dist
+
+      - name: Upload CI preview skill
+        id: skill_upload
+        if: steps.publication.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/TGPorterSkills.zip
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+      - name: Show CI preview skill download
+        id: skill_summary
+        if: steps.publication.outputs.publish == 'true'
+        env:
+          ARTIFACT_URL: ${{ steps.skill_upload.outputs.artifact-url }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          {
+            echo '## Agent skill CI preview'
+            echo "[Download TGPorterSkills.zip](${ARTIFACT_URL})"
+            echo
+            echo "Source and image version: sha-${SHA}"
+            echo 'This preview is for verification, requires GitHub login and is retained for 14 days.'
+          } >> "$GITHUB_STEP_SUMMARY"

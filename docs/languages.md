@@ -24,7 +24,7 @@ Bot、已翻译日志和 WebUI 共用 `lang/` 包，每种语言一个 UTF-8 JSO
 
 The Bot, translated logs and WebUI share the `lang/` package, with one UTF-8 JSON file per language. JSON is readable by Python and browsers without XML parsers, extra dependencies or generated code. Shared vocabulary uses the same English key; complete sentences use separate entries with named placeholders such as `{count}` so languages can change word order.
 
-Supported codes: `en`, `zh-cn` (Simplified Chinese), `zh-tw` (Traditional Chinese), `ja`, `es`, `fr`, `ru`, `uk`. Codes are case insensitive and accept underscores. Legacy `ZH` / `zh` resolve to `zh-cn`; `UA` / `ua` resolve to `uk`. Bot and browser language preferences are independent. See the [deployment guide](../DEPLOY.md) for configuration.
+Supported codes: `en`, `zh-cn` (Simplified Chinese), `zh-tw` (Traditional Chinese), `ja`, `es`, `fr`, `ru`, `uk`. Codes are case insensitive and accept underscores. Legacy `ZH` / `zh` resolve to `zh-cn`; `UA` / `ua` resolve to `uk`. Bot and browser language preferences are independent. See the [deployment guide](../DEPLOY_EN.md) for configuration.
 
 To add a language:
 

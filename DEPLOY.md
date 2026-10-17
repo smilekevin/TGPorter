@@ -1,12 +1,10 @@
-# TG Porter - 部署指南 / Deployment Guide
+# TG Porter - 部署指南
 
-安装、配置、登录和运维步骤统一维护在本文件。功能介绍、Bot 命令、Web API 和架构见 [README 中文说明](./README.md#功能特性)。
+[English deployment guide](./DEPLOY_EN.md)
 
-Installation, configuration, login and operations are maintained here. English instructions start at [Prerequisites](#prerequisites). See the [README](./README.md#features) for features, Bot commands, Web APIs and architecture.
+安装、配置、登录和运维步骤统一维护在本文件。功能介绍、Bot 命令、Web API 和架构见 [README 中文说明](https://github.com/smilekevin/TGPorter/blob/main/README.md#功能特性)。
 
 中文：[前置条件](#前置条件) · [凭据准备](#部署前准备api-凭据与-bot-token) · [Docker 镜像](#docker-镜像部署) · [Compose](#docker-compose-部署) · [手动安装](#手动安装) · [本地开发](#本地开发模式) · [配置说明](#配置说明) · [WebUI 登录](#webui-登录) · [MCP](#mcp-agent-接入) · [运维](#docker-管理) · [持久化](#docker-数据持久化) · [代理](#代理配置) · [故障排查](#故障排查)
-
-English: [Prerequisites](#prerequisites) · [Credentials](#before-you-deploy-api-credentials-and-bot-token) · [Docker Image](#docker-image-deployment) · [Compose](#docker-compose-deployment) · [Manual Install](#manual-install) · [Local Dev](#local-dev-mode) · [Configuration](#configuration) · [WebUI Login](#webui-login) · [MCP](#mcp-agent-integration) · [Operations](#docker-management) · [Persistence](#docker-data-persistence) · [Proxy](#proxy-configuration) · [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -206,7 +204,7 @@ python run_local.py
 # 访问 http://localhost:5000
 ```
 
-打开后，在右上角语言菜单选择 **English**，即可预览 [README 中的英文主界面](./README.md#webui-preview)。README 提供 2560 × 1440 高清截图，来自本地 Mock 模式，下载数据和 Bot 已连接状态均为演示，不执行真实下载。
+打开后，在右上角语言菜单选择 **English**，即可预览 [README 中的英文主界面](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview)。README 提供 2560 × 1440 高清截图，来自本地 Mock 模式，下载数据和 Bot 已连接状态均为演示，不执行真实下载。
 
 ---
 
@@ -289,16 +287,22 @@ proxy:
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `api_id` | Telegram API ID（[my.telegram.org](https://my.telegram.org/apps)） | — |
-| `api_hash` | Telegram API Hash | — |
-| `bot_token` | 命令交互和通知 Bot 的 Token（[@BotFather](https://t.me/BotFather)）；MCP 独立运行时可留空 | — |
-| `media_types` | 下载的媒体类型列表 | — |
-| `file_formats` | 各类型文件格式过滤 | — |
+| `api_id` | 必填，Telegram API ID（[my.telegram.org](https://my.telegram.org/apps)） | — |
+| `api_hash` | 必填，Telegram API Hash | — |
+| `bot_token` | 命令交互和通知 Bot 的 Token（[@BotFather](https://t.me/BotFather)）；MCP 独立运行时可留空 | `""` |
+| `media_types` | 必填，下载的媒体类型列表；例如 `audio`、`document`、`photo`、`video`、`voice`、`animation`、`video_note` | — |
+| `file_formats` | 必填，为 `audio`、`document`、`video` 设置非空格式列表；首项为 `all` 时接受该类型的所有格式，示例仅下载 PDF/EPUB 文档和 MP4 视频 | — |
 | `save_path` | 文件保存路径 | `./downloads` |
+| `file_path_prefix` | 子目录字段，按列表顺序组合；支持 `chat_title`、`media_datetime`、`media_type`；省略、`null` 或空列表使用默认规则 | `[chat_title, media_datetime]` |
+| `file_name_prefix` | 文件名字段，按列表顺序组合；支持 `message_id`、`file_name`、`caption`；缺失字段跳过，全空时退回消息 ID；省略、`null` 或空列表使用默认规则 | `[message_id, file_name]` |
+| `file_name_prefix_split` | 文件名各字段之间的分隔符 | `" - "` |
+| `chat` | 可选的启动历史扫描配置列表，嵌套字段见下表；仅通过 MCP 提交单条任务时可省略 | 不扫描 |
+| `upload_drive` | 可选云盘上传设置，嵌套字段见下表 | 关闭 |
 | `max_download_task` | 并发下载 worker 数 | `5` |
 | `file_download_concurrency` | 单文件并发下载 worker 数 | `1` |
 | `download_part_size_mb` | 固定切片大小，单位 MiB，必须为正整数 | `64` |
-| `web_port` | WebUI 端口 | `5000` |
+| `web_host` | WebUI/API/MCP 共用的监听地址；Docker 内通常保持 `0.0.0.0` | `0.0.0.0` |
+| `web_port` | WebUI/API/MCP 共用的监听端口 | `5000` |
 | `web_login_secret` | WebUI / Web API 的 Session 登录密码；空字符串保留免登录模式，与 MCP 鉴权独立 | `""` |
 | `mcp_token` | 仅供 `/mcp` 使用的 Bearer Token；可打印 ASCII 字符串，不含空白，MCP 开启时不能为空 | `""` |
 | `mcp_enabled` | 开启同端口的 `/mcp` Streamable HTTP 入口，始终要求 Token | `false` |
@@ -312,9 +316,54 @@ proxy:
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `date_format` | 日期目录格式 | `%Y_%m` |
 
+#### 嵌套配置与可选功能
+
+`chat` 是对象列表；`upload_drive` 和 `proxy` 是映射。以下字段按层级填写，不是新的顶层配置。仅在使用对应功能时配置：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `chat[].chat_id` | 扫描的聊天/频道 ID 或可解析的名称；每条扫描配置需要此字段 | — |
+| `chat[].last_read_message_id` | 扫描起点的已读消息 ID；运行数据中更靠后的检查点优先 | `0` |
+| `chat[].download_filter` | 此聊天的下载过滤表达式；空字符串不额外过滤 | `""` |
+| `chat[].upload_telegram_chat_id` | 下载后重新上传的 Telegram 目标；需有发送权限 | `null` |
+| `upload_drive.enable_upload_file` | 开启下载后的云盘上传 | `false` |
+| `upload_drive.rclone_path` | rclone 可执行文件路径；主镜像已内置到默认路径，手动安装需另行准备，启用前配置 remote | `./rclone/rclone`，Windows 带 `.exe` |
+| `upload_drive.remote_dir` | 云盘目标，例如 `drive:/telegram` | `""` |
+| `upload_drive.before_upload_file_zip` | 上传前将单个文件压缩为 ZIP | `false` |
+| `upload_drive.after_upload_file_delete` | 云盘上传成功后删除本地原文件；当前加载器只接受真值，配置 `false` 不能覆盖默认 `true` | `true` |
+| `upload_drive.upload_adapter` | 上传适配器；默认 `rclone`；旧 `aligo` 适配器需要额外安装与登录，主依赖未包含它 | `rclone` |
+| `proxy.scheme` | Telegram 代理协议，例如 `http` 或 `socks5`；不是 Compose 的环境变量代理 | — |
+| `proxy.hostname` | Telegram 代理主机，不含协议 | — |
+| `proxy.port` | Telegram 代理端口，整数 | — |
+| `proxy.username` / `proxy.password` | 代理认证信息，仅在代理要求时填写 | 不使用认证 |
+
+#### 高级与兼容配置
+
+以下选项通常无需填写。广告相关配置只是初始值，已有 `data/data.json` 中的广告规则优先；Bot 修改立即保存运行数据。`drop_no_audio_video` 当前只读取配置，没有对应的执行逻辑，不应依赖它过滤媒体。
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `start_timeout` | Telegram 主会话启动超时，单位秒；不是正常媒体传输的超时 | `60` |
+| `max_concurrent_transmissions` | SDK 传输容量覆盖值，通常应省略；保存的并发值及 WebUI/API/MCP 并发调整会重新计算它 | `max_download_task * max(5, file_download_concurrency)` |
+| `debug_web` | Flask 调试状态及 ASGI 调试日志 | `false` |
+| `forward_limit` | 转发调用的每 60 秒本地预算；不覆盖 Telegram 自身的 FLOOD_WAIT | `33` |
+| `after_upload_telegram_delete` | Telegram 重新上传流程结束后删除本地文件；清理位于 `finally`，也会在上传异常后执行 | `true` |
+| `filter_advertisement_list` | 转发时跳过匹配内容的关键词列表 | `[]` |
+| `replace_advertisement_list` | 从转发说明文字中删除的文本列表 | `[]` |
+| `group_add_advertisement` | 按目标聊天 ID 映射的追加说明文字 | `{}` |
+| `drop_no_audio_video` | 已读取但目前不参与媒体过滤的兼容字段 | `false` |
+| `restart_program` | 内部运行控制标记；`true` 会使主等待循环退出，正常部署保持关闭 | `false` |
+| `download_min_part_size_mb` | 旧分片大小字段，仅在未填写 `download_part_size_mb` 时读取 | `64` |
+| `chat_id` | 旧版单聊天扫描入口，新配置使用 `chat` 列表 | 未设置 |
+| `last_read_message_id` | 配合顶层 `chat_id` 使用的旧扫描起点；旧格式需要提供 | — |
+| `download_filter` | 旧版按聊天 ID 映射的表达式；新配置使用 `chat[].download_filter` | 未设置 |
+| `ids_to_retry` | 旧版单聊天重试消息 ID 列表；新任务通过共享队列和运行数据恢复 | `[]` |
+
+`api_id`、`api_hash`、`media_types` 和 `file_formats` 必须存在；MCP 开启时还必须提供非空 `mcp_token`。布尔选项使用 YAML 的 `true` / `false`，不要写成带引号的字符串。示例值不等于默认值：示例 `file_download_concurrency` 为 `4`、`file_name_prefix` 仅用 `file_name`、`date_format` 为空；代理地址也只是环境示例。`config.yaml` 修改后需重启，运行中的任务状态、语言、广告规则和并发值通过应用接口管理，不直接编辑运行 JSON。
+
 网页（含登录页）和 Bot 共用 `lang/*.json` 词典，支持简体中文（`zh-cn`）、繁体中文（`zh-tw`）、英语（`en`）、日语（`ja`）、西班牙语（`es`）、法语（`fr`）、俄语（`ru`）和乌克兰语（`uk`）。每种语言一个文件，共用词汇只翻译一次；英语 `messages` 只列出英文词条，其他语言使用英文词条到翻译的映射。网页可随时切换，首次访问按浏览器偏好依次匹配；`zh` 回退 `zh-cn`，`zh-TW` / `zh-HK` / `zh-Hant` 使用繁体中文，不支持的语言回退英语。手动选择保存在当前浏览器中并优先使用，不依赖 IP 定位。Bot 的 `language` 配置与网页互不影响，例如 `language: zh-tw` 或 `/set_language ja`；旧配置 `ZH` 和命令 `zh` 仍代表简体中文，`UA` / `ua` 仍代表乌克兰语。Bot 语言随运行状态以规范代码写入 `data/data.json`，不会修改 `config.yaml`。运行代码、配置示例注释和 PWA 应用名称使用英语；测试可保留必要的语言数据。失败记录保存英文词条，在 Bot/网页显示时才翻译，无法识别的历史记录保留原文。缺失词条回退英语，再回退原文；原有俄语和乌克兰语保留已有翻译，新增且未翻译的词条使用英语。
 
-添加语言只需复制 `lang/fr.json` 等翻译文件为新语言文件，修改 `code`、`name`、`aliases` 和 `messages`，重启后网页和 Bot 自动识别，无需新增依赖或构建前端。完整步骤及占位符规则见[语言包指南](docs/languages.md)。
+添加语言只需复制 `lang/fr.json` 等翻译文件为新语言文件，修改 `code`、`name`、`aliases` 和 `messages`，重启后网页和 Bot 自动识别，无需新增依赖或构建前端。完整步骤及占位符规则见[语言包指南](https://github.com/smilekevin/TGPorter/blob/main/docs/languages.md)。
 
 文件按 `download_part_size_mb` 切成固定大小的切片，最后一片为剩余大小。
 例如每片 64 MiB 时，40 MiB 文件为 1 片，100 MiB 为 2 片，500 MiB 为 8 片。
@@ -334,7 +383,7 @@ Bot 在内容变化时约每 10 秒编辑原进度消息，不再等待 20% 里�
 
 新下载的临时主文件统一为 `downloads/.temp/timestamp_guid.tmp`，不包含频道名或原文件名。`timestamp` 使用消息时间的 Unix 秒数（无日期时为 `0`），GUID 根据消息所属客户端、聊天 ID、消息 ID 和媒体身份稳定生成；同一媒体重试、恢复和重启复用同一路径，不需要额外的索引文件。分片保存在对应的 `timestamp_guid.tmp.parts/manifest.json` 和分片文件中，SDK/合并过程可能使用 `timestamp_guid.tmp.temp`。已有旧路径断点继续沿用，直至完成或明确删除；最终下载文件名仍由现有命名配置决定。部署时应持久化整个 `downloads/.temp` 目录。
 多分片合并期间临时空间最高约为文件大小的两倍，单分片直接移动文件，无需额外完整副本。
-离线验证和真实下载验收步骤见 [分片下载测试说明](docs/parallel-download-testing.md)。
+离线验证和真实下载验收步骤见 [分片下载测试说明](https://github.com/smilekevin/TGPorter/blob/main/docs/parallel-download-testing.md)。
 普通媒体下载跨 DC 时，首次通过目标 DC 的普通端点创建密钥，同一账号、DC 和测试模式下的后续 worker／文件复用内存中的密钥，并用锁避免重复协商。每个 worker 仍建立自己的媒体会话和 TCP 连接，并执行现有授权流程；当前账号主 DC 继续复用已保存的密钥，CDN 继续使用自己的端点。缓存不跨账号、不写入日志或磁盘；客户端停止／重启时清空。服务端明确拒绝密钥时仅丢弃匹配的旧缓存，下一次尝试重新协商。密钥创建最多等待 60 秒，超时会关闭该连接并保留断点，交给现有连接重试机制；此上限不限制正常文件传输。DEBUG 日志包含媒体端点和密钥协商端点的地址、端口及 CDN 标记，不记录密钥或授权内容。
 应用仅写入 `data/log/tdl.log`，每个日志文件达到 10MB 时轮转，保留 30 天；不再生成 `download.log`，已有旧日志不会自动删除。其中的 `Waiting for first data` 记录独立下载连接开始等待数据，包含文件名、worker 编号和 DC；`Opened independent download connection #…` 表示已收到首块数据，`Confirmed independent download startup` 表示首块有效数据已写入，允许增加下一个连接；`Closed independent download connection #…` 表示连接资源已关闭。首块数据前取消也会记录资源释放。设置 `log_level: DEBUG` 可查看 DC 解析、存储读取、密钥创建、会话启动、授权导出/导入和首个媒体请求阶段；等待期间每 30 秒输出当前阶段及该阶段已等待秒数的 WARNING，不改变请求超时或重试策略。SDK 日志级别独立于此设置，应用诊断日志不输出授权内容。
 
@@ -356,7 +405,7 @@ Web API 与网页共用密码登录 Session，修改状态时还需提供当前 
 
 ## MCP Agent 接入
 
-MCP 集成在下载器主服务中，复用主镜像、容器和 `web_port`（默认 `5000`），入口为 `/mcp`。工具直接调用内部任务管理逻辑。[工具与参数参考](./docs/mcp.md)。13 个工具支持提交和管理下载任务；`submit_download` 接受单条 Telegram 消息链接，持久化到现有 Pending 队列。
+MCP 集成在下载器主服务中，复用主镜像、容器和 `web_port`（默认 `5000`），入口为 `/mcp`。工具直接调用内部任务管理逻辑。[工具与参数参考](https://github.com/smilekevin/TGPorter/blob/main/docs/mcp.md)。13 个工具支持提交和管理下载任务；`submit_download` 接受单条 Telegram 消息链接，持久化到现有 Pending 队列。
 
 ### 开启 MCP
 
@@ -406,7 +455,33 @@ docker compose restart tgporter
 
 本机可使用 `http://127.0.0.1:5000/mcp`，局域网可使用配置的 NAS 地址。公网访问使用 HTTPS 反向代理，保留原始 Host 请求头，并允许 `/mcp` 的 GET、POST、DELETE 请求通过。此实现采用预配置 Bearer Token，不提供 OAuth 登录页。Token 只放在受保护的配置和请求头中，不放在 URL 或工具参数中；错误或缺失 Token 返回 `401`。
 
-`mcp_read_only: true` 只暴露三个查询工具，不开放提交下载。修改 Token 后重启下载器，并同步更新 Agent 配置，旧 Token 随即失效。默认允许写操作，删除工具的 `delete_file` 默认 `false`。[工具列表与删除语义](./docs/mcp.md)。
+`mcp_read_only: true` 只暴露三个查询工具，不开放提交下载。修改 Token 后重启下载器，并同步更新 Agent 配置，旧 Token 随即失效。默认允许写操作，删除工具的 `delete_file` 默认 `false`。[工具列表与删除语义](https://github.com/smilekevin/TGPorter/blob/main/docs/mcp.md)。
+
+### 安装可选 Skill
+
+仓库提供 [tgporter Skill](https://github.com/smilekevin/TGPorter/blob/main/skills/tgporter/SKILL.md)，用于引导部署、连接 MCP 和管理下载，面向支持 `SKILL.md` 的 Agent 客户端。通过 MCP 管理任务还需要客户端支持 Streamable HTTP 和预配置 Bearer Token；Skill 不绑定特定厂商的客户端、插件格式或安装器。
+
+从本仓库源码或 Release 源码包中取得整个 `skills/tgporter/` 目录，保留 `SKILL.md` 和 `references/` 的相对位置。按所用客户端的文档导入该目录，或放入该客户端指定的 Skill 目录。若客户端支持通过 GitHub URL 导入，可使用 [Skill 目录链接](https://github.com/smilekevin/TGPorter/tree/main/skills/tgporter)。需要固定版本时，将 URL 中的 `main` 替换为包含 Skill 的 Release 标签或提交号；更新已有 Skill 前保留自己的修改。
+
+推荐从 [GitHub Release](https://github.com/smilekevin/TGPorter/releases) 的附件下载 **`TGPorterSkills.zip`**，直接交给能够读取 ZIP 的 Agent；需要目录导入的客户端先解压，再导入其中的 `tgporter/`。包内仅包含 Skill、英文部署与配置参数指南 `DEPLOY_EN.md`、配置/Compose 示例、版本信息及许可证；部署所需说明可在包内读取，Agent 仍可用用户的语言解释。中文指南、开发指引、测试计划、设计草案、README 和截图不打包。依赖安装、拉取镜像和 Telegram 登录仍需网络与用户自己的凭据。
+
+Release 工作流在镜像推送成功后生成并上传该 ZIP，重跑时覆盖同名附件。`release.json` 集中记录标签、镜像、digest、源码提交和下载 URL，并包含各文件 SHA-256；`references/release.md` 从同一份版本数据生成准确的镜像拉取命令、源码检出命令及下载地址。Compose 通过 YAML 字段设置该 Release 的镜像。Skill、部署指南和配置示例原样打包，不按标题、命令文本或 URL 格式执行替换。Agent 部署前先读包内 Release 信息，使用其中的版本值和命令，再参考本指南中的通用步骤及参数说明；本指南的 `latest` / `main` 示例不代表该 ZIP 的固定版本。部署所需说明可本地读取，其他可选参考仍为公开链接；MCP 实例 URL 由用户配置。
+
+同仓库 PR、合并后的 `main` 和手动 CI 在验证镜像发布成功后，也会把 **`TGPorterSkills.zip`** 上传到该次 Actions 的 **Artifacts**，并在 **Agent skill CI preview** Summary 中提供下载链接。预览包绑定实际发布的 `sha-<完整提交号>` 镜像及 digest，源码和配置下载 URL 固定到同一提交；`release.json` 的 `kind` 为 `ci`，不生成不存在的 Release 标签链接。附件需登录 GitHub 下载，保留 14 天。Fork 和 Dependabot PR 不发布镜像，也不上传可部署预览包，但仍运行离线打包测试。
+
+安装位置、加载或刷新方式、调用语法以客户端文档为准。例如可请求“使用 tgporter Skill 帮我部署并连接 MCP”或“使用 tgporter Skill 查询失败任务”；这些是使用意图示例，不是统一的客户端命令。
+
+安装 Skill 不会自动部署服务或配置 MCP。按前文在客户端配置自己的实例地址和 Token；Skill 不包含公共服务地址或真实凭据。部署引导会读取对应版本的本地文档，或访问 GitHub 上的部署指南；无本地文档时需要能够访问 GitHub。客户端缺少部署所需的文件或终端操作能力时，可按照引导手动完成；日常下载管理通过客户端发现并检查已连接 MCP 的工具描述、参数 Schema 和注解，以其定义和实际返回结果为准，无需读取 GitHub 工具参考。批量大小和分页限制由实际 Schema 决定。
+
+Skill 随本仓库源码和版本标签分发；维护者发布包含该目录的提交或 Release 后，用户即可取得并导入，无需另建 Skill 仓库。各客户端的插件打包或市场上架属于可选的分发方式。
+
+维护者可在仓库根目录、已按[手动安装](#手动安装)安装 `requirements.txt` 的 Python 3.14 虚拟环境中预览发布包（无需真实 Telegram 凭据，也不会发布 Release）：
+
+```bash
+python tools/build_skill.py --tag v1.2.3 --commit "$(git rev-parse HEAD)" --output-dir dist
+```
+
+正式 Release 由工作流传入实际标签、源码提交和已发布镜像 digest；本地命令中的 `v1.2.3` 只是预览示例。
 
 ### 提交下载
 
@@ -524,7 +599,7 @@ environment:
 
 ### Bot 心跳与消息诊断
 
-网页顶部自动刷新 Bot 状态，显示连接正常、连接中、已断开、无响应、重连中、限流等待、已停止或未配置，并显示成功心跳的往返延迟和最近检查时间。`GET /get_bot_status` 只读取内存快照，遵循现有 Web 登录保护，不触发额外 Telegram 请求。MCP `get_status` 的 `bot_status` 返回同一快照，使用独立的 MCP Token 鉴权，只读模式也可查询；字段见 [MCP 工具参考](docs/mcp.md#结果与错误)。`connected` 仅表示近期收到匹配的 Pong；心跳启动后立即探测，首次 Pong 返回前显示连接中，不再先等待 60 秒；成功探测超过 70 秒未更新显示未知，网页请求失败也显示未知。未配置 `bot_token`（包括 Mock 模式）显示未配置；该状态只描述 Bot 会话，不代表主下载账号或各下载连接的状态。
+网页顶部自动刷新 Bot 状态，显示连接正常、连接中、已断开、无响应、重连中、限流等待、已停止或未配置，并显示成功心跳的往返延迟和最近检查时间。`GET /get_bot_status` 只读取内存快照，遵循现有 Web 登录保护，不触发额外 Telegram 请求。MCP `get_status` 的 `bot_status` 返回同一快照，使用独立的 MCP Token 鉴权，只读模式也可查询；字段见 [MCP 工具参考](https://github.com/smilekevin/TGPorter/blob/main/docs/mcp.md#结果与错误)。`connected` 仅表示近期收到匹配的 Pong；心跳启动后立即探测，首次 Pong 返回前显示连接中，不再先等待 60 秒；成功探测超过 70 秒未更新显示未知，网页请求失败也显示未知。未配置 `bot_token`（包括 Mock 模式）显示未配置；该状态只描述 Bot 会话，不代表主下载账号或各下载连接的状态。
 
 配置了 Bot 时，应用会独立于下载和进度通知，在心跳启动时立即发送一次 MTProto Ping，之后每 60 秒发送一次并等待匹配的 Pong，最多等待 10 秒。每轮仅尝试一次；Kurigram 的 `retries=1` 表示总共一次尝试，设为 `0` 不会发送请求，会立即产生超时误报。无需新增配置。Kurigram 自身约每 5 秒发送一次不等待回复的保活 Ping；应用心跳额外验证 Telegram 确实返回了响应。连续 3 次失败会尝试重连 Bot，成功重启后 300 秒内不再重连；重启失败则最早在 60 秒后重试。已有的进度通知连接错误阈值也由该独立循环处理。Bot 的已知 FLOOD_WAIT 期间暂停探测；探测遇到 FLOOD_WAIT 时记录并遵守冷却，不计为网络失败。关闭服务时取消并等待心跳任务；无 Bot 模式不启动心跳。
 
@@ -540,526 +615,3 @@ docker logs -f --since 5m --timestamps tgporter
 `message.forward_from_chat`、`message.forward_from_message_id` 和发送消息时的 `reply_to_message_id` 弃用警告不是网络断线证据。Bot 已改用 Kurigram 的 `forward_origin` 和 `ReplyParameters`，保留频道来源、Bot 私聊回退和回复目标。
 
 Pong 证明 Bot 会话能与 Telegram 往返通信，不能证明消息解析、授权和命令回复均正常。心跳正常但 `/help` 无回复时，先看 `authorized=False`，再检查消息入口日志、`update_queue`、`workers_alive` 和长时间未完成的 handler。长期没有心跳日志也可能是下载事件循环阻塞、进程停止或日志级别过滤；WebUI 正常并不能排除这些情况。心跳不向用户发送测试消息，不创建额外 Telegram session，也不重启主下载客户端。
-
----
-
-## Prerequisites
-
-The Telegram SDK is the Kurigram version pinned in `requirements.txt`, imported as `pyrogram`. Do not co-install Pyrogram, Pyrofork and Kurigram in one virtual environment. For an existing manual installation, recreate the virtual environment before installing the full requirements.
-
-The WebUI uses native HTML/CSS/JS and requires no Node.js installation or npm build. CI workflow script tests use Node.js 24 separately. Workflows use `actions/checkout@v5`, `actions/setup-node@v5` and `actions/setup-python@v6`, alongside `docker/build-push-action@v7`, `docker/login-action@v4`, `docker/setup-buildx-action@v4` and `docker/setup-qemu-action@v4`; these actions all run natively on Node.js 24.
-
-Install main-service dependencies from `requirements.txt`, which explicitly pins the tested Starlette, Uvicorn and Pydantic versions. Filter expressions use the pinned Lark parser; PLY and generated `parsetab.py` files are no longer needed. Flask-Login, Requests and PyCryptodome are no longer required. Recreate an older virtual environment when upgrading so leftover packages cannot hide missing dependencies.
-
-Before starting this version for the first time, stop the service and back up `data/sessions/`, `config.yaml`, `data/data.json`, `downloads/` and `downloads/.temp/`. Kurigram upgrades existing session databases in place. To roll back to the previous SDK, stop the service and restore the session backup from before migration. Task and `.parts/` checkpoint formats remain unchanged; offline migration tests do not replace real Telegram download acceptance checks.
-
-- Image deployment requires Docker; Compose deployment also requires Docker Compose. Manual installation uses Python 3.14 and pip.
-- Actual downloads require Telegram API credentials and access to the target messages. Mock development mode does not require Telegram login.
-- The display name is **TG Porter**, the repository name is `TGPorter`, and the GHCR image, Compose service and container use lowercase `tgporter`.
-- When upgrading, stop the old container and reuse its existing data mounts before starting the renamed service, so two instances cannot access the same sessions and task data. Rename the GitHub repository separately; the new GHCR image must be published by CI or a Release workflow before it can be pulled.
-- The prebuilt image is `ghcr.io/smilekevin/tgporter`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`. The README Version badge follows the latest stable GitHub Release tag; its Python badge reads `python-version` from `.github/workflows/tests.yml`. Badge updates appear after caches refresh.
-- For PR or main verification, use the SHA tag or digest from **CI image for verification** in the [CI Summary](https://github.com/smilekevin/TGPorter/actions/workflows/tests.yml). The [Release workflow](https://github.com/smilekevin/TGPorter/actions/workflows/docker-build.yml) adds pull commands, digests and platforms to Release notes after a successful image push, preserving the existing description and updating the same section on reruns. Package visibility must be Public for unauthenticated pulls.
-
-The commands below use `docker-compose`; replace it with `docker compose` if you use the Compose plugin.
-
-## Quick Start
-
-Docker deployment uses this fork's `ghcr.io/smilekevin/tgporter:latest` image, updated when GitHub Releases are published.
-
-### Before You Deploy: API Credentials and Bot Token
-
-These steps apply to image, Docker Compose and manual deployments. Local mock development mode does not require Telegram login.
-
-**Get `api_id` and `api_hash`**
-
-1. Sign in to [my.telegram.org](https://my.telegram.org) with the phone number of an existing Telegram account.
-2. Open [API development tools](https://my.telegram.org/apps), fill in the application details and create an application.
-3. Copy the displayed `api_id` and `api_hash` into your local `config.yaml`. Both phone and Bot Token login require these fields. Keep them private and out of public repositories. See [Telegram's official instructions](https://core.telegram.org/api/obtaining_api_id).
-
-**Get a Bot Token**
-
-1. Open [@BotFather](https://t.me/BotFather) in Telegram and send `/newbot`.
-2. Follow the prompts to set the bot's name and username, then copy the complete Token returned by BotFather.
-3. Enter the Token in `config.yaml` as `bot_token` for the command and notification bot. See [Telegram's official instructions](https://core.telegram.org/bots/features#botfather).
-
-The main download client supports phone or Bot Token login. Setting `bot_token` in the configuration does not replace the main client's first login. When downloading as a bot, it must have access to the target messages. First login and login after session loss are described under each deployment method below. See [Kurigram's authentication documentation](https://docs.kurigram.icu/start/auth) for background on both login methods.
-
-### Docker Image Deployment
-
-After starting the Bot, send `/help` or `/start` and use “Join us” to open the [Telegram group](https://t.me/tg_porter).
-
-With Docker installed on your server or NAS, run this fork's prebuilt image directly.
-
-1. **Prepare configuration and persistent data**: download [config.yaml.example](./config.yaml.example) from this repository, copy it to `config.yaml`, and create the `downloads/` and `data/` directories. Do not pre-create a runtime data file; the application generates `data/data.json` on first startup.
-
-```bash
-mkdir -p tgporter
-cd tgporter
-mkdir -p downloads data
-
-curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/main/config.yaml.example \
-  -o config.yaml.example
-[ -f config.yaml ] || cp config.yaml.example config.yaml
-```
-
-2. **Edit the configuration**: open `config.yaml` in a text editor and enter `api_id`, `api_hash` and `bot_token`, and change `web_login_secret` to your own password. See [Configuration](#configuration) for media types, permissions and concurrency. The template includes an example proxy; adjust `proxy` for your environment or set `proxy: {}` if you do not need one. With the mounts and port mapping below, keep `save_path: /app/downloads`, `web_host: 0.0.0.0` and `web_port: 5000`.
-
-3. **Pull the image and start it for the first time**: mount the configuration file, `data/` and downloads, then use interactive mode for Telegram login.
-
-```bash
-docker pull ghcr.io/smilekevin/tgporter:latest
-
-docker run -it \
-  --name tgporter \
-  --restart unless-stopped \
-  -p 5000:5000 \
-  -e TZ=Asia/Shanghai \
-  -v "$PWD/config.yaml:/app/config.yaml:ro" \
-  -v "$PWD/data:/app/data" \
-  -v "$PWD/downloads:/app/downloads" \
-  ghcr.io/smilekevin/tgporter:latest
-```
-
-4. **First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. When `Enter phone number or bot token:` appears in the terminal, choose either option and confirm with `y` when prompted:
-
-- **Phone**: enter your phone number with its country code (for example, `+8613812345678`), then the verification code sent by Telegram. Enter your two-step verification password if enabled.
-- **Bot Token**: enter the complete Token obtained in [Before You Deploy](#before-you-deploy-api-credentials-and-bot-token). No phone verification code is needed.
-
-After login succeeds, press `Ctrl+C` to stop the current foreground run. The session persists in the mounted `data/sessions/` directory; a valid saved session avoids repeat login on restart. Tasks and download history persist in `data/log/`. See [Docker Data Persistence](#docker-data-persistence) for mount details.
-
-5. **Start in the background and access WebUI**: run the following commands to stop the container and use [`docker start`](https://docs.docker.com/reference/cli/docker/container/start/) to start the existing container in the background:
-
-```bash
-docker stop tgporter
-docker start tgporter
-```
-
-Once started, open `http://SERVER_IP:5000` and enter your configured password. See [WebUI Login](#webui-login).
-
-### Docker Compose Deployment
-
-Deploy with the repository's `docker-compose.yaml`:
-
-```bash
-git clone https://github.com/smilekevin/TGPorter.git
-cd TGPorter
-
-# Preserve existing configuration and runtime data.
-[ -f config.yaml ] || cp config.yaml.example config.yaml
-mkdir -p downloads data
-# Edit config.yaml with your credentials and change the WebUI password.
-```
-
-Prepare only `config.yaml` as a file before starting Docker. Mount `data/` as a writable directory; JSON, logs and sessions are created automatically. Staging defaults to `save_path/.temp/` (`/app/downloads/.temp` in this example), without a separate mount. The repository Compose file enables example proxy environment variables; adjust or remove them for your network. A complete example without environment variable proxies is:
-
-```yaml
-services:
-  tgporter:
-    image: ghcr.io/smilekevin/tgporter:latest
-    container_name: tgporter
-    network_mode: bridge
-    stdin_open: true
-    tty: true
-    ports:
-      - "5000:5000"
-    environment:
-      - TZ=Asia/Shanghai
-      # - http_proxy=socks5://172.17.0.1:1080
-      # - https_proxy=socks5://172.17.0.1:1080
-    volumes:
-      # Downloads (change the host path if needed)
-      - "./downloads:/app/downloads/"
-      # Configuration files
-      - "./config.yaml:/app/config.yaml:ro"
-      - "./data:/app/data"
-    restart: unless-stopped
-```
-
-You can change the host download directory to `/your/download/path:/app/downloads/`; keep `save_path: /app/downloads` inside the container. When changing `web_port`, update the Compose port mapping too. Prebuilt images need only configuration and data mounts; avoid mounting local source code over the image.
-
-**First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. Start a one-off container in an interactive terminal, stopping the background service first if it is running:
-
-```bash
-# Pull a published Release image.
-docker-compose pull
-docker-compose stop tgporter
-docker-compose run --rm tgporter
-```
-
-At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. After login succeeds, press `Ctrl+C` to stop this foreground run, then start the background service:
-
-```bash
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-```
-
-Compose saves the session in the host's `data/sessions/` directory. `--rm` removes only the one-off container, leaving mounted directories intact. A valid saved session avoids repeat login on later starts.
-
-### Manual Install
-
-```bash
-git clone https://github.com/smilekevin/TGPorter.git
-cd TGPorter
-python3.14 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-
-[ -f config.yaml ] || cp config.yaml.example config.yaml
-# Enter credentials and a WebUI password; set save_path to a local path such as ./downloads.
-# Adjust proxy for your network, or use proxy: {} if it is not needed.
-```
-
-**First login (or when login is needed again, such as after session expiry)**: **The account signed in here performs the actual downloads**. The program accesses and downloads messages as that Telegram user or bot, using that account's permissions. Stop any running downloader process, then run the following command from the project directory in an interactive terminal:
-
-```bash
-python media_downloader.py
-```
-
-At `Enter phone number or bot token:`, enter your phone number with its country code or a complete Bot Token, and confirm with `y`. Phone login also requires a verification code and your two-step verification password if enabled; Bot Token login does not require a phone verification code. The program continues running after login. The session is saved in the project's `data/sessions/` directory. A valid saved session avoids repeat login on later starts.
-
-### Local Dev Mode
-
-From the repository root, use a Python 3.14 virtual environment. Only Flask and Werkzeug are required; Telegram credentials and the full downloader dependencies are unnecessary.
-
-```bash
-python3.14 -m venv .venv
-source .venv/bin/activate
-python -m pip install Flask==3.1.3 Werkzeug==3.1.9
-# No Telegram account needed, mock data for WebUI debugging
-python run_local.py
-# Open http://localhost:5000
-```
-
-Select **English** from the language menu at the top right to preview the [English dashboard shown in the README](./README.md#webui-preview). The README provides a 2560 × 1440 screenshot captured in local Mock mode, with demo download data and a simulated Connected Bot status; this mode does not perform real downloads.
-
----
-
-## Configuration
-
-Download filters retain comparisons, arithmetic, `and` / `or`, `&&` / `||`, parentheses, single-quoted strings, `r'...'` regexes and `B` / `KB` / `MB` / `GB` / `TB` units. Dates require a full time (for example, `2024-01-01 00:00:00`). Regex comparisons use full matching and accept the regex on either side. Illegal characters now produce syntax errors instead of being skipped. Missing-field behavior and operator precedence retain the existing rules.
-
-### config.yaml
-
-Adjust the example for your environment and change `web_login_secret` before deployment. The example uses four workers per file; the application default is one when the option is omitted. Use `proxy: {}` if you do not need the template proxy.
-
-```yaml
-# Telegram API credentials (required)
-api_id: your_api_id
-api_hash: your_api_hash
-bot_token: your_bot_token
-
-# Media types
-media_types:
-  - audio
-  - document
-  - photo
-  - video
-  - voice
-  - animation
-
-# File format filter (all = all formats)
-file_formats:
-  audio:
-    - all
-  document:
-    - pdf
-    - epub
-  video:
-    - mp4
-
-# Download settings
-save_path: /app/downloads
-file_path_prefix:
-  - chat_title
-  - media_datetime
-file_name_prefix:
-  - file_name
-hide_file_name: false
-
-# Concurrency
-max_download_task: 5  # number of workers
-file_download_concurrency: 4  # concurrent download workers per file
-download_part_size_mb: 64  # fixed part size in MiB; the final part uses the remaining size
-
-# WebUI
-web_host: 0.0.0.0
-web_port: 5000
-web_login_secret: "replace-with-a-long-password"  # WebUI password; "" disables login
-mcp_token: ""  # MCP-only bearer token, independent of the browser password
-mcp_enabled: false
-mcp_read_only: false
-mcp_allowed_hosts: []
-
-# Permissions
-allowed_user_ids:
-  - 'me'  # 'me' = currently logged-in account
-
-# Other
-language: zh-cn
-date_format: '%Y_%m'
-enable_download_txt: false
-log_level: DEBUG
-
-# Proxy (Docker: access host proxy)
-proxy:
-  scheme: http
-  hostname: 172.17.0.1
-  port: 20172
-```
-
-### Parameters
-
-Defaults apply when an option is omitted and may differ from the example configuration.
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `api_id` | Telegram API ID ([my.telegram.org](https://my.telegram.org/apps)) | — |
-| `api_hash` | Telegram API Hash | — |
-| `bot_token` | Command and notification bot Token ([@BotFather](https://t.me/BotFather)); may be empty in MCP-only mode | — |
-| `media_types` | Media types to download | — |
-| `file_formats` | Format filter per type | — |
-| `save_path` | File save path | `./downloads` |
-| `max_download_task` | Concurrent download workers | `5` |
-| `file_download_concurrency` | Concurrent download workers per file | `1` |
-| `download_part_size_mb` | Fixed part size in MiB; positive integer | `64` |
-| `web_port` | WebUI port | `5000` |
-| `web_login_secret` | WebUI/API session-login password; empty preserves public access; independent of MCP authentication | `""` |
-| `mcp_token` | MCP-only bearer token; printable ASCII without whitespace; required when MCP is enabled | `""` |
-| `mcp_enabled` | Enable the same-port `/mcp` Streamable HTTP endpoint, always requiring a token | `false` |
-| `mcp_read_only` | Expose only MCP query tools without restricting separate browser sessions | `false` |
-| `mcp_allowed_hosts` | Additional allowed Host values: domain/IP with optional port; localhost/loopback already allowed | `[]` |
-| `allowed_user_ids` | Allowed Bot users (`'me'` = self) | `[]` |
-| `language` | Default Bot language and translated logs (`en` / `zh-cn` / `zh-tw` / `ja` / `es` / `fr` / `ru` / `uk`; legacy `ZH` / `UA` remain valid), independent of WebUI | `EN` |
-| `proxy` | Proxy config (scheme / hostname / port) | `{}` |
-| `log_level` | Log level | `INFO` |
-| `hide_file_name` | Hide filenames in UI | `false` |
-| `enable_download_txt` | Save text-only messages as .txt | `false` |
-| `date_format` | Date directory format | `%Y_%m` |
-
-The WebUI (including sign-in) and Bot share `lang/*.json` catalogs: Simplified Chinese (`zh-cn`), Traditional Chinese (`zh-tw`), English (`en`), Japanese (`ja`), Spanish (`es`), French (`fr`), Russian (`ru`) and Ukrainian (`uk`). Each language has one file and shared vocabulary is translated once. English `messages` lists canonical keys; other languages map those keys to translations. The browser matches language preferences in order; `zh` falls back to `zh-cn`, while `zh-TW` / `zh-HK` / `zh-Hant` select Traditional Chinese. Unsupported languages fall back to English. Manual choices are saved in the current browser and take priority; no IP geolocation is used. Configure the Bot independently, for example `language: zh-tw` or `/set_language ja`. Legacy `ZH` / `zh` still mean Simplified Chinese and `UA` / `ua` still mean Ukrainian. Bot language is saved with runtime state in `data/data.json` using canonical codes, leaving `config.yaml` unchanged. Runtime code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. Failure records store English keys and translate when displayed by the Bot or browser; unrecognized historical records retain their original text. Missing messages fall back to English, then the original text; existing Russian and Ukrainian translations are preserved, with English fallback for untranslated additions.
-
-To add a language, copy a translated catalog such as `lang/fr.json` to a new language file, edit `code`, `name`, `aliases` and `messages`, then restart. Both Bot and browser discover it automatically; no extra dependency or frontend build is required. See the [catalog guide](docs/languages.md) for steps and placeholder rules.
-
-Files are split into fixed-size parts using `download_part_size_mb`; the final part contains the remaining bytes.
-At 64 MiB per part, a 40 MiB file has one part, a 100 MiB file has two and a 500 MiB file has eight.
-Each file starts with one connection. A new connection must receive and write its first valid block before the next connection may start, with starts at least one second apart, up to `file_download_concurrency` workers. A blocked handshake or first response prevents expansion. A failed start closes its connection and requeues its unfinished part before another attempt, using the existing failure budget. Healthy connections continue downloading; confirming startup does not require finishing a whole part. Finished workers take the next queued part until
-all parts are complete, then the parts are merged in order. Each worker owns an independent Telegram download
-TCP connection and uses it for successive parts; different workers and files do not share download connections.
-Pauses retain connections; completion, cancellation and client restart close them. File workers start on demand when tasks enter the queue and exit when it empties; an empty startup creates none. Raising the limit adds workers only for queued tasks; lowering it lets active files finish before reducing concurrency. `max_download_task` limits
-simultaneous files: five files with four workers each can run up to twenty concurrent workers, without an additional global concurrency setting.
-Concurrency changes through WebUI, Web API or MCP apply immediately and save to `max_download_task` in `data/data.json` for subsequent restarts; `config.yaml` stays read-only. Without a saved runtime value, the configured initial value applies (`5` when omitted). To restore the configured default, stop the service and remove the JSON `max_download_task` key.
-Cancellation closes connections before applying the file deletion choice to staging files and `.parts/` in `downloads/.temp/`. For active and failed tasks, the deletion dialog indicates whether staging files or part directories exist without listing cache paths; it reports no files only when neither output nor cache at recorded paths exists. WebUI checks the file and cache option by default for active/failed tasks and leaves it unchecked for completed tasks, including batch actions. Deselect it to retain files and checkpoints. Web API/MCP `delete_file` defaults to `false`; Bot cancellation still cleans staging by default. Older failed records without a recorded staging path can only clean files whose paths are known.
-A failed download connection closes and returns its unfinished part to the queue while healthy connections keep running. A single worker failure does not end the file while another worker remains; only three consecutive failures of the last worker fail the download, without another file-level retry budget. Completing a part resets the counter. The last worker retries with up to 50% random jitter capped at 30 seconds: the two waits are 10–15 and 20–30 seconds. Local disk writes and checkpoint validation errors are not retried as connection errors. Explicit expired/invalid references refetch the original message and validate file identity and size before resuming; other BadRequest errors retain their actual exception type. FLOOD_WAIT / FLOOD_PREMIUM_WAIT does not consume attempts or impose cumulative limits or a 600-second manual-resume threshold. Throttled connections close with checkpoints retained; cooldown blocks new connections while healthy existing connections continue taking parts. If all connections are throttled, they wait for the longest shared cooldown, then automatically resume from checkpoints with gradual connection creation. The UI displays the shared FLOOD_WAIT countdown. Manual pause, resume and cancellation remain available; cooldown expiry does not clear a manual pause.
-The initial part size and worker count are saved. Pauses, retries and process restarts reuse this plan and skip completed parts.
-Progress sums downloaded bytes across all parts; resumed bytes do not count toward new transfer speed.
-The WebUI header shows the total active stream count; file cards, Bot progress reports and `/query` show each file's count. This counts streams executing download requests (including requests awaiting data), rather than the configured worker limit. Workers waiting to start, idle workers, retry backoff, cooldown waits and local merging are excluded. Paused files show zero, as does the total during a global pause. Counts resume with downloads and are not retained after completion, failure, cancellation or restart.
-The Bot `/query` command lists download records and pending tasks, six rows per page with category totals. Use the category, paging and refresh buttons or enter `/query active`, `/query pending`, `/query completed 2` or `/query failed`. Active lists include paused tasks. Commands and buttons use the existing `allowed_user_ids` allowlist and do not modify tasks.
-The Bot edits the existing progress message about every 10 seconds when its content changes, without waiting for 20% milestones. FLOOD_WAIT notices show remaining seconds; downloads resume automatically after cooldown while manual pauses remain in effect. If the Bot messaging endpoint itself is rate limited, reports stop during its cooldown and resume with a notice afterward; undelivered completion reports remain available for retry. Each report waits at most 10 seconds, so notification failures do not stall downloads.
-Legacy checkpoints remain resumable. If the new field is absent, `download_min_part_size_mb` is accepted as a
-legacy part-size value without rewriting the configuration file. The earlier `download_concurrency` setting has been removed.
-
-New downloads use `downloads/.temp/timestamp_guid.tmp` without channel titles or original filenames. The timestamp is the message's Unix time in seconds (`0` when no date is available); the GUID is derived from the owning client, chat ID, message ID and media identity. Retries and restarts reuse the same path without an extra index file. Part plans and data live in `timestamp_guid.tmp.parts/`, including `manifest.json`; SDK/merge checkpoints may use `timestamp_guid.tmp.temp`. Existing legacy checkpoints keep their paths until completion or explicit deletion. Completed files retain the configured naming rules.
-Persist the entire `downloads/.temp` directory. Merging multiple parts may
-temporarily require twice the file size in disk space; a single part is moved without a full extra copy.
-See the [download test guide](docs/parallel-download-testing.md) for offline and live acceptance checks.
-For cross-DC regular media downloads, create the auth key through the target DC's regular endpoint once and reuse it in memory for subsequent workers/files of the same account, DC and test mode. A per-key lock prevents duplicate handshakes. Each worker still owns its media session and TCP connection and follows the existing authorization flow. The account's home DC still reuses its stored key; CDN connections retain their own endpoints. The cache is isolated by account, never written to disk or logs, and cleared when the client stops/restarts. Explicit key-rejection errors discard only the matching old cache entry so the next attempt can negotiate a new key. Auth-key creation has a 60-second limit; a timeout closes that connection and preserves checkpoints for the existing connection retry policy. This limit does not cap normal file transfers. DEBUG logs include media/auth endpoint addresses, ports and CDN flags, without key or authorization payloads.
-The application writes only `data/log/tdl.log`, rotating at 10MB and retaining logs for 30 days. It no longer creates `download.log`; existing historical logs are left in place. In this log, `Waiting for first data` identifies the file, worker and DC before data arrives.
-`Opened independent download connection #…` means the first block has arrived; `Confirmed independent download startup` confirms that a valid block was written and allows another connection to start. `Closed independent download connection #…` records resource cleanup. Cancellation before any data also logs resource release.
-Set `log_level: DEBUG` to trace DC resolution, storage reads, auth-key creation, session startup, authorization export/import and the first media request. While waiting for first data, a WARNING reports the current stage and time spent in that stage every 30 seconds, without changing request timeouts or retries. SDK log levels are separate; application diagnostics omit authorization payloads.
-
----
-
-## WebUI Login
-
-The search field above the list filters the current tab by task ID or filename and retains the query across tabs. Clear search to restore the full list. Active/Failed filter their complete data; Pending/Completed search on the server before pagination, including unloaded pages. Select all applies only to matching tasks. Paused files remain in Downloading, with a status filter and shortcuts to select all, running or paused matches. The list shows matching and total counts. The standalone global pause button is removed; pause/resume acts on the selection. Pause is available for running selections and resume for paused selections; both are disabled for mixed states. Cancel task in Pending cancels an unstarted queued task; submit its link again to download it later. Completed offers batch deletion only, while Failed offers batch retry and deletion. Initial requests load in parallel. Visible pages refresh in cycles, scheduling the next cycle only after the previous one finishes. Polling pauses while hidden and refreshes immediately on return; requests already in flight may finish. Status/active tasks refresh each cycle, Pending/failures at least five seconds apart, and completed counts at least ten seconds apart. Read requests time out after 15 seconds; mutations retain their existing waiting behavior. Slow connections can lengthen refresh intervals. The system reduced-motion preference disables decorative animations.
-
-Open `http://SERVER_IP:5000`. A non-empty `web_login_secret` protects the dashboard and download APIs. Enter that password on the login page; use the top-right action to log out. The login page offers an unchecked “Remember me (7 days)” option. Selecting it stores a persistent cookie so reopening the browser does not require another password; otherwise it uses a browser-session cookie (browser session restore may retain it). Both expire after at most seven days and require login again after a service restart or password change. State-changing requests using browser sessions also require the session's CSRF token; the WebUI supplies it automatically. The Web API accepts only browser login sessions, not bearer tokens. Agents use `/mcp` with a separate MCP token.
-
-The dashboard accepts one HTTPS `t.me` post link (public, private or topic). It uses the existing server Telegram login and requires access to the chat. Submission persists before the existing consumer fetches media; unfinished duplicate posts reuse their task. With no `bot_token` and MCP disabled, the same backend still starts and the service stays running after configured downloads finish to accept WebUI tasks.
-
-Set `web_login_secret: ""` to disable password login and restart the service after changing configuration. Existing deployments must use an image containing the login implementation; changing an older image's configuration alone does not enable it.
-
-## MCP Agent Integration
-
-MCP is integrated into the downloader, reusing the main image, container and `web_port` (default `5000`). Its endpoint is `/mcp`. Tools call internal download-management operations directly. [Tool reference](./docs/mcp.md#mcp-tool-reference). The 13 tools submit and manage downloads; `submit_download` accepts a single Telegram message link and persists it in the existing Pending queue.
-
-### Enable MCP
-
-MCP is disabled by default. Generate a random token:
-
-```bash
-python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
-```
-
-Set the quoted `mcp_token` value in `config.yaml` and enable MCP. Tokens must be printable ASCII strings without whitespace; an empty string or `null` means unconfigured:
-
-```yaml
-mcp_token: "paste-your-generated-token-here"
-mcp_enabled: true
-mcp_read_only: false
-mcp_allowed_hosts: ["nas.example.com"]
-```
-
-Enabling MCP without a non-empty `mcp_token` fails startup. Every request requires a bearer token. When disabled, `/mcp` returns `404`.
-
-Use `mcp_allowed_hosts` for additional allowed domains/IPs, such as `["nas.example.com", "192.168.1.20:5000"]`. Ports must match the request's Host header; omit scheme and path. Wildcards are not supported. Localhost/loopback remain allowed by default. Origin validation automatically reuses the same allowlist for HTTP/HTTPS origins. The listener still uses `web_host` and `web_port`; configure the full connection URL only in the client.
-
-After updating the main image to a version containing this feature, edit the configuration and restart the existing container:
-
-```bash
-docker compose restart tgporter
-```
-
-Initial deployment, image updates and source builds use the main-service instructions above. No additional image, container, port, environment variables or dependency file is needed. Local installs use `pip install -r requirements.txt`. Existing persistence mounts remain unchanged.
-
-### Agent Client
-
-Connect through Streamable HTTP at the server’s `/mcp` URL. Clients supporting `url` and `headers` can use this example; actual fields depend on the client:
-
-```json
-{
-  "mcpServers": {
-    "TGPorter": {
-      "url": "https://nas.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer paste-the-token-from-config.yaml"
-      }
-    }
-  }
-}
-```
-
-Use `http://127.0.0.1:5000/mcp` locally or the configured NAS URL on a LAN. For public access, use an HTTPS reverse proxy that preserves the original Host header and forwards GET, POST and DELETE requests to `/mcp`. Authentication uses a preconfigured bearer token, without an OAuth login page. Store tokens in protected configuration and request headers, never URLs or tool parameters. Missing or invalid tokens return `401`.
-
-`mcp_read_only: true` exposes only the three query tools, without download submission. After rotating a token, restart the downloader and update agent configuration; the previous token is revoked. Write tools are enabled by default; deletion's `delete_file` defaults to `false`. See the [tool reference](./docs/mcp.md#mcp-tool-reference).
-
-### Submit a Download
-
-Call `submit_download` with arguments such as:
-
-```json
-{"url": "https://t.me/channel_name/123"}
-```
-
-Public posts, private-channel posts such as `https://t.me/c/123456/789`, and topic-message links are supported. The downloader's logged-in Telegram account must have access to the chat. For MCP-only submissions, set `bot_token: ""`; the service stays running and starts the existing queue/recovery backend without creating another Bot session. Only single-message HTTPS `t.me` links are accepted; channel homepages, invite links, query parameters, whole-channel downloads and ranges are unsupported. Chat lookup times out after 10 seconds. Startup-not-ready and Telegram cooldown conditions return tool errors.
-
-A `pending` response means durable queue acceptance, not a completed download. `task_id` identifies active/completed records; `pending_task_id` identifies the pending record and can be passed to `remove_pending_task`. `task_id_display` is for display only. Repeating a post that is still pending/downloading returns its existing task with `duplicate: true`. Submissions reuse concurrency limits and restart recovery without sending extra Bot notifications. Use `list_downloads` to follow progress.
-
-## Docker Management
-
-```bash
-# Background start and logs.
-docker-compose up -d
-docker-compose logs -f
-
-# Stop or restart.
-docker-compose down
-docker-compose restart
-
-# Update to the image configured in Compose.
-docker-compose pull
-docker-compose up -d --force-recreate
-
-# Container status.
-docker-compose ps
-```
-
-For a container created with `docker run`:
-
-```bash
-docker logs -f tgporter
-docker restart tgporter
-docker stop tgporter
-docker start tgporter
-```
-
-To update an image, recreate the container with the new image while preserving configuration, ports and mounts. Restarting the existing container does not change its image.
-
-## Image Migration and Local Builds
-
-The old `ghcr.io/smilekevin/hermes-telegram-downloader` package retains historical images. For migration, change Compose's `image` to the new package and select a newly built version or digest. Historical digests still require the old package address.
-
-To build local source, clone the repository and prepare configuration, set `image: tgporter:local` and add `build: .` to the Compose service, then run:
-
-```bash
-docker-compose build
-# Stop any background service before first login.
-docker-compose stop tgporter
-docker-compose run --rm tgporter
-# After login, press Ctrl+C and start in the background.
-docker-compose up -d
-```
-
-After updating local source, run `docker-compose up -d --build`. See [Docker Compose Deployment](#docker-compose-deployment) for first-login details.
-
-## Docker Data Persistence
-
-| Path | Description |
-|------|-------------|
-| `./downloads/` | Downloaded files |
-| `./config.yaml` | Read-only startup configuration; never rewritten by the application |
-| `./data/` | Mounted as `/app/data`; the application creates the runtime contents below |
-| `./data/data.json` | Chat scan positions, retry IDs, ad rules, Bot language and concurrency |
-| `./data/log/` | Logs + task persistence (bot_tasks.json / task_counter.json / download_history.json) |
-| `./data/sessions/` | Telegram login sessions |
-| `./data/bot.yaml` | Bot filter settings managed by the application |
-| `./downloads/.temp/` | Staging files and `.parts/` checkpoints, persisted with downloads |
-
-The application only reads `config.yaml`; scans, Bot commands and shutdown never rewrite it. Docker examples mount it with `:ro` and mount `data/` as a writable directory. First startup automatically creates `data/data.json`; no runtime file needs to be prepared. JSON saves use locked atomic replacement through a temporary file. Each `chat[]` record contains its `chat_id`, retry message IDs in `ids_to_retry` and the next scan position in `last_read_message_id`. Startup uses the later of the configured initial position and saved checkpoint. Records for currently unconfigured chats and unrelated data keys are preserved.
-
-The top-level `filter_advertisement_list`, `replace_advertisement_list`, `group_add_advertisement` and Bot `language` now live in `data/data.json`. Existing config values remain initial defaults; saved data takes precedence whenever its key exists, including empty lists and dictionaries. Bot language, ad rules and concurrency settings save immediately, before success is reported. Browser language stays in browser storage. To restore initial ad rules or language, stop the service and remove only the corresponding data keys, preserving download state. To rescan earlier messages, also stop the service before adjusting that chat's saved checkpoint and configured initial position.
-
-Persist only `config.yaml`, `data/` and the download directory. The application creates `data/log/`, `data/sessions/` and `.temp/` inside the download directory; no separate log, session or temp mount is needed. Recreating a container keeps this host data. A custom host download directory replaces `./downloads/` in this table.
-
-When the main download account is a Bot, list the human operator's numeric Telegram user ID in `allowed_user_ids`. Numeric IDs do not depend on that Bot's peer cache. `me` refers to the main download account itself and does not automatically authorize a human operator. Startup help notifications are sent only to a human main account.
-
-## Proxy Configuration
-
-Configure the Kurigram connection to Telegram in `config.yaml`:
-
-```yaml
-proxy:
-  scheme: socks5
-  hostname: 172.17.0.1
-  port: 1080
-```
-
-The template uses an HTTP proxy at `172.17.0.1:20172`. Match the scheme, host and port to your actual proxy. Other requests that support environment variable proxies can use Compose's `environment`:
-
-```yaml
-environment:
-  - http_proxy=socks5://PROXY_IP:PORT
-  - https_proxy=socks5://PROXY_IP:PORT
-```
-
-Inside a container, `127.0.0.1` refers to the container itself. Use a reachable proxy host; `172.17.0.1` depends on the Docker or NAS network. Manual installations use a host reachable from the local machine. If no proxy is needed, set `proxy: {}` and remove or comment out the Compose proxy environment variables. Omitting `proxy` or setting it to `null` also disables the Telegram proxy. Both the main client and Bot client convert empty proxy configuration to the `None` value required by Kurigram.
-
-## Troubleshooting
-
-1. **Container does not start**: inspect `docker-compose logs`; configuration mount sources must be files.
-2. **Cannot connect to Telegram**: check proxy reachability from the container.
-3. **Download fails**: inspect the failure reason in the WebUI Failed tab.
-4. **Permission errors**: ensure mounted directories are writable.
-5. **Session is lost**: check the `data/sessions/` mount and repeat interactive login.
-6. **FLOOD_WAIT**: wait for the Telegram cooldown; pending tasks are retried automatically.
-
-### Bot Heartbeat and Message Diagnostics
-
-The dashboard header automatically refreshes Bot health, showing connected, connecting, disconnected, unresponsive, reconnecting, rate limited, stopped or not configured, with successful heartbeat round-trip latency and the last check time. `GET /get_bot_status` reads an in-memory snapshot under the existing Web login protection and sends no additional Telegram requests. MCP `get_status.bot_status` returns the same snapshot under the independent MCP token authentication, including in read-only mode; see the [MCP tool reference](docs/mcp.md#mcp-tool-reference) for fields. `connected` requires a recent matching Pong; the heartbeat probes immediately on startup and shows connecting until the first Pong arrives, without an initial 60-second wait; a successful probe older than 70 seconds becomes unknown, and failed Web reads also show unknown. Without `bot_token` (including Mock mode), it shows not configured. This describes the Bot session only, independently of the main account and media connections.
-
-When a Bot is configured, an independent loop sends an MTProto Ping immediately when the heartbeat starts, then every 60 seconds, and waits up to 10 seconds for a matching Pong. Each probe makes one attempt: Kurigram counts total attempts in `retries`, so `retries=1` sends once while `0` sends nothing and immediately reports a false timeout. No new configuration is required. Kurigram also sends its own keepalive Ping about every 5 seconds without waiting for a response; the application probe additionally verifies that Telegram responds. Three consecutive failures trigger a Bot reconnect attempt. A successful restart has a 300-second reconnect cooldown; a failed restart can retry after 60 seconds. The same independent loop handles the existing progress-report connection-error threshold. Probes defer during a known Bot FLOOD_WAIT; a FLOOD_WAIT from the probe records and respects the cooldown instead of counting as a network failure. Shutdown cancels and awaits the heartbeat; operation without a Bot does not start it.
-
-For the default container name:
-
-```bash
-docker logs --since 30m --timestamps tgporter
-docker logs -f --since 5m --timestamps tgporter
-```
-
-The same events go to `data/log/tdl.log` under the configured `log_level`, rotation and retention. At `INFO`, `Bot heartbeat OK` reports `rtt_ms`, the local `connected` flag, pending `update_queue`, `workers_alive`, `active_handlers`, the oldest handler's age and function name, and seconds since the last received message. `Bot heartbeat failed` includes the exception type, elapsed time and consecutive failure count. Reconnect attempts, outcomes and cooldowns are logged too; recovery emits `Bot heartbeat recovered`, and event-loop delays of at least 10 seconds report `event_loop_delay_s`. `Bot message received` records the message ID, type, `authorized` result and age since sending (`message_age_s`), followed by `Bot handler started` / `Bot handler finished` with the matching function, outcome and elapsed time. Logs exclude message bodies, command arguments, callback data and tokens.
-
-Deprecation warnings for `message.forward_from_chat`, `message.forward_from_message_id` or the `reply_to_message_id` sending argument do not indicate network loss. The Bot now uses Kurigram `forward_origin` and `ReplyParameters`, preserving channel origins, Bot-inbox fallback and reply targets.
-
-A Pong confirms round-trip communication on the Bot session; it does not prove message parsing, authorization or command replies work. If heartbeats succeed but `/help` does not respond, check for `authorized=False`, message receipt logs, `update_queue`, `workers_alive` and handlers that never finish. Missing heartbeats can also indicate a blocked downloader event loop, a stopped process or log-level filtering; a responsive WebUI does not rule these out. Probes send no test messages to users, create no additional Telegram sessions and do not restart the main download client.

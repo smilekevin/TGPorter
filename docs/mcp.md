@@ -61,7 +61,7 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 
 TG Porter’s integrated `/mcp` endpoint exposes 13 typed tools on the main service and calls internal task-management operations directly. Every request requires the configured `mcp_token`. Tools submit single Telegram post links and manage downloads.
 
-Complete installation, token generation/configuration, Streamable HTTP client examples, Docker/NAS deployment and updates are maintained in [DEPLOY.md: MCP Agent Integration](../DEPLOY.md#mcp-agent-integration).
+Complete installation, token generation/configuration, Streamable HTTP client examples, Docker/NAS deployment and updates are maintained in [DEPLOY_EN.md: MCP Agent Integration](../DEPLOY_EN.md#mcp-agent-integration).
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 
 Use exact `task_id` values, not `task_id_display`. Lists default to active, offset zero and 100 entries, with at most 500 per page; active includes individually paused tasks, identified by each record's `status`. Only completed supports search. Batches accept up to 100 task IDs.
 
-`submit_download` accepts HTTPS `t.me` post links up to 2048 characters and returns `task_id` for active/completed records, `pending_task_id` for pending/cancellation, and a display-only `task_id_display`. Repeating an unfinished post returns the same task with `duplicate: true`. See [Submit a Download](../DEPLOY.md#submit-a-download) for account requirements, supported links, timeouts and queue semantics.
+`submit_download` accepts HTTPS `t.me` post links up to 2048 characters and returns `task_id` for active/completed records, `pending_task_id` for pending/cancellation, and a display-only `task_id_display`. Repeating an unfinished post returns the same task with `duplicate: true`. See [Submit a Download](../DEPLOY_EN.md#submit-a-download) for account requirements, supported links, timeouts and queue semantics.
 
 `get_status.bot_status` returns the same cached snapshot as the WebUI `/get_bot_status` endpoint, including in `mcp_read_only` mode, without sending Telegram requests:
 
@@ -91,7 +91,7 @@ Use exact `task_id` values, not `task_id_display`. Lists default to active, offs
 | `flood_wait_remaining` | Remaining Bot cooldown seconds |
 | `heartbeat_interval` | Subsequent probe interval, default `60` seconds |
 
-The heartbeat probes immediately on startup. `connected` requires a recent matching Pong; a successful probe older than 70 seconds becomes `unknown`. Without `bot_token`, the status is `disabled`. This describes only the Bot session, independently of the main account and media connections. See [Bot Heartbeat and Message Diagnostics](../DEPLOY.md#bot-heartbeat-and-message-diagnostics).
+The heartbeat probes immediately on startup. `connected` requires a recent matching Pong; a successful probe older than 70 seconds becomes `unknown`. Without `bot_token`, the status is `disabled`. This describes only the Bot session, independently of the main account and media connections. See [Bot Heartbeat and Message Diagnostics](../DEPLOY_EN.md#bot-heartbeat-and-message-diagnostics).
 
 Results are structured objects; lists contain `tasks` and `total`. Shared-operation failures (`code="0"`) become MCP tool errors; missing or invalid HTTP tokens return `401`. Batch retries report `queued` and `errors` for partial failures, and acceptance does not imply download completion. Check task state before repeating timed-out writes.
 

@@ -103,6 +103,7 @@
 
 ### Agent 接入
 
+- **可选 Agent Skill** — Release 提供 `TGPorterSkills.zip`，仅收录英文部署与参数指南、集中生成的版本信息和绑定镜像版本的 Compose，可交给支持 ZIP 的 Agent；[tgporter](./skills/tgporter/SKILL.md) 运行时以已连接 MCP 的工具定义为准。同仓库 PR、`main` 和手动 CI 还提供绑定 SHA 镜像的预览 ZIP（Actions Artifacts，保留 14 天）。[安装与使用](./DEPLOY.md#安装可选-skill)
 - **MCP 工具** — 13 个工具支持提交下载、任务查询、暂停、恢复、重试、删除和并发设置；支持不配置 Bot 的 MCP 独立运行模式
 - **接入方式** — Streamable HTTP，与主服务共用端口和镜像，使用独立 Token 鉴权
 - **只读模式** — 可仅开放查询工具
@@ -426,7 +427,7 @@ PR 检查运行这些测试，并验证 Alpine Docker 镜像在 amd64 和 arm64 
   <a href="#webui-preview">WebUI Preview</a> ·
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
-  <a href="./DEPLOY.md#prerequisites">Deployment Guide</a> ·
+  <a href="./DEPLOY_EN.md#prerequisites">Deployment Guide</a> ·
   <a href="#bot-commands">Bot Commands</a> ·
   <a href="#web-api-1">Web API</a> ·
   <a href="#architecture">Architecture</a> ·
@@ -480,7 +481,7 @@ From Telegram links to local files, take control of every download in one clean 
 - **Task ID** — `MMDD-N` format (e.g. `0628-1`), resets daily, persistent counter
 - **Pending queue** — tasks enter pending state first, fed to workers by consumer loop; in-memory reservations distinguish tasks waiting for worker pickup
 - **Download progress persistence** — checkpoints during scans, at scan completion and on shutdown save to `data/data.json` for restart recovery
-- **Read-only startup configuration** — the application never rewrites `config.yaml`; it generates `data/data.json` for ad rules, Bot language, checkpoints and retry IDs. Logs and sessions share the `data/` mount; staging uses `save_path/.temp/`. Bot language, ad rules and UI/API/MCP concurrency changes save immediately and survive restarts. [Persistence details](./DEPLOY.md#docker-data-persistence)
+- **Read-only startup configuration** — the application never rewrites `config.yaml`; it generates `data/data.json` for ad rules, Bot language, checkpoints and retry IDs. Logs and sessions share the `data/` mount; staging uses `save_path/.temp/`. Bot language, ad rules and UI/API/MCP concurrency changes save immediately and survive restarts. [Persistence details](./DEPLOY_EN.md#docker-data-persistence)
 - **Download history** — completed/failed records in `data/log/download_history.json`
 - **Manual stop** — stopped tasks' incomplete files recorded as failed (reason: manually stopped)
 
@@ -512,6 +513,7 @@ From Telegram links to local files, take control of every download in one clean 
 
 ### Agent Integration
 
+- **Optional agent skill** — Releases provide `TGPorterSkills.zip` with only the English deployment and parameter guide, centrally generated release information and version-pinned Compose for agents that read ZIP files. [tgporter](./skills/tgporter/SKILL.md) uses the connected server's tool definitions at runtime. Same-repository PRs, `main` and manual CI runs also provide SHA-image preview ZIPs in Actions Artifacts, retained for 14 days. [Installation and usage](./DEPLOY_EN.md#install-the-optional-skill)
 - **MCP tools** — 13 tools for download submission, task queries, pause/resume, retry, deletion and worker settings; MCP-only mode runs without a configured Bot
 - **Connection** — Streamable HTTP on the main service's port and image, authenticated with a separate token
 - **Read-only mode** — optionally expose query tools only
@@ -528,17 +530,17 @@ From Telegram links to local files, take control of every download in one clean 
 
 ### Other
 
-- **Multilingual** — Bot and WebUI share JSON catalogs in `lang/`; English lists each key once and other languages map keys to translations: Simplified Chinese / Traditional Chinese / English / Japanese / Spanish / French / Russian / Ukrainian. WebUI matches browser preferences and remembers selection; configure the Bot independently with `language`. Source code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. See the [catalog guide](docs/languages.md) and [deployment guide](DEPLOY.md)
+- **Multilingual** — Bot and WebUI share JSON catalogs in `lang/`; English lists each key once and other languages map keys to translations: Simplified Chinese / Traditional Chinese / English / Japanese / Spanish / French / Russian / Ukrainian. WebUI matches browser preferences and remembers selection; configure the Bot independently with `language`. Source code, configuration example comments and the PWA app name use English; tests may retain required language fixtures. See the [catalog guide](docs/languages.md) and [deployment guide](DEPLOY_EN.md)
 - **rclone cloud upload** — optional post-download cloud drive upload
 - **Bot authorization** — Numeric user IDs in `allowed_user_ids` authorize senders directly without resolving contacts first; usernames still require resolution.
 - **Proxy** — Kurigram native proxy + Docker environment variable proxy; `proxy: {}` disables the Telegram proxy
-- **Dependencies** — Python dependencies are managed in `requirements.txt`, and the WebUI needs no npm install or build. Starlette, Uvicorn and Pydantic are version-pinned; see the [installation guide](DEPLOY.md#manual-install).
+- **Dependencies** — Python dependencies are managed in `requirements.txt`, and the WebUI needs no npm install or build. Starlette, Uvicorn and Pydantic are version-pinned; see the [installation guide](DEPLOY_EN.md#manual-install).
 - **Local dev mode** — `run_local.py` with mock data, no Telegram account needed
 - **Cross-DC startup** — regular media downloads create a key through the regular DC endpoint once per account/DC and reuse it in memory across workers/files, with separate media sessions and TCP connections; key exchange exceeding 60 seconds retires the connection under the existing retry policy, preserving checkpoints
 - **Kurigram compatibility** — uses `forward_origin` for forwarded media and `ReplyParameters` for Bot replies, preserving source identity and reply targets without deprecated API warnings
 - **Bot connection status** — the dashboard header and MCP `get_status.bot_status` show Telegram Bot health, heartbeat latency and last check time, including unresponsive, reconnecting, rate-limited and unconfigured states
-- **Bot heartbeat and diagnostics** — makes an actual Ping/Pong attempt as soon as the heartbeat starts, then every 60 seconds, with a 10-second timeout; attempts reconnection after 3 consecutive failures and logs authorization, handler timing and queue state; see the [deployment guide](DEPLOY.md#bot-heartbeat-and-message-diagnostics)
-- **Unified log** — only `data/log/tdl.log`, 10MB rotation, 30-day retention; first-data waits report their stage every 30 seconds, with DEBUG startup and authorization traces; see the [deployment guide](DEPLOY.md)
+- **Bot heartbeat and diagnostics** — makes an actual Ping/Pong attempt as soon as the heartbeat starts, then every 60 seconds, with a 10-second timeout; attempts reconnection after 3 consecutive failures and logs authorization, handler timing and queue state; see the [deployment guide](DEPLOY_EN.md#bot-heartbeat-and-message-diagnostics)
+- **Unified log** — only `data/log/tdl.log`, 10MB rotation, 30-day retention; first-data waits report their stage every 30 seconds, with DEBUG startup and authorization traces; see the [deployment guide](DEPLOY_EN.md)
 
 ---
 
@@ -548,13 +550,13 @@ Use this fork's prebuilt image, `ghcr.io/smilekevin/tgporter:latest`, updated by
 
 | Method | Use case | Guide |
 |--------|----------|-------|
-| Docker image | Run a prebuilt image on a server or NAS | [Image deployment](./DEPLOY.md#docker-image-deployment) |
-| Docker Compose | Manage the service with the repository Compose file | [Compose deployment](./DEPLOY.md#docker-compose-deployment) |
-| Manual install | Run with Python 3.14 and Kurigram | [Manual install](./DEPLOY.md#manual-install) |
-| Local development | Debug WebUI with mock data, without a Telegram account | [Local dev mode](./DEPLOY.md#local-dev-mode) |
-| Agent / MCP | Submit and manage downloads through token-authenticated MCP tools | [MCP configuration and deployment](./DEPLOY.md#mcp-agent-integration) |
+| Docker image | Run a prebuilt image on a server or NAS | [Image deployment](./DEPLOY_EN.md#docker-image-deployment) |
+| Docker Compose | Manage the service with the repository Compose file | [Compose deployment](./DEPLOY_EN.md#docker-compose-deployment) |
+| Manual install | Run with Python 3.14 and Kurigram | [Manual install](./DEPLOY_EN.md#manual-install) |
+| Local development | Debug WebUI with mock data, without a Telegram account | [Local dev mode](./DEPLOY_EN.md#local-dev-mode) |
+| Agent / MCP | Submit and manage downloads through token-authenticated MCP tools | [MCP configuration and deployment](./DEPLOY_EN.md#mcp-agent-integration) |
 
-Credentials, first login, full configuration, parallel downloads and checkpoints, image updates, proxies and persistence are maintained in [DEPLOY.md](./DEPLOY.md#prerequisites).
+Credentials, first login, full configuration, parallel downloads and checkpoints, image updates, proxies and persistence are maintained in [DEPLOY_EN.md](./DEPLOY_EN.md#prerequisites).
 
 ---
 
@@ -597,9 +599,9 @@ The “Join us” button in `/help` and `/start` messages opens the [Telegram gr
 
 ### Authentication and MCP
 
-With a non-empty `web_login_secret`, WebUI and the Web API accept only password-login session cookies. State changes also require the session's CSRF token, which WebUI supplies automatically. Bearer tokens cannot replace sessions or CSRF. An empty password preserves public WebUI/API access. [WebUI login and deployment](./DEPLOY.md#webui-login).
+With a non-empty `web_login_secret`, WebUI and the Web API accept only password-login session cookies. State changes also require the session's CSRF token, which WebUI supplies automatically. Bearer tokens cannot replace sessions or CSRF. An empty password preserves public WebUI/API access. [WebUI login and deployment](./DEPLOY_EN.md#webui-login).
 
-The main service exposes typed tools, structured results and actionable errors at `/mcp` on the same port. MCP calls internal download-management operations directly and authenticates with `mcp_token`, without another image or container. MCP is disabled by default and always requires a token when enabled; configure additional allowed hosts only as needed. Its 13 tools cover submission, queries, pause/resume, retry, deletion and worker settings. `submit_download` accepts a single Telegram message link and persists it in the existing download queue. [MCP setup and deployment](./DEPLOY.md#mcp-agent-integration) / [MCP tool reference](./docs/mcp.md#mcp-tool-reference).
+The main service exposes typed tools, structured results and actionable errors at `/mcp` on the same port. MCP calls internal download-management operations directly and authenticates with `mcp_token`, without another image or container. MCP is disabled by default and always requires a token when enabled; configure additional allowed hosts only as needed. Its 13 tools cover submission, queries, pause/resume, retry, deletion and worker settings. `submit_download` accepts a single Telegram message link and persists it in the existing download queue. [MCP setup and deployment](./DEPLOY_EN.md#mcp-agent-integration) / [MCP tool reference](./docs/mcp.md#mcp-tool-reference).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -736,9 +738,9 @@ This fork is based directly on [MangoIsIllegal/hermes-telegram-downloader](https
 
 ### Features Added in This Fork
 
-- **Parallel streams per file**: download fixed-size parts over independent connections, with separate settings for simultaneous files, streams per file and part size. Pauses, network interruptions and restarts resume the saved parts without downloading completed parts again; WebUI shows one aggregate progress row per file. [Download settings and checkpoints](./DEPLOY.md#parameters).
-- **MCP agent integration**: 13 tools submit single Telegram message downloads, query status, pause/resume, retry, delete tasks and adjust concurrency. MCP shares the WebUI port and image, with a separate token, read-only mode and support for running without a Bot. [MCP setup and deployment](./DEPLOY.md#mcp-agent-integration).
-- **Prebuilt multi-platform images**: amd64 / arm64 images support deployment by Release version tag or digest, with pull references in Release notes. CI also provides SHA-tagged verification images. [Image deployment](./DEPLOY.md#docker-image-deployment).
+- **Parallel streams per file**: download fixed-size parts over independent connections, with separate settings for simultaneous files, streams per file and part size. Pauses, network interruptions and restarts resume the saved parts without downloading completed parts again; WebUI shows one aggregate progress row per file. [Download settings and checkpoints](./DEPLOY_EN.md#parameters).
+- **MCP agent integration**: 13 tools submit single Telegram message downloads, query status, pause/resume, retry, delete tasks and adjust concurrency. MCP shares the WebUI port and image, with a separate token, read-only mode and support for running without a Bot. [MCP setup and deployment](./DEPLOY_EN.md#mcp-agent-integration).
+- **Prebuilt multi-platform images**: amd64 / arm64 images support deployment by Release version tag or digest, with pull references in Release notes. CI also provides SHA-tagged verification images. [Image deployment](./DEPLOY_EN.md#docker-image-deployment).
 
 ### Fixes in This Fork
 

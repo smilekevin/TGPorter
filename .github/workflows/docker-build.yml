@@ -61,6 +61,15 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      - name: Install dependencies for skill packaging
+        id: skill_dependencies
+        run: python -m pip install -r requirements.txt
+
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
 
@@ -123,6 +132,31 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build self-contained release skill
+        id: skill
+        env:
+          VERSION_TAG: ${{ steps.tags.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          python tools/build_skill.py --tag "$VERSION_TAG" --commit "$SHA" \
+            --repository "$GITHUB_REPOSITORY" --image "$IMAGE" --digest "$DIGEST" \
+            --output-dir dist
+
+      - name: Upload release skill
+        id: skill_upload
+        env:
+          VERSION_TAG: ${{ steps.tags.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$VERSION_TAG" "dist/TGPorterSkills.zip" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          {
+            echo
+            echo '## Agent skill'
+            echo "[Download TGPorterSkills.zip](https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION_TAG}/TGPorterSkills.zip)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Update Release notes with Docker image
         id: release_notes
         uses: actions/github-script@v8
@@ -161,6 +195,12 @@ jobs:
               '```bash',
               `docker pull ${image}@${digest}`,
               '```',
+              '',
+              '### Agent skill',
+              '',
+              `[Download TGPorterSkills.zip](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${version}/TGPorterSkills.zip)`,
+              '',
+              'Includes the skill, deployment and configuration guide, and setup examples for this release.',
               endMarker,
             ].join('\n');
             const body = release.body || '';

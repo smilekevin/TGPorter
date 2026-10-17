@@ -40,7 +40,9 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `tests/` | unittest regression tests that require no Telegram account |
 | `tools/benchmark_download.py` | Real Telegram download benchmarks and interruption/resume acceptance checks |
 | `module/mcp_server.py` | Integrated Streamable HTTP MCP tools at `/mcp`, using shared download operations |
-| `README.md`, `DEPLOY.md`, `docs/` | Chinese/English usage documentation, deployment guidance, and focused design/test guides |
+| `skills/tgporter/` | Distributable user skill for deployment guidance, MCP connection and download management |
+| `tools/build_skill.py` | Release skill ZIP generation with bundled documentation, examples and pinned image/source references |
+| `README.md`, `DEPLOY.md`, `DEPLOY_EN.md`, `docs/` | Bilingual overview, separate Chinese/English deployment guides, and focused design/test guides |
 
 ## Design Constraints
 
@@ -96,12 +98,14 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 
 ## Documentation Synchronization
 
-- For future project changes, update `README.md` and `DEPLOY.md` together in the same change set. Keep both documents consistent with the final behavior, configuration and supported usage; do not update only one of them.
-- `README.md` owns the project overview, features, architecture, Bot commands, Web API and short startup summaries. Deployment entries must link to `DEPLOY.md`.
-- `DEPLOY.md` owns prerequisites, credentials, complete installation and login steps, configuration examples and defaults, parallel-download settings and checkpoints, image updates, local builds, persistence, proxies and troubleshooting.
-- Maintain both Chinese and English sections when updating either document. Use the display name `TG Porter`, repository name `TGPorter`, and lowercase image/service/container name `tgporter`.
+- For future project changes, update `README.md`, Chinese `DEPLOY.md` and English `DEPLOY_EN.md` together in the same change set. Keep the overview and both deployment guides consistent with the final behavior, configuration and supported usage.
+- `README.md` owns the project overview, features, architecture, Bot commands, Web API and short startup summaries. Deployment entries must link to the guide for the corresponding language.
+- `DEPLOY.md` (Chinese) and `DEPLOY_EN.md` (English) own prerequisites, credentials, complete installation and login steps, configuration examples and defaults, parallel-download settings and checkpoints, image updates, local builds, persistence, proxies and troubleshooting.
+- Maintain both language sections in `README.md` and keep the two deployment guides synchronized. Use the display name `TG Porter`, repository name `TGPorter`, and lowercase image/service/container name `tgporter`.
 - Keep summaries and links aligned with the detailed guide instead of duplicating complete commands, configuration blocks or persistence tables in README.
-- Maintain `AGENTS.md` when entry points, authentication, dependency management or deployment conventions change. `docs/mcp.md` owns the MCP tool reference; complete MCP Token and setup instructions belong in both language sections of `DEPLOY.md`.
+- Maintain `AGENTS.md` when entry points, authentication, dependency management or deployment conventions change. `docs/mcp.md` owns the MCP tool reference; complete MCP Token and setup instructions belong in both deployment guides.
+- Keep `skills/tgporter/` aligned with deployed MCP behavior and independent of a particular agent client or installer. Runtime tool usage must inspect the connected MCP definitions instead of depending on GitHub documentation or fixed schema limits in the skill. Keep full deployment commands in the deployment guides; installed skills must include their own supporting resources or link to version-appropriate published deployment documentation.
+- Release skill ZIPs use an explicit allowlist for the English `DEPLOY_EN.md`, setup examples and license. Exclude the Chinese guide, developer instructions, test plans, design drafts and repository overviews. Copy Skill and English deployment documents unchanged; keep optional references as public URLs. Define release-specific images and URLs once in generated release metadata, render its companion guide from that data, and set only the Compose service image structurally. Skill setup must prefer those release values over generic guide examples. Never package runtime configuration, data or sessions.
 - Before finishing, check relative links and heading anchors, run `git diff --check`, and verify commands, image tags, configuration defaults and paths against `config.yaml.example`, `docker-compose.yaml`, the workflows and relevant source code.
 
 ## Development and Validation
@@ -153,3 +157,6 @@ python media_downloader.py
 - `.github/workflows/docker-build.yml` publishes version, SHA, and `latest` tags when a GitHub Release is published, then updates the Release notes with image references. Do not make ordinary PRs publish or overwrite `latest`.
 - Release builds pass the Git tag as Docker build arg `APP_VERSION`; CI builds use `sha-<full-commit-sha>`. The runtime image preserves it in its environment and OCI version label. Keep `utils.__version__` as the shared version export: environment, then local Git description, then `unknown`. Compose must not override the baked version with `latest`; local builds must pass their source version explicitly.
 - For workflow changes, run the tests in `tests/test_docker_workflow.py` and check tag rules, permissions, digests, Summary output, and repeatable Release notes updates.
+- Release builds also generate `TGPorterSkills.zip` after image publication and upload it to the same Release. Reruns replace the same asset and update its link in the managed Release notes section. Run `tests/test_skill_release.py` for packaging changes; verify bundled links, image/source version pinning and file integrity without publishing a real Release.
+
+- Publishable PR, main and manual CI runs also upload `TGPorterSkills.zip` as a 14-day Actions artifact after image publication. CI metadata must use the actual SHA image/digest and commit-based source URLs, link to the Actions run instead of an invented Release, and identify the bundle as a CI preview. Keep fork/Dependabot image and preview publication disabled.
