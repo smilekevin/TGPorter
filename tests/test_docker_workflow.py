@@ -3,9 +3,12 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
+from zipfile import ZipFile
 
 import yaml
 
@@ -54,6 +57,7 @@ class DockerWorkflowTests(unittest.TestCase):
                 "PUBLISHED": published,
                 "DIGEST": digest,
                 "TAGS": tags or f"{IMAGE}:sha-{SHA}",
+                "ARTIFACT_URL": f"https://github.com/{REPOSITORY}/actions/runs/42/artifacts/123",
             }
             result = subprocess.run(
                 ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c",
@@ -229,6 +233,116 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("version=v0.1.0\n", output)
 
+    def test_release_skill_build_and_upload_follow_successful_image_publication(self):
+        ids = list(self.steps["release"])
+        self.assertLess(ids.index("skill_dependencies"), ids.index("skill"))
+        self.assertEqual(self.steps["release"]["skill_dependencies"]["run"],
+                         "python -m pip install -r requirements.txt")
+        self.assertLess(ids.index("summary"), ids.index("skill"))
+        self.assertLess(ids.index("skill"), ids.index("skill_upload"))
+        self.assertLess(ids.index("skill_upload"), ids.index("release_notes"))
+        step = self.steps["release"]["skill"]
+        self.assertNotIn("if", step)
+        self.assertEqual(step["env"]["VERSION_TAG"], "${{ steps.tags.outputs.version }}")
+        self.assertEqual(step["env"]["DIGEST"], "${{ steps.build.outputs.digest }}")
+        self.assertEqual(step["env"]["SHA"], "${{ steps.version.outputs.sha }}")
+        self.assertIn('python tools/build_skill.py --tag "$VERSION_TAG" --commit "$SHA"', step["run"])
+        self.assertIn('--repository "$GITHUB_REPOSITORY" --image "$IMAGE" --digest "$DIGEST"', step["run"])
+
+    def test_ci_skill_upload_waits_for_the_published_image_and_exposes_a_single_zip(self):
+        ids = list(self.steps["ci"])
+        self.assertLess(ids.index("build"), ids.index("summary"))
+        self.assertLess(ids.index("summary"), ids.index("skill_dependencies"))
+        self.assertLess(ids.index("skill_dependencies"), ids.index("skill"))
+        self.assertLess(ids.index("skill"), ids.index("skill_upload"))
+        self.assertLess(ids.index("skill_upload"), ids.index("skill_summary"))
+        for step_id in ("skill_dependencies", "skill", "skill_upload", "skill_summary"):
+            self.assertEqual(self.steps["ci"][step_id]["if"], "steps.publication.outputs.publish == 'true'")
+        step = self.steps["ci"]["skill"]
+        self.assertEqual(step["env"]["DIGEST"], "${{ steps.build.outputs.digest }}")
+        self.assertEqual(step["env"]["SHA"], "${{ steps.version.outputs.sha }}")
+        self.assertEqual(step["env"]["CI_RUN_URL"],
+                         "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+        upload = self.steps["ci"]["skill_upload"]
+        self.assertEqual(upload["uses"], "actions/upload-artifact@v7")
+        self.assertEqual(upload["with"], {
+            "path": "dist/TGPorterSkills.zip", "archive": "false", "if-no-files-found": "error",
+            "overwrite": "true", "retention-days": "14",
+        })
+        self.assertEqual(self.steps["ci"]["skill_summary"]["env"]["ARTIFACT_URL"],
+                         "${{ steps.skill_upload.outputs.artifact-url }}")
+        result, _, summary = self.run_step("ci", "skill_summary")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"[Download TGPorterSkills.zip](https://github.com/{REPOSITORY}/actions/runs/42/artifacts/123)", summary)
+        self.assertIn(f"sha-{SHA}", summary)
+        self.assertIn("14 days", summary)
+
+    def test_skill_build_commands_bind_the_published_image_and_source(self):
+        for workflow in ("release", "ci"):
+            with self.subTest(workflow=workflow), tempfile.TemporaryDirectory() as directory:
+                self.check_skill_build_command(workflow, Path(directory))
+
+    def check_skill_build_command(self, workflow, directory):
+        """Execute each workflow's real command against the packaging script."""
+        directory = Path(directory)
+        (directory / "tools").symlink_to(ROOT / "tools", target_is_directory=True)
+        binary = directory / "bin"
+        binary.mkdir()
+        python = binary / "python"
+        python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+        python.chmod(0o755)
+        result = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c",
+             self.steps[workflow]["skill"]["run"]],
+            cwd=directory,
+            env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                 "VERSION_TAG": "v1.2.3", "SHA": SHA, "GITHUB_REPOSITORY": REPOSITORY,
+                 "IMAGE": IMAGE, "DIGEST": DIGEST,
+                 "CI_RUN_URL": f"https://github.com/{REPOSITORY}/actions/runs/42"},
+            text=True, capture_output=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with ZipFile(directory / "dist/TGPorterSkills.zip") as package:
+            manifest = json.loads(package.read("tgporter/release.json"))
+        tag = f"sha-{SHA}" if workflow == "ci" else "v1.2.3"
+        self.assertEqual(manifest["tag"], tag)
+        self.assertEqual(manifest["commit"], SHA)
+        self.assertEqual(manifest["image"], f"{IMAGE}:{tag}")
+        self.assertEqual(manifest["image_digest"], DIGEST)
+
+    def test_release_skill_upload_targets_the_release_and_reruns_replace_same_asset(self):
+        step = self.steps["release"]["skill_upload"]
+        self.assertNotIn("if", step)
+        self.assertEqual(step["env"]["GH_TOKEN"], "${{ secrets.GITHUB_TOKEN }}")
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            cli = directory / "gh"
+            cli.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\nexit "${GH_EXIT:-0}"\n')
+            cli.chmod(0o755)
+            capture = directory / "args"
+            summary = directory / "summary"
+            env = {
+                **os.environ, "PATH": str(directory) + os.pathsep + os.environ["PATH"],
+                "VERSION_TAG": "v1.2.3", "GITHUB_REPOSITORY": REPOSITORY,
+                "GITHUB_STEP_SUMMARY": str(summary), "CAPTURE": str(capture),
+            }
+            for exit_code in (0, 1):
+                with self.subTest(exit_code=exit_code):
+                    summary.write_text("")
+                    result = subprocess.run(
+                        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step["run"]],
+                        env={**env, "GH_EXIT": str(exit_code)}, text=True, capture_output=True, timeout=10,
+                    )
+                    self.assertEqual(result.returncode, exit_code, result.stderr)
+                    self.assertEqual(capture.read_text().splitlines(), [
+                        "release", "upload", "v1.2.3", "dist/TGPorterSkills.zip",
+                        "--repo", REPOSITORY, "--clobber",
+                    ])
+                    if exit_code == 0:
+                        self.assertIn(f"https://github.com/{REPOSITORY}/releases/download/v1.2.3/TGPorterSkills.zip", summary.read_text())
+                    else:
+                        self.assertEqual(summary.read_text(), "")
+
     def test_release_notes_preserve_latest_manual_notes_and_append_built_image(self):
         notes = "# v0.1.0\n\n修复任务恢复。\n\nEdited while the build was running.\n"
         result = self.run_release_notes(notes)
@@ -244,6 +358,7 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertIn(f"docker pull {IMAGE}:v0.1.0", update["body"])
         self.assertIn(f"docker pull {IMAGE}@{DIGEST}", update["body"])
         self.assertIn("`linux/amd64`, `linux/arm64`", update["body"])
+        self.assertIn(f"https://github.com/{REPOSITORY}/releases/download/v0.1.0/TGPorterSkills.zip", update["body"])
         self.assertNotIn("Stale event notes", update["body"])
 
     def test_release_notes_handle_empty_notes_and_use_the_release_version(self):

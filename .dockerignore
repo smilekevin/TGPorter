@@ -1,6 +1,7 @@
 .git
 .github
 .venv
+dist/
 .vscode
 .claude
 __pycache__
