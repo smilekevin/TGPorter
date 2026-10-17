@@ -34,7 +34,7 @@ class DockerWorkflowTests(unittest.TestCase):
                 step["id"]: step for step in workflow["jobs"][job]["steps"] if "id" in step
             }
 
-    def run_step(self, workflow, step_id, ref="refs/heads/master", event="push",
+    def run_step(self, workflow, step_id, ref="refs/heads/main", event="push",
                  actor="smilekevin", head_repository=REPOSITORY, published="true",
                  digest=DIGEST, tags=None):
         with tempfile.TemporaryDirectory() as directory:
@@ -117,10 +117,10 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertIn("ENV APP_VERSION=${APP_VERSION}\n", runtime)
         self.assertIn("LABEL org.opencontainers.image.version=${APP_VERSION}\n", runtime)
 
-    def test_ci_handles_pr_master_push_and_manual_runs(self):
+    def test_ci_handles_pr_main_push_and_manual_runs(self):
         events = self.workflows["ci"]["on"]
         self.assertEqual(set(events), {"pull_request", "push", "workflow_dispatch"})
-        self.assertEqual(events["push"]["branches"], ["master"])
+        self.assertEqual(events["push"]["branches"], ["main"])
 
     def test_ci_publishing_waits_for_tests_and_uses_one_permission_decision(self):
         ci = self.workflows["ci"]
@@ -139,7 +139,7 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertEqual(concurrency["cancel-in-progress"], "false")
 
     def test_ci_publishes_only_sha_for_every_ref(self):
-        for ref in ("refs/heads/master", "refs/pull/5/merge", "refs/heads/fix/example", "refs/tags/v1.0.1"):
+        for ref in ("refs/heads/main", "refs/pull/5/merge", "refs/heads/fix/example", "refs/tags/v1.0.1"):
             with self.subTest(ref=ref):
                 self.assertEqual(self.image_tags("ci", ref), [f"{IMAGE}:sha-{SHA}"])
 
@@ -150,7 +150,7 @@ class DockerWorkflowTests(unittest.TestCase):
                                  [f"{IMAGE}:sha-{SHA}", f"{IMAGE}:{tag}", f"{IMAGE}:latest"])
 
     def test_release_rejects_invalid_reserved_and_non_tag_refs(self):
-        refs = ["refs/heads/master"] + [f"refs/tags/{tag}" for tag in
+        refs = ["refs/heads/main"] + [f"refs/tags/{tag}" for tag in
                 ("latest", f"sha-{SHA}", "releases/v1.0.1", "-v1.0.1", "v" * 129)]
         for ref in refs:
             with self.subTest(ref=ref):

@@ -30,7 +30,7 @@ WebUI 使用原生 HTML/CSS/JS，无需安装 Node.js 或运行 npm 构建；CI 
 
 升级已有部署时，先停止旧容器，保留并复用原有数据挂载，再使用新服务名启动，避免两个实例同时访问 Session 和任务数据。GitHub 仓库需完成远端重命名，新 GHCR 镜像需由 CI 或 Release 工作流发布后才能拉取。
 
-镜像发布规则：本仓库 PR、合并/推送 master 或手动运行 CI 后，测试通过即发布 `:sha-完整提交号`，Summary 提供可复制的拉取命令和 Compose 配置，不更新 `latest`。**Build Release Docker Image** 只在发布 GitHub Release 后运行，发布同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。README 的 Version 徽章自动跟随最新正式 GitHub Release 标签，Python 徽章自动读取 `.github/workflows/tests.yml` 中的 `python-version`，徽章缓存刷新后生效。
+镜像发布规则：本仓库 PR、合并/推送 main 或手动运行 CI 后，测试通过即发布 `:sha-完整提交号`，Summary 提供可复制的拉取命令和 Compose 配置，不更新 `latest`。**Build Release Docker Image** 只在发布 GitHub Release 后运行，发布同名版本镜像并更新 `:latest`，例如 `v1.0.1` 对应 `:v1.0.1`。不再定时构建。README 的 Version 徽章自动跟随最新正式 GitHub Release 标签，Python 徽章自动读取 `.github/workflows/tests.yml` 中的 `python-version`，徽章缓存刷新后生效。
 
 Release 镜像推送成功后，工作流会自动在对应 Release notes 中补充版本拉取命令、digest 地址和支持的平台。原有说明会保留，重新运行时更新同一区块。
 
@@ -71,7 +71,7 @@ mkdir -p tgporter
 cd tgporter
 mkdir -p downloads data
 
-curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/master/config.yaml.example \
+curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/main/config.yaml.example \
   -o config.yaml.example
 [ -f config.yaml ] || cp config.yaml.example config.yaml
 ```
@@ -556,7 +556,7 @@ Before starting this version for the first time, stop the service and back up `d
 - The display name is **TG Porter**, the repository name is `TGPorter`, and the GHCR image, Compose service and container use lowercase `tgporter`.
 - When upgrading, stop the old container and reuse its existing data mounts before starting the renamed service, so two instances cannot access the same sessions and task data. Rename the GitHub repository separately; the new GHCR image must be published by CI or a Release workflow before it can be pulled.
 - The prebuilt image is `ghcr.io/smilekevin/tgporter`, supporting amd64 and arm64. Published GitHub Releases create version, SHA and `latest` tags. CI verification images use SHA tags and do not update `latest`. The README Version badge follows the latest stable GitHub Release tag; its Python badge reads `python-version` from `.github/workflows/tests.yml`. Badge updates appear after caches refresh.
-- For PR or master verification, use the SHA tag or digest from **CI image for verification** in the [CI Summary](https://github.com/smilekevin/TGPorter/actions/workflows/tests.yml). The [Release workflow](https://github.com/smilekevin/TGPorter/actions/workflows/docker-build.yml) adds pull commands, digests and platforms to Release notes after a successful image push, preserving the existing description and updating the same section on reruns. Package visibility must be Public for unauthenticated pulls.
+- For PR or main verification, use the SHA tag or digest from **CI image for verification** in the [CI Summary](https://github.com/smilekevin/TGPorter/actions/workflows/tests.yml). The [Release workflow](https://github.com/smilekevin/TGPorter/actions/workflows/docker-build.yml) adds pull commands, digests and platforms to Release notes after a successful image push, preserving the existing description and updating the same section on reruns. Package visibility must be Public for unauthenticated pulls.
 
 The commands below use `docker-compose`; replace it with `docker compose` if you use the Compose plugin.
 
@@ -595,7 +595,7 @@ mkdir -p tgporter
 cd tgporter
 mkdir -p downloads data
 
-curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/master/config.yaml.example \
+curl -fL https://raw.githubusercontent.com/smilekevin/TGPorter/main/config.yaml.example \
   -o config.yaml.example
 [ -f config.yaml ] || cp config.yaml.example config.yaml
 ```
