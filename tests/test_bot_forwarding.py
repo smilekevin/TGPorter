@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from module import bot, pyrogram_extension, task_store
+from module.app import Application
 from module.telegram import pyrogram
 from pyrogram import enums, raw, types
 
@@ -17,6 +18,8 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.backend = bot.DownloadBot()
+        self.backend.app = SimpleNamespace(download_filters=[])
+        self.backend.app.resolve_download_filter = lambda expression=None: Application.resolve_download_filter(self.backend.app, expression)
         self.sender = types.User(id=100)
         self.inbox = types.Chat(id=100, type=enums.ChatType.PRIVATE)
         self.source = types.Chat(id=-100123, type=enums.ChatType.CHANNEL,

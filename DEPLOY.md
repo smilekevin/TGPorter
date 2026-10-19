@@ -105,6 +105,8 @@ Use the header icons to switch between downloads and Configuration. Configuratio
 
 Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
 
+The dashboard **Skipped** tab keeps reasons and saved filters across restarts. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons, while verified existing files count as **Completed (file already exists)**.
+
 ### config.yaml (optional)
 
 Optionally copy [config.yaml.example](https://github.com/smilekevin/TGPorter/blob/main/config.yaml.example) to `config.yaml` in the working directory before the first start. Fill in API credentials, account mode, download settings and any required proxy using the parameter table below:
@@ -137,6 +139,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `media_types` | Media types to download | `["audio", "document", "photo", "video", "voice", "animation"]` |
 | `file_formats` | Extension lists for audio/document/video; all accepts every format | `{"audio": ["all"], "document": ["pdf", "epub"], "video": ["mp4"]}` |
 | `file_path_prefix` | Ordered directory-name fields; an empty list adds none | `["chat_title", "media_datetime"]` |
+| `download_filters` | Default download expressions, combined with OR; at most 32 rules of 4096 characters each | `[]` |
 | `file_name_prefix` | Ordered filename fields; an empty list uses the message-ID fallback | `["file_name"]` |
 | `file_name_prefix_split` | Separator between filename fields | `" - "` |
 | `hide_file_name` | Hide filenames in UI | `false` |
@@ -144,7 +147,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `drop_no_audio_video` | Compatibility field that is parsed but does not currently filter media | `false` |
 | `enable_download_txt` | Save text-only messages as .txt | `false` |
 | `chat` | Optional startup history scan list; nested fields are below; omit for MCP-only single-post submissions | `[]` |
-| `filter_advertisement_list` | Keywords whose matching content is skipped during forwarding | `[]` |
+| `filter_advertisement_list` | Advertisement keyword tags in Configuration → Downloads; any match (OR) skips forwarding | `[]` |
 | `replace_advertisement_list` | Text removed from forwarded captions | `[]` |
 | `group_add_advertisement` | Additional caption text mapped by destination chat ID | `{}` |
 | `forward_limit` | Local forwarding-call budget per 60 seconds; does not bypass Telegram FLOOD_WAIT | `33` |
@@ -169,7 +172,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | --- | --- | --- |
 | `chat[].chat_id` | Chat/channel ID or resolvable name to scan; required for each scan entry | — |
 | `chat[].last_read_message_id` | Starting read-message ID; a later persisted checkpoint takes precedence | `0` |
-| `chat[].download_filter` | Download filter expression for this chat; empty adds no filter | `""` |
+| `chat[].download_filter` | Explicit download expression for this chat; empty inherits `download_filters` | `""` |
 | `chat[].upload_telegram_chat_id` | Telegram destination for re-uploaded media; requires permission to send | `null` |
 | `upload_drive.enable_upload_file` | Enable cloud uploads after downloading | `false` |
 | `upload_drive.rclone_path` | rclone executable; bundled at the default path in the main image, installed separately for manual setups; configure its remote before use | `./rclone/rclone`, with `.exe` on Windows |
@@ -182,6 +185,14 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `proxy.port` | Integer Telegram proxy port | — |
 
 Media types, extensions and naming fields use checkboxes; add custom extensions and reorder naming fields with the arrows. For Bot commands, add your numeric Telegram user ID under **Allowed users**. A signed-in user account is automatically allowed; `me` does not grant a person access in Bot mode. Manage channels through Bot commands.
+
+#### Download filters
+
+In **Configuration → Downloads**, add/remove download expressions and advertisement keyword tags, then **Save settings**. Download expressions are validated when added; expand the reference for supported fields and examples.
+
+Download filters use **OR**: any true rule matches; an empty list adds no filter. Use `and` within a rule to require multiple conditions. Media type/format restrictions still apply. Advertisement keywords use **OR** to skip forwarding when any case-sensitive, plain-text keyword occurs in the caption; remove tags with **×**.
+
+Defaults apply to new download tasks without restart. Explicit task/channel expressions take precedence; existing tasks keep their saved rules. `/add_filter`, `/add_ad` and `/remove_ad` share these settings; refresh the page after Bot changes. Validation checks expressions without accessing Telegram or testing real messages.
 
 #### Applying settings
 

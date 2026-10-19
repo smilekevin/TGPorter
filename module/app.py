@@ -150,6 +150,9 @@ class TaskNode:
         self.reply_message = replay_message
         self.has_protected_content = has_protected_content
         self.download_filter = download_filter
+        self.bypass_filters = False
+        self.skip_reasons = {}
+        self.existing_file_count = 0
         self.limit = limit
         self.start_offset_id = start_offset_id
         self.end_offset_id = end_offset_id
@@ -413,6 +416,7 @@ class Application:
         self.use_user_account: bool = False
         self._chat_id: str = ""
         self.media_types: List[str] = []
+        self.download_filters: List[str] = []
         self.file_formats: dict = {}
         self.proxy: dict = {}
         self.restart_program = False
@@ -492,6 +496,7 @@ class Application:
 
         self.media_types = _config["media_types"]
         self.file_formats = _config["file_formats"]
+        self.download_filters = copy.deepcopy(_config.get("download_filters", []))
 
         self.hide_file_name = _config.get("hide_file_name", False)
 
@@ -829,6 +834,12 @@ class Application:
             return True
 
         return False
+
+    def resolve_download_filter(self, expression=None):
+        """Snapshot defaults for a new task; explicit task/channel rules take precedence."""
+        if expression:
+            return expression
+        return " or ".join(f"({rule})" for rule in self.download_filters)
 
     def exec_filter(self, download_config: ChatDownloadConfig, meta_data: MetaData):
         """

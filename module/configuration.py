@@ -89,6 +89,7 @@ def apply_inactive_settings(app):
 @blueprint.route("/configuration")
 def configuration():
     web, app = _context()
+    from module.filter import MAX_DOWNLOAD_FILTERS, MAX_FILTER_LENGTH
     from utils import __version__
     schema = [{"key": key, "section": section, "label": label,
                "type": "secret" if key in SECRETS else type(default).__name__,
@@ -98,6 +99,7 @@ def configuration():
                            csrf_token=web._csrf_token(), schema=schema,
                            header_version=__version__,
                            password_pattern=PASSWORD_PATTERN, password_help=PASSWORD_HELP,
+                           filter_limits={"length": MAX_FILTER_LENGTH, "count": MAX_DOWNLOAD_FILTERS},
                            sections=["Basic configuration", "Downloads", "Web and MCP", "Advanced"])
 
 
@@ -207,6 +209,17 @@ def validate_host():
     except ValueError:
         return jsonify(error="Enter a hostname or IP with an optional port (1-65535). URLs, paths and wildcards are not allowed."), 400
     return jsonify(host=host)
+
+
+@blueprint.route("/api/configuration/validate-filter", methods=["POST"])
+def validate_filter():
+    """Validate an editor draft with the same rules used by settings persistence."""
+    from module.filter import validate_download_filter
+    try:
+        expression = validate_download_filter(_payload().get("expression"))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(expression=expression)
 
 
 @blueprint.route("/api/telegram", methods=["POST"])

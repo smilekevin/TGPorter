@@ -106,7 +106,7 @@ vm.runInContext(SOURCE, context);
 (async () => {
     const app = context.app();
     const names = ['fetchVersion', 'fetchActive', 'fetchPending',
-        'fetchCompleted', 'fetchMaxWorkers', 'fetchDownloadStatus', 'fetchFloodWait', 'fetchBotStatus'];
+        'fetchCompleted', 'fetchDownloadStatus', 'fetchFloodWait', 'fetchBotStatus'];
     let calls = 0;
     let releases = [];
     names.forEach(name => app[name] = () => {
@@ -115,7 +115,7 @@ vm.runInContext(SOURCE, context);
     });
     const initial = app.init();
     await app.init();
-    assert.equal(calls, 8, 'all initial requests should start without serial waits');
+    assert.equal(calls, names.length, 'all initial requests should start without serial waits');
     assert.equal(polls, 0);
     releases.forEach(done => done());
     await initial;
@@ -226,6 +226,44 @@ vm.runInContext(SOURCE, context);
                 response = client.get('/static/' + asset)
                 self.assertEqual(response.status_code, 200)
                 response.close()
+
+    def test_skipped_page_selection_and_partial_delete(self):
+        page = (ROOT / 'module/templates/index.html').read_text()
+        script = re.sub(r'{{.*?}}', "''", re.findall(r'<script>(.*?)</script>', page, re.S)[-1])
+        self.run_script(r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const context = {WebI18n: {language:'en'}, Headers, AbortController};
+vm.createContext(context);
+vm.runInContext(SOURCE, context);
+(async () => {
+    const app = context.app();
+    app.activeTab = 'skipped';
+    app.skippedTasks = [{task_id:'a'}, {task_id:'b'}];
+    app.toggleSelectAll('skipped');
+    assert.deepEqual([...app.selectedTasks], ['a', 'b']);
+    app.toggleSelectAll('skipped');
+    assert.equal(app.selectedTasks.length, 0);
+    app.toggleSelectAll('skipped');
+    const requests = [];
+    context.authenticatedFetch = async (url, options) => {
+        assert.equal(options.method, 'POST');
+        requests.push(url);
+        return {json: async () => ({code: url.endsWith('a') ? '1' : '0'})};
+    };
+    app.showToast = () => {};
+    app.t = key => key;
+    app.fetchSkipped = async () => {};
+    app.confirmBatchDelete = () => {throw new Error('must not offer file deletion');};
+    await app.batchDelete();
+    assert.deepEqual(requests, ['/delete_skipped?task_id=a', '/delete_skipped?task_id=b']);
+    assert.deepEqual([...app.selectedTasks], ['b']);
+    assert.equal(app.batchBusy, false);
+    context.authenticatedFetch = async () => ({json: async () => ({code:'1'})});
+    await app.batchDelete();
+    assert.equal(app.selectedTasks.length, 0);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''.replace('SOURCE', json.dumps(script)))
 
     def test_search_filters_selection_and_discards_outdated_pages(self):
         page = (ROOT / 'module/templates/index.html').read_text()

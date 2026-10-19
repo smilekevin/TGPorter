@@ -33,7 +33,10 @@ class MCPSubmitDownloadTests(unittest.IsolatedAsyncioTestCase):
             web_login_secret="browser-secret", mcp_token="agent-secret", mcp_enabled=True,
             mcp_read_only=False, mcp_allowed_hosts=[],
             bot_token="", restart_program=False, chat_download_config={},
+            download_filters=[],
         )
+        from module.app import Application
+        self.app.resolve_download_filter = lambda expression=None: Application.resolve_download_filter(self.app, expression)
         self.queue = asyncio.Queue()
         self.chat = SimpleNamespace(id=-100123456, title="Offline channel")
 
@@ -189,6 +192,21 @@ class MCPSubmitDownloadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(task_store.get_pending_tasks()[0]["task_id"]), second["pending_task_id"])
             self.assertEqual(fresh.task_id, int(second["pending_task_id"]))
             fresh.bot.send_message.assert_not_awaited()
+
+    async def test_default_filter_snapshot_survives_pending_recovery_and_later_edits(self):
+        self.app.download_filters = ["media_file_size >= 100MB", "media_duration <= 600"]
+        expected = self.app.resolve_download_filter()
+        self.assertEqual(expected, "(media_file_size >= 100MB) or (media_duration <= 600)")
+        async with Client(self.server) as client:
+            self.success(await self.submit(client))
+        self.assertEqual(task_store.get_pending_tasks()[0]["download_filter"], expected)
+        self.app.download_filters = ["media_type == 'photo'"]
+        fresh = self.new_bot()
+        with patch.object(bot, "_bot", fresh):
+            await fresh.recover_tasks()
+            await bot._consume_one_pending()
+        _, node = self.queue.get_nowait()
+        self.assertEqual(node.download_filter, expected)
 
     async def test_pending_submission_can_be_cancelled_before_fetch(self):
         async with Client(self.server) as client:

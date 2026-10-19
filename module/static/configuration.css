@@ -78,3 +78,18 @@ legend { padding: 0 5px; font-size: 13px; font-weight: 600; }
 button, nav a { white-space: nowrap; flex-shrink: 0; }
 nav { flex-shrink: 0; }
 .add-row input { flex: 1; width: 0; }
+.filter-rules { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 8px; }
+.filter-rules:empty { display: none; }
+.filter-rules li { display: flex; align-items: center; gap: 12px; border: 1px solid #dbe4f1; border-radius: 8px; padding: 10px 12px; background: #f4f7fc; }
+.filter-rules code { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.filter-rules button { padding: 5px 10px; }
+.filter-help { margin-top: 14px; border: 1px solid #e3e9f2; border-radius: 8px; padding: 12px; }
+.filter-help summary { cursor: pointer; font-weight: 600; }
+.filter-reference { overflow-x: auto; margin-top: 12px; }
+.filter-reference table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.filter-reference th, .filter-reference td { padding: 8px; border-bottom: 1px solid #e3e9f2; vertical-align: top; }
+.filter-reference code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.filter-status.success { color: #13704f; }
+.filter-status.error { color: #b63838; }
+#setting-filter_advertisement_list .chip { max-width: 100%; }
+#setting-filter_advertisement_list .chip > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }

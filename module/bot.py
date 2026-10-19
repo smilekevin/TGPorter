@@ -548,13 +548,14 @@ class DownloadBot:
                     and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
                 return accepted(task, duplicate=True)
         node = TaskNode(chat_id=chat.id, from_user_id="", limit=1,
-                        task_id=self.gen_task_id(), topic_id=topic_id)
+                        task_id=self.gen_task_id(), topic_id=topic_id,
+                        download_filter=self.app.resolve_download_filter())
         extra = {"message_id": message_id, "message_client": "user", "topic_id": topic_id,
                  "task_id_display": node.task_id_display, "submitted_via": "mcp",
                  "source_chat_id": chat.id, "source_message_id": message_id,
                  "source_chat_title": getattr(chat, "title", "") or "",
                  "chat_title": getattr(chat, "title", "") or ""}
-        saved = save_task(node.task_id, chat.id, url, 0, 0, 1, None, "",
+        saved = save_task(node.task_id, chat.id, url, 0, 0, 1, node.download_filter, "",
                           task_type="download", extra_data=extra)
         if not saved:
             return {"code": "0", "message": "Task could not be persisted; submission was not accepted."}
@@ -562,6 +563,29 @@ class DownloadBot:
         # No Bot notification recipient is inferred for MCP submissions.
         self._ensure_pending_consumer()
         return accepted({"task_id": node.task_id, "extra_data": extra})
+
+    def enqueue_skipped_download(self, entry):
+        """Persist an explicit filter bypass on the owning loop before queue acceptance."""
+        chat_id, message_id = entry["chat_id"], entry["msg_id"]
+        owner = entry.get("message_client", "user")
+        if self.get_message_client(chat_id, entry.get("from_user_id", ""), owner) is None:
+            return {"code": "0", "message": "Message account is unavailable"}
+        for task in get_running_tasks():
+            if (str(task.get("chat_id")) == str(chat_id)
+                    and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
+                return {"code": "0", "message": "A download for this message is already queued"}
+        node = TaskNode(chat_id=chat_id, task_id=self.gen_task_id())
+        extra = {"message_id": message_id, "message_client": owner, "bypass_filters": True,
+                 "topic_id": entry.get("topic_id", 0), "task_id_display": node.task_id_display,
+                 "source_chat_id": entry.get("source_chat_id", 0),
+                 "source_message_id": entry.get("source_message_id", 0),
+                 "source_chat_title": entry.get("chat_title", "")}
+        if not save_task(node.task_id, chat_id, "", 0, 0, 1, "", entry.get("from_user_id", ""),
+                         task_type="download", extra_data=extra):
+            return {"code": "0", "message": "Task could not be persisted; submission was not accepted."}
+        self._ensure_pending_consumer()
+        return {"code": "1", "message": "Download queued", "pending_task_id": str(node.task_id),
+                "task_id": f"{chat_id}_{message_id}"}
 
     def get_message_client(self, chat_id, from_user_id="", message_client=""):
         """Restore the account that owns a persisted message's chat/ID pair."""
@@ -895,7 +919,7 @@ class DownloadBot:
                         from_user_id=0,
                         limit=1,
                         bot=self.bot,
-                        download_filter=chat_config.download_filter,
+                        download_filter=self.app.resolve_download_filter(chat_config.download_filter),
                     )
                     node.task_id_display = f"config-{chat_id}-{message.id}"
 
@@ -1543,17 +1567,23 @@ async def add_filter(client: pyrogram.Client, message: pyrogram.types.Message):
         )
         return
 
-    filter_str = replace_date_time(args[1])
-    res, err = _bot.filter.check_filter(filter_str)
-    if res:
-        _bot.app.down = args[1]
+    from module.filter import validate_download_filter
+    try:
+        filter_str = validate_download_filter(args[1])
+        with _bot.app.settings.lock:
+            rules = list(_bot.app.settings.values["download_filters"])
+            if filter_str not in rules:
+                rules.append(filter_str)
+            _bot.app.settings.save({"download_filters": rules})
+            _bot.app.apply_live_settings()
+    except ValueError as error:
         await client.send_message(
-            message.from_user.id, f"{_t('Add download filter')} : {args[1]}"
+            message.from_user.id, f"{_t(str(error))}\n{_t('Check error, please add again')}"
         )
-    else:
-        await client.send_message(
-            message.from_user.id, f"{err}\n{_t('Check error, please add again')}"
-        )
+        return
+    await client.send_message(
+        message.from_user.id, f"{_t('Add download filter')} : {filter_str}"
+    )
     return
 
 
@@ -1866,6 +1896,7 @@ async def direct_download(
         limit=1,
         bot=download_bot.bot,
         task_id=_bot.gen_task_id(),
+        download_filter=download_bot.app.resolve_download_filter(),
     )
 
     # The consumer selects the message-owning account before queueing. Bot
@@ -1897,7 +1928,7 @@ async def direct_download(
         start_offset_id=0,
         end_offset_id=0,
         limit=1,
-        download_filter=None,
+        download_filter=node.download_filter,
         from_user_id=message.from_user.id,
         task_type="direct",
         extra_data=extra_data,
@@ -2120,6 +2151,7 @@ async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Mes
             set_chat_title(entity.id, chat_title)
             chat_download_config = ChatDownloadConfig()
             chat_download_config.last_read_message_id = start_offset_id
+            download_filter = _bot.app.resolve_download_filter(download_filter)
             chat_download_config.download_filter = download_filter
             reply_message = _t("Download messages {start}–{end} from {chat}",
                                start=start_offset_id, end=end_offset_id, chat=chat_title)
@@ -2136,6 +2168,7 @@ async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Mes
                 end_offset_id=end_offset_id,
                 bot=_bot.bot,
                 task_id=_bot.gen_task_id(),
+                download_filter=download_filter,
             )
             _bot.add_task_node(node)
             save_task(
@@ -2681,7 +2714,9 @@ async def _consume_one_pending():
                 task_id=task_id,
                 task_id_display=extra.get("task_id_display", ""),
                 topic_id=extra.get("topic_id", 0),
+                download_filter=task_data.get("download_filter"),
             )
+            node.bypass_filters = extra.get("bypass_filters") is True
             node.source_chat_id = extra.get("source_chat_id", 0)
             node.source_message_id = extra.get("source_message_id", 0)
             node.source_chat_title = extra.get("source_chat_title", "")

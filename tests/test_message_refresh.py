@@ -12,7 +12,7 @@ from module.telegram import pyrogram
 from pyrogram import enums, types
 
 import media_downloader as downloader
-from module import bot as bot_module, pyrogram_extension as extension
+from module import bot as bot_module, pyrogram_extension as extension, download_stat
 from module.app import DownloadStatus, TaskNode
 
 
@@ -42,6 +42,8 @@ class MessageRefreshTests(unittest.IsolatedAsyncioTestCase):
             await real_sleep(0)
 
         patches = [
+            patch.object(download_stat, "_HISTORY_FILE", str(self.path / "history.json")),
+            patch.object(download_stat, "_skipped_downloads", {}),
             patch.object(downloader, "app", self.app),
             patch.object(downloader, "_get_media_meta", AsyncMock(return_value=(
                 str(self.path / "saved.mp4"), str(self.path / "partial.mp4"), "mp4"))),
@@ -70,6 +72,43 @@ class MessageRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(refreshed, self.refreshed)
         self.bot.get_messages.assert_awaited_once_with(chat_id=100, message_ids=61)
         self.user.get_messages.assert_not_awaited()
+
+    async def test_filter_rejection_skips_network_text_saving_and_failure_history(self):
+        self.node.download_filter = "media_file_size >= 100MB"
+        self.app.get_caption_name = Mock(return_value="")
+        self.app.exec_filter = Mock(return_value=False)
+        self.app.enable_download_txt = True
+        self.message.text = "message text"
+        self.message.media = None
+        with patch.object(downloader, "set_meta_data") as metadata, \
+                patch.object(downloader, "download_media", AsyncMock()) as transfer, \
+                patch.object(downloader, "save_msg_to_file", AsyncMock()) as save_text, \
+                patch.object(downloader, "_add_failed_download") as failure:
+            await downloader.download_task(self.user, self.message, self.node)
+        metadata.assert_called_once()
+        transfer.assert_not_awaited()
+        save_text.assert_not_awaited()
+        failure.assert_not_called()
+        self.assertIs(self.node.download_status[self.message.id], DownloadStatus.SkipDownload)
+
+    async def test_worker_applies_real_or_rules_before_media_transfer(self):
+        from module.app import Application
+        from module.filter import Filter
+        self.app.download_filter = Filter()
+        self.app.exec_filter = lambda config, metadata: Application.exec_filter(self.app, config, metadata)
+        self.app.get_caption_name = Mock(return_value="")
+        self.app.download_filters = ["media_file_size >= 100MB", "media_duration <= 600"]
+        self.node.download_filter = Application.resolve_download_filter(self.app)
+        self.message.video.file_id = "offline-file"
+        for size, duration, accepted in ((150, 300, True), (50, 300, True), (150, 700, True), (50, 700, False)):
+            with self.subTest(size=size, duration=duration), \
+                    patch.object(extension, "get_extension", return_value="mp4"), \
+                    patch.object(downloader, "download_media", AsyncMock(
+                        return_value=(DownloadStatus.SkipDownload, None, ""))) as transfer:
+                self.message.video.file_size = size * 1024**2
+                self.message.video.duration = duration
+                await downloader.download_task(self.user, self.message, self.node)
+                self.assertEqual(transfer.await_count, int(accepted))
 
     async def test_empty_inputs_never_access_chat_id_or_call_telegram(self):
         for message in (None, self.empty, types.Message(id=61)):

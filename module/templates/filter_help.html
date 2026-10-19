@@ -1,0 +1,32 @@
+<p class="help" data-i18n="Only download messages that match any rule (OR). An empty list adds no filter. Media type and format restrictions still apply.">Only download messages that match any rule (OR). An empty list adds no filter. Media type and format restrictions still apply.</p>
+<p class="help" data-i18n="Defaults apply to new downloads. Explicit task or channel filters take precedence. Existing tasks keep their saved rules. Use Save settings after adding or removing rules.">Defaults apply to new downloads. Explicit task or channel filters take precedence. Existing tasks keep their saved rules. Use Save settings after adding or removing rules.</p>
+<details class="filter-help">
+    <summary data-i18n="Supported filter types and syntax">Supported filter types and syntax</summary>
+    <div class="filter-reference">
+        <table>
+            <thead><tr><th data-i18n="Filter type">Filter type</th><th data-i18n="Field">Field</th><th data-i18n="Example">Example</th></tr></thead>
+            <tbody>
+                {% for label, fields, example in [
+                    ('File size', 'media_file_size / file_size', 'media_file_size >= 100MB'),
+                    ('Duration (seconds)', 'media_duration', 'media_duration <= 600'),
+                    ('Media dimensions', 'media_width / media_height', 'media_width >= 1920 and media_height >= 1080'),
+                    ('Message date', 'message_date', 'message_date >= 2026-01-01 00:00:00'),
+                    ('File name', 'media_file_name / file_name', "media_file_name == r'.*tutorial.*'"),
+                    ('Caption', 'message_caption / caption', "message_caption != r'.*advertisement.*'"),
+                    ('Media type', 'media_type', "media_type == 'video'"),
+                    ('File extension', 'file_extension', "file_extension == 'mp4'"),
+                    ('Sender', 'sender_id / sender_name', 'sender_id == 123456'),
+                    ('Message ID', 'message_id / id', 'message_id >= 100'),
+                    ('Topic ID', 'message_thread_id / topic_id', 'message_thread_id == 77'),
+                    ('Reply message ID', 'reply_to_message_id', 'reply_to_message_id == 42')
+                ] %}
+                <tr><td data-i18n="{{ label }}">{{ label }}</td><td><code>{{ fields }}</code></td><td><code>{{ example }}</code></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="help"><code>== != &gt; &gt;= &lt; &lt;=</code> · <code>and / &amp;&amp;</code> · <code>or / ||</code> · <code>( )</code> · <code>+ - * /</code></p>
+    <p class="help" data-i18n="Use single quotes for text, uppercase B/KB/MB/GB/TB for sizes (1KB = 1024B), and YYYY-MM-DD HH:MM:SS for dates. Durations use seconds.">Use single quotes for text, uppercase B/KB/MB/GB/TB for sizes (1KB = 1024B), and YYYY-MM-DD HH:MM:SS for dates. Durations use seconds.</p>
+    <p class="help" data-i18n="Regular expressions use full matching: r'.*keyword.*' matches text containing keyword. Missing metadata does not satisfy a comparison. Validation checks the expression, not whether a Telegram message matches.">Regular expressions use full matching: r'.*keyword.*' matches text containing keyword. Missing metadata does not satisfy a comparison. Validation checks the expression, not whether a Telegram message matches.</p>
+    <p class="help" data-i18n="Advertisement keywords are separate: any matching keyword skips forwarding (OR).">Advertisement keywords are separate: any matching keyword skips forwarding (OR).</p>
+</details>

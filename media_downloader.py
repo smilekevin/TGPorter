@@ -18,7 +18,8 @@ from module.runtime_paths import APP_DATA_FILE
 from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
-from module.download_stat import record_existing_download, track_download_stream
+from module.download_stat import (record_existing_download, record_skipped_download,
+                                  remove_skipped_download, track_download_stream)
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.partial_file import DownloadStorageError
@@ -205,6 +206,8 @@ def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) ->
     """Check if the given file format can be downloaded."""
     if _type in ["audio", "document", "video"]:
         allowed_formats: list = file_formats[_type]
+        if not allowed_formats:
+            return False
         if not file_format in allowed_formats and allowed_formats[0] != "all":
             return False
     return True
@@ -617,9 +620,22 @@ async def save_msg_to_file(app, chat_id: Union[int, str], message: pyrogram.type
 
 async def download_task(client: pyrogram.Client, message: pyrogram.types.Message, node: TaskNode):
     """Download and Forward media"""
-    download_status, file_name, error_message = await download_media(
-        client, message, app.media_types, app.file_formats, node
-    )
+    matches_filter = True
+    if node.download_filter and not node.bypass_filters:
+        meta_data = MetaData()
+        caption = (validate_title(message.caption) if message.caption
+                   else app.get_caption_name(node.chat_id, message.media_group_id))
+        set_meta_data(meta_data, message, caption)
+        matches_filter = app.exec_filter(node, meta_data)
+    if matches_filter:
+        download_status, file_name, error_message = await download_media(
+            client, message,
+            list(MetaData.AVAILABLE_MEDIA) if node.bypass_filters else app.media_types,
+            {kind: ["all"] for kind in MetaData.AVAILABLE_MEDIA} if node.bypass_filters else app.file_formats,
+            node,
+        )
+    else:
+        download_status, file_name, error_message = DownloadStatus.SkipDownload, None, "No download filter matched"
     temp_file_name = node.download_temp_paths.pop(message.id, "")
     # Backfill source_chat_title from cache (populated during download_media)
     if not node.source_chat_title and getattr(node, 'source_chat_id', 0):
@@ -627,12 +643,16 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
         cached = _gct(node.source_chat_id)
         if cached:
             node.source_chat_title = cached
-    if app.enable_download_txt and message.text and not message.media:
+    if matches_filter and app.enable_download_txt and message.text and not message.media:
         download_status, file_name = await save_msg_to_file(app, node.chat_id, message)
-    if not node.bot:
-        app.set_download_id(node, message.id, download_status)
-    node.download_status[message.id] = download_status
     file_size = os.path.getsize(file_name) if file_name else 0
+    existing_file = download_status is DownloadStatus.SkipDownload and file_name and file_size > 0
+    report_status = DownloadStatus.SuccessDownload if existing_file else download_status
+    if report_status is DownloadStatus.SuccessDownload:
+        remove_skipped_download(f"{node.chat_id}_{message.id}")
+    if not node.bot:
+        app.set_download_id(node, message.id, report_status)
+    node.download_status[message.id] = report_status
     # Record failed downloads to the failed list for webui display
     if download_status is DownloadStatus.FailedDownload:
         # Get task_id_display (format: MMDD-N)
@@ -675,7 +695,13 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
     elif download_status is DownloadStatus.SkipDownload:
         if file_name and file_size > 0:
             record_existing_download(message.id, file_name, file_size, node)
+            node.existing_file_count += 1
         else:
+            reason = error_message or "Download cancelled"
+            if error_message and not node.is_stop_transmission:
+                record_skipped_download(message, node, reason)
+            else:
+                node.skip_reasons[reason] = node.skip_reasons.get(reason, 0) + 1
             # Filtered, unsupported and cancelled downloads have no completed file.
             from module.download_stat import delete_download_result_entry as _ddre
             _ddre(node.chat_id, message.id if message else message_id)
@@ -690,7 +716,7 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
         if await app.upload_file(file_name, update_cloud_upload_stat, (node, message.id, ui_file_name)):
             node.upload_success_count += 1
     await report_bot_download_status(
-        node.bot, node, download_status,
+        node.bot, node, report_status,
         0 if download_status is DownloadStatus.SkipDownload else file_size,
     )
     # Send final status with full stats immediately for single downloads
@@ -812,7 +838,7 @@ async def download_media(
                             f"{file_size} != {media_size}, {_t('re-downloading')}."
                         )
             else:
-                return DownloadStatus.SkipDownload, None, ""
+                return DownloadStatus.SkipDownload, None, "File format is not allowed"
             break
     except Exception as e:
         logger.error(
@@ -820,10 +846,10 @@ async def download_media(
             f"{_t('could not be downloaded due to following exception')}:\n[{e}].",
             exc_info=True,
         )
-        return DownloadStatus.SkipDownload, None, ""
+        return DownloadStatus.SkipDownload, None, "Media metadata unavailable"
     if _media is None:
         logger.warning(f"Message[{message.id}]: no media found in message, skipping download")
-        return DownloadStatus.SkipDownload, None, ""
+        return DownloadStatus.SkipDownload, None, "Media type is not allowed" if message.media else "No supported media"
     # Snapshot once. A saved range plan takes precedence after a restart.
     file_parallelism = getattr(app, "file_download_concurrency", 1)
     part_size = getattr(app, "download_part_size_mb", 64) * _MB
@@ -1562,11 +1588,16 @@ async def download_chat_task(client: pyrogram.Client, chat_download_config: Chat
         set_meta_data(meta_data, message, caption)
         if app.need_skip_message(chat_download_config, message.id):
             continue
-        if app.exec_filter(chat_download_config, meta_data):
+        filter_config = node if node.download_filter is not None else chat_download_config
+        if app.exec_filter(filter_config, meta_data):
             if message.media:  # Only add to download queue if message has media
                 await add_download_task(message, node)
         else:
             node.download_status[message.id] = DownloadStatus.SkipDownload
+            if message.media or (app.enable_download_txt and message.text):
+                record_skipped_download(message, node, "No download filter matched")
+                node.total_task += 1
+                await report_bot_download_status(node.bot, node, DownloadStatus.SkipDownload)
             if message.media_group_id:
                 await upload_telegram_chat(client, node.upload_user, app, node, message, DownloadStatus.SkipDownload)
         # Update task progress for crash recovery
@@ -1589,7 +1620,7 @@ async def download_all_chat(client: pyrogram.Client):
     """Download All chat"""
     from module.task_store import save_task as _save_task
     for key, value in app.chat_download_config.items():
-        value.node = TaskNode(chat_id=key)
+        value.node = TaskNode(chat_id=key, download_filter=app.resolve_download_filter(value.download_filter))
         _save_task(
             task_id=value.node.task_id,
             chat_id=key,
@@ -1597,7 +1628,7 @@ async def download_all_chat(client: pyrogram.Client):
             start_offset_id=value.last_read_message_id,
             end_offset_id=0,
             limit=0,
-            download_filter=value.download_filter,
+            download_filter=value.node.download_filter,
             from_user_id=0,
             task_type="config",
         )

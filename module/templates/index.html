@@ -163,6 +163,10 @@
                                               x-text="failedTasks.length"></span>
                                     </span>
                                 </button>
+                <button @click="activeTab = 'skipped'; selectedTasks = []; fetchSkipped()"
+                        class="px-4 py-3 text-sm font-medium transition-colors"
+                        :class="activeTab === 'skipped' ? 'tab-active' : 'tab-inactive'"
+                        :aria-selected="activeTab === 'skipped'" role="tab" x-text="t('Skipped')"></button>
             </nav>
         </div>
     </div>
@@ -278,41 +282,11 @@
                 </div>
             </div>
 
-            <!-- Max Workers Control Bar -->
-            <div class="mb-3 flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
-                    <label class="text-sm text-gray-500 flex items-center gap-1.5">
-                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/>
-                        </svg>
-                        <span class="hidden sm:inline"><span data-i18n="Concurrent tasks" x-text="t('Concurrent tasks')">Concurrent tasks</span></span>
-                        <span class="sm:hidden"><span data-i18n="Concurrent" x-text="t('Concurrent')">Concurrent</span></span>
-                    </label>
-                    <select
-                        x-model.number="maxWorkers"
-                        @change="saveMaxWorkers()"
-                        :disabled="savingWorkers"
-                        class="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                    >
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                        <option value="6">6</option>
-                    </select>
-                    <span x-show="savingWorkers" class="text-xs text-blue-500"><span data-i18n="Saving..." x-text="t('Saving...')">Saving...</span></span>
-                </div>
-            </div>
-
             <!-- Selection shortcuts apply to the current search and status filter. -->
             <div x-show="filteredActiveTasks.length > 0" class="selection-tools mb-3">
-                <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-500 hover:text-gray-700">
-                    <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        :checked="selectedTasks.length === filteredActiveTasks.length && filteredActiveTasks.length > 0"
-                        @change="toggleSelectAll('active')">
-                    <span x-text="t('Select all')"></span>
-                </label>
+                <button type="button" @click="toggleSelectAll('active')" :disabled="batchBusy"
+                        :aria-pressed="filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id))"
+                        class="selection-shortcut" x-text="t(filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
                 <button type="button" @click="selectActiveStatus('active')" :disabled="!filteredActiveTasks.some(task => task.status === 'active')"
                         class="selection-shortcut" x-text="t('Select downloading')"></button>
                 <button type="button" @click="selectActiveStatus('paused')" :disabled="!filteredActiveTasks.some(task => task.status === 'paused')"
@@ -477,12 +451,9 @@
             <!-- Summary Bar -->
             <div x-show="pendingTasks.length > 0" class="mb-4 flex items-center justify-between">
                 <div class="flex items-center gap-3">
-                    <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-500 hover:text-gray-700">
-                        <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            :checked="selectedTasks.length === pendingTasks.length && pendingTasks.length > 0"
-                            @change="toggleSelectAll('pending')">
-                        <span data-i18n="Select all" x-text="t('Select all')">Select all</span>
-                    </label>
+                    <button type="button" @click="toggleSelectAll('pending')" :disabled="batchBusy"
+                        :aria-pressed="pendingTasks.length > 0 && pendingTasks.every(task => selectedTasks.includes(task.task_id))"
+                        class="selection-shortcut" x-text="t(pendingTasks.length > 0 && pendingTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
                                     </div>
                 <span class="text-xs text-gray-400"><span data-i18n="By arrival time · oldest first" x-text="t('By arrival time · oldest first')">By arrival time · oldest first</span></span>
             </div>
@@ -582,12 +553,9 @@
         <div x-show="activeTab === 'completed'" x-transition:enter="fade-in">
             <!-- Select All Bar -->
             <div x-show="completedTasks.length > 0" class="mb-3 flex items-center justify-between">
-                <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-500 hover:text-gray-700">
-                    <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        :checked="selectedTasks.length === completedTasks.length && completedTasks.length > 0"
-                        @change="toggleSelectAll('completed')">
-                    <span data-i18n="Select all" x-text="t('Select all')">Select all</span>
-                </label>
+                <button type="button" @click="toggleSelectAll('completed')" :disabled="batchBusy"
+                        :aria-pressed="completedTasks.length > 0 && completedTasks.every(task => selectedTasks.includes(task.task_id))"
+                        class="selection-shortcut" x-text="t(completedTasks.length > 0 && completedTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
                 <span class="text-xs text-gray-400" x-text="t('Tasks: {count}', {count: completedTasks.length + ' / ' + completedTotal})"></span>
             </div>
 
@@ -689,12 +657,9 @@
         <div x-show="activeTab === 'failed'" x-transition:enter="fade-in">
             <!-- Select All Bar -->
             <div x-show="filteredFailedTasks.length > 0" class="mb-3 flex items-center justify-between">
-                <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-500 hover:text-gray-700">
-                    <input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        :checked="selectedTasks.length === filteredFailedTasks.length && filteredFailedTasks.length > 0"
-                        @change="toggleSelectAll('failed')">
-                    <span data-i18n="Select all" x-text="t('Select all')">Select all</span>
-                </label>
+                <button type="button" @click="toggleSelectAll('failed')" :disabled="batchBusy"
+                        :aria-pressed="filteredFailedTasks.length > 0 && filteredFailedTasks.every(task => selectedTasks.includes(task.task_id))"
+                        class="selection-shortcut" x-text="t(filteredFailedTasks.length > 0 && filteredFailedTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
                 <span class="text-xs text-gray-400" x-text="t('Tasks: {count}', {count: filteredFailedTasks.length})"></span>
             </div>
 
@@ -785,6 +750,7 @@
                 </template>
             </div>
         </div>
+        {% include 'skipped_downloads.html' %}
     </main>
 
     <!-- Delete Confirmation Modal -->
@@ -946,8 +912,6 @@
             },
             floodWait: { active: false, remaining: 0, reason: '' },
             throttle: { active: false, elapsed: 0 },
-            maxWorkers: 5,
-            savingWorkers: false,
             activeTasks: [],
             completedTasks: [],
             completedTotal: 0,
@@ -956,6 +920,12 @@
             completedHasMore: true,
             completedLoading: false,
             failedTasks: [],
+            skippedTasks: [],
+            skippedTotal: 0,
+            skippedOffset: 0,
+            skippedLoading: false,
+            skippedRequestId: 0,
+            skippedBusy: [],
             pendingTasks: [],
             pendingOffset: 0,
             pendingLimit: 100,
@@ -1024,6 +994,7 @@
             },
             get filteredFailedTasks() { return this.failedTasks.filter(task => this.matchesSearch(task)); },
             get visibleTaskCount() {
+                if (this.activeTab === 'skipped') return this.skippedTasks.length;
                 if (this.activeTab === 'active') return this.filteredActiveTasks.length;
                 if (this.activeTab === 'failed') return this.filteredFailedTasks.length;
                 return this.activeTab === 'pending' ? this.pendingTasks.length : this.completedTasks.length;
@@ -1045,7 +1016,7 @@
                 window.addEventListener('scroll', this.scrollListener, { passive: true });
                 await Promise.allSettled([
                     this.fetchVersion(), this.fetchActive(),
-                    this.fetchPending(true), this.fetchCompleted(true), this.fetchMaxWorkers(),
+                    this.fetchPending(true), this.fetchCompleted(true),
                     this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchBotStatus(),
                 ]);
                 if (this.disposed) return;
@@ -1056,7 +1027,7 @@
                     const requests = [this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchActive(), this.fetchBotStatus()];
                     if (now - lastPending >= 5000) {
                         lastPending = now;
-                        requests.push(this.pollPendingRefresh(), this.fetchFailed());
+                        requests.push(this.pollPendingRefresh(), this.fetchFailed(), this.fetchSkipped());
                     }
                     if (this.completedRefreshPending || now - lastCompleted >= 10000) {
                         lastCompleted = now;
@@ -1189,6 +1160,8 @@
                     this.resetCompletedList();
                     this.pendingLoading = false;
                     this.fetchPending(true);
+                    this.skippedOffset = 0;
+                    this.fetchSkipped();
                 }, 300);
             },
 
@@ -1255,28 +1228,6 @@
                 } catch(e) {}
             },
 
-            async fetchMaxWorkers() {
-                try {
-                    const res = await authenticatedFetch('/get_max_workers');
-                    const data = await res.json();
-                    if (data.max_workers) {
-                        this.maxWorkers = data.max_workers;
-                    }
-                } catch(e) {}
-            },
-
-            async saveMaxWorkers() {
-                this.savingWorkers = true;
-                try {
-                    await authenticatedFetch(`/set_max_workers?n=${this.maxWorkers}`, { method: 'POST' });
-                    this.showToast(WebI18n.t('Concurrent tasks set to ') + this.maxWorkers, 'success');
-                } catch(e) {
-                    this.showToast(WebI18n.t('Could not save setting'), 'error');
-                } finally {
-                    this.savingWorkers = false;
-                }
-            },
-
             async fetchActive() {
                 try {
                     const res = await authenticatedFetch('/get_download_list?already_down=false');
@@ -1317,6 +1268,41 @@
                 }
                 await this.loadMoreCompleted();
                 await this.fetchFailed();
+            },
+
+            async fetchSkipped() {
+                const requestId = ++this.skippedRequestId;
+                this.skippedLoading = true;
+                try {
+                    const response = await authenticatedFetch('/get_skipped_downloads?offset=' + this.skippedOffset + '&limit=50&search=' + encodeURIComponent(this.taskSearch.trim()));
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    if (requestId !== this.skippedRequestId) return;
+                    this.skippedTasks = data.tasks || [];
+                    this.skippedTotal = data.total || 0;
+                    if (this.activeTab === 'skipped' && !this.batchBusy) {
+                        const visibleIds = new Set(this.skippedTasks.map(task => task.task_id));
+                        this.selectedTasks = this.selectedTasks.filter(id => visibleIds.has(id));
+                    }
+                    if (this.skippedOffset >= this.skippedTotal && this.skippedOffset > 0) {
+                        this.skippedOffset = Math.max(0, Math.ceil(this.skippedTotal / 50) - 1) * 50;
+                        await this.fetchSkipped();
+                    }
+                } catch(e) { this.showToast(this.t('Network error'), 'error'); }
+                finally { if (requestId === this.skippedRequestId) this.skippedLoading = false; }
+            },
+
+            async skippedAction(taskId, action) {
+                if (this.skippedBusy.includes(taskId)) return;
+                this.skippedBusy.push(taskId);
+                try {
+                    const response = await authenticatedFetch('/' + action + '_skipped?task_id=' + encodeURIComponent(taskId), {method: 'POST'});
+                    const data = await response.json();
+                    this.showToast(data.message, data.code === '1' ? 'success' : 'error');
+                    await this.fetchSkipped();
+                    if (data.code === '1' && action === 'download') await this.fetchPending(true);
+                } catch(e) { this.showToast(this.t('Network error'), 'error'); }
+                finally { this.skippedBusy = this.skippedBusy.filter(id => id !== taskId); }
             },
 
             async fetchFailed() {
@@ -1425,6 +1411,7 @@
                 if (tab === 'active') tasks = this.filteredActiveTasks;
                 else if (tab === 'pending') tasks = this.pendingTasks;
                 else if (tab === 'completed') tasks = this.completedTasks;
+                else if (tab === 'skipped') tasks = this.skippedTasks;
                 else tasks = this.filteredFailedTasks;
 
                 const allIds = tasks.map(t => t.task_id);
@@ -1487,7 +1474,25 @@
             },
 
             async batchDelete() {
-                if (this.selectedTasks.length) this.confirmBatchDelete();
+                if (this.batchBusy || !this.selectedTasks.length) return;
+                if (this.activeTab === 'skipped') {
+                    this.batchBusy = true;
+                    const selection = this.selectedTasks;
+                    const failed = [];
+                    for (const id of [...selection]) {
+                        try {
+                            const response = await authenticatedFetch('/delete_skipped?task_id=' + encodeURIComponent(id), {method: 'POST'});
+                            const result = await response.json();
+                            if (result.code !== '1') failed.push(id);
+                        } catch (error) { failed.push(id); }
+                    }
+                    if (this.activeTab === 'skipped' && this.selectedTasks === selection) this.selectedTasks = failed;
+                    this.batchBusy = false;
+                    this.showToast(this.t(failed.length ? 'Some selected tasks could not be updated' : 'Skipped record deleted'), failed.length ? 'error' : 'success');
+                    await this.fetchSkipped();
+                    return;
+                }
+                this.confirmBatchDelete();
             },
 
             async batchRetry() {
@@ -1795,6 +1800,9 @@
             </button>
 
             <!-- Failed -->
+            <button @click="activeTab = 'skipped'; selectedTasks = []; fetchSkipped()" class="flex flex-col items-center justify-center px-2 py-1 min-w-0" :class="activeTab === 'skipped' ? 'text-amber-600' : 'text-gray-400'">
+                <span aria-hidden="true">⏩</span><span class="text-[10px]" x-text="t('Skipped')"></span>
+            </button>
             <button @click="activeTab = 'failed'; selectedTasks = []"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
                     :class="activeTab === 'failed' ? 'text-red-600' : 'text-gray-400'">

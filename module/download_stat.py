@@ -32,6 +32,7 @@ _paused_tasks: set = set()
 _cancelled_tasks: set = set()
 _discarded_tasks: set = set()
 _failed_downloads: list = []
+_skipped_downloads: dict = {}
 _chat_titles: dict = {}  # chat_id -> chat_title mapping
 _download_lock: asyncio.Lock = asyncio.Lock()  # Protect concurrent access to _download_result, _total_download_speed and _failed_downloads.
 
@@ -60,7 +61,7 @@ _SLOW_CLEAR_SUSTAIN_SEC = 15       # Clear after 15 seconds of sustained recover
 # for sync functions that are also called from async context.
 # Strategy: sync functions that read/write shared state use a reentrant-compatible
 # pattern via _sync_lock.
-_sync_lock = __import__('threading').Lock()  # Protect writes in synchronous callers.
+_sync_lock = __import__('threading').RLock()  # History snapshots can nest inside synchronous writes.
 _download_streams: dict = {}  # Runtime-only tokens; never restore stream counts from history.
 
 
@@ -248,6 +249,51 @@ def add_failed_download(chat_id, msg_id, task_id, file_name, error_message, tota
             "timestamp": time.time(),
         })
     save_downloads()  # Persist failures immediately.
+
+
+def record_skipped_download(message, node, reason):
+    """Keep a durable message identity and rule snapshot for an explicit download later."""
+    from module.bot import _bot
+    owner = getattr(message, "_client", None) or node.client
+    media = next((getattr(message, kind, None) for kind in (
+        "video", "document", "audio", "photo", "voice", "animation", "video_note", "sticker")
+        if getattr(message, kind, None) is not None), None)
+    source_chat = getattr(node, "source_chat_id", 0) or node.chat_id
+    source_message = getattr(node, "source_message_id", 0) or message.id
+    username = getattr(message.chat, "username", None)
+    source_link = (f"https://t.me/{username}/{source_message}" if username and source_chat == node.chat_id else
+                   f"https://t.me/c/{str(source_chat)[4:]}/{source_message}" if str(source_chat).startswith("-100") else "")
+    entry = {
+        "task_id": f"{node.chat_id}_{message.id}", "task_id_display": node.task_id_display,
+        "chat_id": node.chat_id, "msg_id": message.id,
+        "file_name": getattr(media, "file_name", "") or str(message.id),
+        "chat_title": node.source_chat_title or getattr(message.chat, "title", "") or get_chat_title(node.chat_id),
+        "source_chat_id": source_chat, "source_message_id": source_message,
+        "reason": reason, "download_filter": node.download_filter or "",
+        "timestamp": time.time(), "source_link": source_link,
+        "message_client": "bot" if owner is not None and owner is _bot.bot else "user",
+        "from_user_id": node.from_user_id or "", "topic_id": node.topic_id,
+    }
+    with _sync_lock:
+        _skipped_downloads[entry["task_id"]] = entry
+    node.skip_reasons[reason] = node.skip_reasons.get(reason, 0) + 1
+    save_downloads()
+
+
+def get_skipped_downloads():
+    with _sync_lock:
+        return [dict(entry) for entry in _skipped_downloads.values()]
+
+
+def remove_skipped_download(task_id):
+    with _sync_lock:
+        entry = _skipped_downloads.pop(str(task_id), None)
+        if entry is None:
+            return False
+        if save_downloads() is False:
+            _skipped_downloads[str(task_id)] = entry
+            return False
+        return True
 
 
 def get_failed_downloads() -> list:
@@ -618,6 +664,12 @@ _HISTORY_FILE = os.path.join(DATA_DIR, "download_history.json")
 
 
 def save_downloads():
+    """Serialize atomic snapshots from request threads and downloader callbacks."""
+    with _sync_lock:
+        return _save_downloads()
+
+
+def _save_downloads():
     """Save completed and failed downloads to file for persistence."""
     try:
         # Build completed list from _download_result
@@ -641,6 +693,7 @@ def save_downloads():
         data = {
             "completed": completed,
             "failed": _failed_downloads,
+            "skipped": get_skipped_downloads(),
             "chat_titles": _chat_titles,
         }
 
@@ -650,14 +703,16 @@ def save_downloads():
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, _HISTORY_FILE)
-        logger.info(f"Saved {len(completed)} completed, {len(_failed_downloads)} failed downloads")
+        logger.info(f"Saved {len(completed)} completed, {len(_failed_downloads)} failed, {len(_skipped_downloads)} skipped downloads")
+        return True
     except Exception as e:
         logger.warning(f"Failed to save download history: {e}")
+        return False
 
 
 def load_downloads():
     """Load completed and failed downloads from file."""
-    global _download_result, _failed_downloads, _chat_titles
+    global _download_result, _failed_downloads, _chat_titles, _skipped_downloads
     try:
         if not os.path.exists(_HISTORY_FILE):
             return
@@ -691,6 +746,7 @@ def load_downloads():
 
         # Restore failed downloads
         _failed_downloads = data.get("failed", [])
+        _skipped_downloads = {str(entry["task_id"]): entry for entry in data.get("skipped", [])}
 
         logger.info(f"Loaded {len(data.get('completed', []))} completed, {len(_failed_downloads)} failed downloads")
     except Exception as e:

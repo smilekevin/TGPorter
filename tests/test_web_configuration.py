@@ -1,5 +1,6 @@
 """Validate Configuration against production Flask routes and a real owning loop."""
 
+import asyncio
 import json
 from pathlib import Path
 import tempfile
@@ -77,7 +78,7 @@ class WebConfigurationTests(unittest.TestCase):
     def test_configuration_and_telegram_require_browser_session_and_csrf(self):
         self.setup()
         anonymous = self.flask.test_client()
-        for path in ("/api/configuration", "/api/telegram", "/api/configuration/validate-host"):
+        for path in ("/api/configuration", "/api/telegram", "/api/configuration/validate-host", "/api/configuration/validate-filter"):
             self.assertEqual(anonymous.post(path, headers={"Authorization": "Bearer agent"}, json={}).status_code, 401)
             self.assertEqual(self.client.post(path, json={}).status_code, 400)
         self.assertEqual(anonymous.get("/configuration").headers["Location"], "/login")
@@ -121,6 +122,83 @@ class WebConfigurationTests(unittest.TestCase):
             self.assertIn("hostname or IP", response.json["error"])
             self.assertEqual(Path(self.app.settings.path).read_bytes(), original)
             self.assertEqual(self.save({"mcp_allowed_hosts": [entry]}).status_code, 400, entry)
+
+    def test_filter_validation_and_save_share_rules_without_saving_a_draft(self):
+        self.setup()
+        original = Path(self.app.settings.path).read_bytes()
+        for expression in ("media_file_size >= 100MB", "media_file_name == r'.*tutorial.*'"):
+            response = self.client.post("/api/configuration/validate-filter", headers=self.csrf(), json={"expression": expression})
+            self.assertEqual(response.status_code, 200, response.json)
+            self.assertEqual(response.json["expression"], expression)
+            self.assertEqual(Path(self.app.settings.path).read_bytes(), original)
+        for expression in (None, "", "unknown == 1", "media_duration >", "id == 'bad'", "id == r'['"):
+            response = self.client.post("/api/configuration/validate-filter", headers=self.csrf(), json={"expression": expression})
+            self.assertEqual(response.status_code, 400, response.json)
+            self.assertEqual(self.save({"download_filters": [expression]}).status_code, 400)
+            self.assertEqual(Path(self.app.settings.path).read_bytes(), original)
+        response = self.save({"download_filters": ["media_file_size >= 100MB", "media_duration <= 600"]})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertNotIn("download_filters", response.json["restart_required"])
+        self.assertEqual(len(self.app.download_filters), 2)
+        self.assertEqual(self.save({"download_filters": []}).status_code, 200)
+        self.assertEqual(self.app.download_filters, [])
+
+    def test_bot_add_filter_persists_the_same_list_and_rejects_invalid_expressions(self):
+        from module import bot
+        self.setup()
+        client = SimpleNamespace(send_message=AsyncMock())
+        message = SimpleNamespace(text="/add_filter media_file_size >= 100MB", from_user=SimpleNamespace(id=123))
+        with patch.object(bot, "_bot", SimpleNamespace(app=self.app)):
+            for _ in range(2):
+                asyncio.run_coroutine_threadsafe(bot.add_filter(client, message), self.app.loop).result(timeout=5)
+            self.assertEqual(self.app.download_filters, ["media_file_size >= 100MB"])
+            self.assertEqual(self.client.get("/api/configuration").json["settings"]["download_filters"], self.app.download_filters)
+            self.assertEqual(json.loads(Path(self.app.settings.path).read_text())["download_filters"], self.app.download_filters)
+            self.assertEqual(self.save({"download_filters": []}).status_code, 200)
+            message.text = "/add_filter unknown == 1"
+            asyncio.run_coroutine_threadsafe(bot.add_filter(client, message), self.app.loop).result(timeout=5)
+            self.assertEqual(self.app.download_filters, [])
+            self.assertIn("Undefined name unknown", client.send_message.call_args.args[1])
+
+    def test_bot_filter_does_not_acknowledge_or_apply_a_failed_write(self):
+        from module import bot
+        client = SimpleNamespace(send_message=AsyncMock())
+        message = SimpleNamespace(text="/add_filter id == 1", from_user=SimpleNamespace(id=123))
+        original = Path(self.app.settings.path).read_bytes()
+        with patch.object(bot, "_bot", SimpleNamespace(app=self.app)), \
+                patch("module.settings.os.replace", side_effect=OSError("offline")):
+            with self.assertRaises(OSError):
+                asyncio.run_coroutine_threadsafe(bot.add_filter(client, message), self.app.loop).result(timeout=5)
+        client.send_message.assert_not_awaited()
+        self.assertEqual(self.app.download_filters, [])
+        self.assertEqual(Path(self.app.settings.path).read_bytes(), original)
+
+    def test_advertisement_tags_share_bot_settings_apply_live_and_preserve_or_matching(self):
+        from module import bot
+        self.setup()
+        keywords = ["推广", "Sponsor", "a.*b"]
+        response = self.save({"filter_advertisement_list": keywords})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertNotIn("filter_advertisement_list", response.json["restart_required"])
+        self.assertTrue(self.app.is_match_advertisement("推广内容"))
+        self.assertTrue(self.app.is_match_advertisement("contains Sponsor"))
+        self.assertFalse(self.app.is_match_advertisement("contains sponsor or axxb"))
+        self.assertTrue(self.app.is_match_advertisement("literal a.*b"))
+        self.assertEqual(self.save({"filter_advertisement_list": [123]}).status_code, 400)
+        self.assertEqual(self.app.filter_advertisement_list, keywords)
+        client = SimpleNamespace(send_message=AsyncMock())
+        message = SimpleNamespace(text="/add_ad partner", from_user=SimpleNamespace(id=123))
+        with patch.object(bot, "_bot", SimpleNamespace(app=self.app)):
+            asyncio.run_coroutine_threadsafe(bot.add_filter_advertisement_filter(client, message), self.app.loop).result(timeout=5)
+            self.assertEqual(self.client.get("/api/configuration").json["settings"]["filter_advertisement_list"], keywords + ["partner"])
+            self.assertEqual(self.save({"filter_advertisement_list": ["partner", "Sponsor"]}).status_code, 200)
+            message.text = "/remove_ad partner"
+            asyncio.run_coroutine_threadsafe(bot.remove_filter_advertisement_filter(client, message), self.app.loop).result(timeout=5)
+        self.assertEqual(self.app.filter_advertisement_list, ["Sponsor"])
+        self.assertEqual(self.save({"filter_advertisement_list": []}).status_code, 200)
+        self.app.save_app_data()
+        self.assertEqual(json.loads(Path(self.app.settings.path).read_text())["filter_advertisement_list"], [])
+        self.assertFalse(self.app.is_match_advertisement("Sponsor 推广 partner"))
 
     def test_setup_accepts_eight_characters_only_with_all_three_character_types(self):
         self.client.get("/configuration")
@@ -278,6 +356,7 @@ class WebConfigurationTests(unittest.TestCase):
         self.assertEqual(anonymous.get("/api/configuration").status_code, 401)
         self.assertEqual(anonymous.post("/api/telegram", json={"action": "logout"}).status_code, 401)
         self.assertEqual(anonymous.post("/api/configuration/validate-host", json={"host": "nas.example.com"}).status_code, 401)
+        self.assertEqual(anonymous.post("/api/configuration/validate-filter", json={"expression": "id == 1"}).status_code, 401)
         self.assertEqual(anonymous.get("/configuration").headers["Location"], "/login")
         self.assertEqual(self.client.get("/api/configuration").status_code, 200)
 
@@ -303,7 +382,7 @@ class WebConfigurationTests(unittest.TestCase):
         self.assertLess(html.index('id="setting-api_hash"'), html.index('id="setting-bot_token"'))
         self.assertLess(html.index('id="setting-bot_token"'), html.index('id="telegram-submit"'))
         self.assertLess(html.index('id="telegram-submit"'), html.index('id="setting-proxy"'))
-        for key in ("media_types", "file_formats", "file_path_prefix", "allowed_user_ids"):
+        for key in ("media_types", "file_formats", "file_path_prefix", "allowed_user_ids", "filter_advertisement_list"):
             self.assertIn(f'data-editor="{key}"', html)
         self.assertNotIn('<textarea', html)
         self.assertNotIn('id="setting-chat"', html)
