@@ -400,6 +400,7 @@ async def update_download_status(
             _download_result[chat_id] = {}
 
         if _download_result[chat_id].get(message_id):
+            _download_result[chat_id][message_id].pop("completion_reason", None)
             last_download_byte = _download_result[chat_id][message_id]["down_byte"]
             last_time = _download_result[chat_id][message_id]["end_time"]
             download_speed = _download_result[chat_id][message_id]["download_speed"]
@@ -573,6 +574,46 @@ async def update_download_status(
         _last_download_time = cur_time
 
 
+def record_existing_download(message_id: int, file_name: str, total_size: int, node: TaskNode):
+    """Persist a verified existing file without counting its bytes as new traffic."""
+    cur_time = time.time()
+    with _sync_lock:
+        if node.is_stop_transmission or any(
+                key in _cancelled_tasks for key in _download_control_keys(message_id, node)):
+            return
+        messages = _download_result.setdefault(node.chat_id, {})
+        previous = messages.get(message_id, {})
+        # History restores JSON keys as strings; replace that row when a live
+        # task uses integer IDs so the UI keeps one record for this file.
+        for chat_key in {node.chat_id, str(node.chat_id)}:
+            existing = _download_result.get(chat_key, {})
+            for message_key in {message_id, str(message_id)}:
+                if chat_key == node.chat_id and message_key == message_id:
+                    continue
+                previous = existing.pop(message_key, None) or previous
+            if not existing and chat_key != node.chat_id:
+                _download_result.pop(chat_key, None)
+        messages[message_id] = {
+            "down_byte": total_size,
+            "total_size": total_size,
+            "progress": 100.0,
+            "file_name": file_name,
+            "temp_file_name": "",
+            "start_time": previous.get("start_time", cur_time),
+            "end_time": cur_time,
+            "download_speed": 0,
+            "each_second_total_download": 0,
+            "task_id": node.task_id,
+            "task_id_display": getattr(node, "task_id_display", ""),
+            "source_chat_title": getattr(node, "source_chat_title", ""),
+            "source_chat_id": getattr(node, "source_chat_id", 0),
+            "source_message_id": getattr(node, "source_message_id", 0),
+            "completion_reason": "already download,download skipped",
+        }
+        clear_task_heartbeat(f"{node.chat_id}_{message_id}")
+        save_downloads()
+
+
 _HISTORY_FILE = os.path.join(DATA_DIR, "download_history.json")
 
 
@@ -594,6 +635,7 @@ def save_downloads():
                         "start_time": value.get("start_time", 0),
                         "end_time": value.get("end_time", 0),
                         "task_id_display": value.get("task_id_display", ""),
+                        "completion_reason": value.get("completion_reason", ""),
                     })
 
         data = {
@@ -644,6 +686,7 @@ def load_downloads():
                     "task_id": item.get("task_id", ""),
                     "task_id_display": item.get("task_id_display", ""),
                     "source_chat_title": item.get("chat_title", ""),
+                    "completion_reason": item.get("completion_reason", ""),
                 }
 
         # Restore failed downloads

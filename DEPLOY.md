@@ -205,6 +205,8 @@ When deleting a task, select file deletion only if you also want to remove local
 
 Bot/log language is set in Configuration; the header selector controls browser language. Supported codes: `en`, `zh-cn`, `zh-tw`, `ja`, `es`, `fr`, `ru`, `uk`; `zh` means Simplified Chinese. See the [language guide](https://github.com/smilekevin/TGPorter/blob/main/docs/languages.md) to add a translation.
 
+The Completed tab also retains files skipped because a complete local file already exists, with the skip reason, file path and size. These records survive restarts and count toward completed downloads in the Web API, Bot queries and MCP. Filtered, unsupported and cancelled downloads are excluded.
+
 ## WebUI Login
 
 1. Open `/configuration`, enter the **First-time setup code** from startup logs, and create a management password. New or changed passwords need at least 8 characters with uppercase and lowercase letters and a number. Existing passwords remain valid; restarting before setup completes generates a new code.
