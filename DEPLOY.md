@@ -208,7 +208,9 @@ Saved Telegram sessions are reused after restart. Use **Test connection** to che
 
 **Web access:** downloads and Configuration require the management password by default. Enable **Public downloads** to let anyone who can reach the service view, submit and manage downloads without signing in. Configuration still requires the management password. A blank password field keeps the existing password. Older password-free deployments retain public downloads; use the setup code to create a Configuration password.
 
-**Remember me (7 days)** is optional. Restarting the service or changing the password signs out other browser sessions; the current session remains signed in when you change its password. Web APIs use the same browser login and require a CSRF token for changes. An MCP Token is only for `/mcp`.
+**Remember me (7 days)** is optional: selecting it keeps the browser signed in for seven days, including browser and service restarts. Without it, the cookie lasts for the browser session and remains valid across service restarts, for up to seven days. The signing key is generated automatically in `data/web_session.key` with mode 0600; preserve this file when upgrading or recreating containers. Changing the password signs out other browser sessions; the current session remains signed in when you change its password. Web APIs use the same browser login and require a CSRF token for changes. An MCP Token is only for `/mcp`.
+
+Upgrading from a version with an in-memory signing key requires signing in once more; subsequent service restarts preserve the new login.
 
 ### Command-line Login
 
@@ -334,6 +336,7 @@ Set the Compose image to `tgporter:local`, then run `docker compose up -d`. Keep
 | Path | Purpose |
 | --- | --- |
 | `data/settings.json` | Configuration, credentials, Bot/log language, concurrency and ad rules; created automatically with mode 0600 |
+| `data/web_session.key` | Private browser-session signing key; preserves logins across service restarts |
 | `data/data.json` | Channel checkpoints and retry IDs; unrelated fields and disabled-channel records are retained |
 | `data/sessions/` | Telegram authorization |
 | `data/bot.yaml` | Existing Bot task/listener metadata |

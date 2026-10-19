@@ -55,7 +55,7 @@
   - ❌ **失败** — 失败原因和重试入口
 - **批量操作** — 暂停、恢复、删除和重试
 - **实时数据** — 总下载速度、当前下载流数和每文件进度
-- **密码登录** — 支持可选的“记住登录 7 天”
+- **密码登录** — 支持可选的“记住登录 7 天”，服务重启后仍有效
 - **网页提交** — 通过 `t.me` 消息链接添加下载任务
 
 ### 转发
@@ -410,7 +410,7 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
   - ❌ **Failed** — failure reasons and retries
 - **Batch actions** — pause, resume, delete and retry
 - **Live statistics** — total speed, active streams and per-file progress
-- **Password login** — optional seven-day remember-me setting
+- **Password login** — optional seven-day remember-me setting that survives service restarts
 - **Web submissions** — add downloads using `t.me` post links
 
 ### Forward

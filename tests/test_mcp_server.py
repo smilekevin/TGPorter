@@ -30,6 +30,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.done_file = self.path / "completed.mp4"
         self.done_file.write_bytes(b"completed")
         self.config = SimpleNamespace(
+            data_path=str(self.path),
             web_login_secret="test-browser-password", mcp_token="test-mcp-token",
             max_download_task=2, save_app_data=Mock(), loop=None,
             mcp_enabled=True, mcp_read_only=False,
@@ -37,6 +38,7 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         patches = (
             patch.object(web, "_app", self.config),
+            patch.dict(web.get_flask_app().config),
             patch.object(download_stat, "_download_state", download_stat.DownloadState.Downloading),
             patch.object(download_stat, "_download_result", {100: {
                 1: self.download("active.mp4", complete=False),

@@ -1,11 +1,16 @@
 """Exercise password login through the real Flask routes, without Telegram."""
 
 import json
+import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -178,7 +183,7 @@ class WebLoginTests(unittest.TestCase):
         self.client.set_cookie("session", forged_cookie, domain="localhost")
         self.assertEqual(self.client.get("/get_download_state").status_code, 401)
 
-    def test_service_restart_signing_key_invalidates_existing_login(self):
+    def test_replacing_signing_key_invalidates_existing_login(self):
         self.login()
         with patch.dict(self.app.config, SECRET_KEY=b"replacement-key-after-restart"):
             self.assertEqual(self.client.get("/").headers["Location"], "/login")
@@ -247,6 +252,87 @@ global.window = { location: { replace: url => { redirected = url; } } };
                     "file_formats": {}, "web_login_secret": value,
                 })
                 self.assertEqual(app.web_login_secret, expected)
+
+
+class PersistentWebSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name)
+
+    def test_signing_key_is_private_stable_and_shared_by_initializers(self):
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            keys = list(executor.map(web._load_session_key, [self.path] * 16))
+        self.assertEqual(len(keys[0]), 32)
+        self.assertTrue(all(key == keys[0] for key in keys))
+        self.assertEqual((self.path / "web_session.key").read_bytes(), keys[0])
+        self.assertEqual(os.stat(self.path / "web_session.key").st_mode & 0o777, 0o600)
+        self.assertEqual(list(self.path.iterdir()), [self.path / "web_session.key"])
+        self.assertNotEqual(web._load_session_key(self.path / "other"), keys[0])
+
+    def test_invalid_key_and_storage_failure_do_not_fall_back_to_a_temporary_key(self):
+        key_path = self.path / "web_session.key"
+        key_path.write_bytes(b"incomplete")
+        with self.assertRaisesRegex(ValueError, "Invalid Web session signing key"):
+            web._load_session_key(self.path)
+        self.assertEqual(key_path.read_bytes(), b"incomplete")
+        key_path.unlink()
+        with patch.object(web.os, "link", side_effect=PermissionError("read-only data")):
+            with self.assertRaises(PermissionError):
+                web._load_session_key(self.path)
+        self.assertEqual(list(self.path.iterdir()), [])
+
+    def test_real_process_restart_preserves_cookies_csrf_and_seven_day_expiry(self):
+        script = '''
+import json
+import sys
+import time
+from types import SimpleNamespace
+from unittest.mock import patch
+from module import web
+
+config = SimpleNamespace(data_path=sys.argv[1], web_login_secret="test-password")
+web.create_web_app(config)
+app = web.get_flask_app()
+client = app.test_client()
+if len(sys.argv) == 3:
+    client.get("/login")
+    with client.session_transaction() as session:
+        csrf = session["web_csrf_token"]
+    response = client.post("/login", data={
+        "password": "test-password", "csrf_token": csrf, "remember": sys.argv[2],
+    })
+    assert response.status_code == 302
+    with client.session_transaction() as session:
+        csrf = session["web_csrf_token"]
+    print(json.dumps({"cookie": client.get_cookie("session").value, "csrf": csrf,
+                      "persistent": "Expires=" in response.headers["Set-Cookie"]}))
+else:
+    client.set_cookie("session", sys.argv[3])
+    assert client.get("/").status_code == 200
+    assert client.get("/get_download_state").status_code == 200
+    assert client.post("/set_download_state?state=pause").status_code == 400
+    assert client.post("/set_download_state?state=pause", headers={
+        "X-CSRF-Token": sys.argv[4],
+    }).status_code == 200
+    with patch("itsdangerous.timed.time.time", return_value=time.time() + 6 * 86400):
+        assert client.get("/get_download_state").status_code == 200
+    with patch("itsdangerous.timed.time.time", return_value=time.time() + 8 * 86400):
+        assert client.get("/get_download_state").status_code == 401
+    config.web_login_secret = "changed-password"
+    assert client.get("/get_download_state").status_code == 401
+'''
+        for remember in ("", "on"):
+            with self.subTest(remember=remember):
+                data_path = str(self.path / (remember or "browser-session"))
+                command = [sys.executable, "-B", "-c", script, data_path, remember]
+                first = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                self.assertEqual(first.returncode, 0, first.stderr)
+                login = json.loads(first.stdout)
+                self.assertEqual(login["persistent"], remember == "on")
+                second = subprocess.run(command + [login["cookie"], login["csrf"]],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(second.returncode, 0, second.stderr)
 
 
 if __name__ == "__main__":

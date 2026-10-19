@@ -226,7 +226,9 @@ Bot/日志语言在 Configuration 设置；页头语言选择器控制网页语�
 
 **网页访问**：默认下载页和 Configuration 都需要管理密码。勾选**公开下载页面**后，任何能访问服务的人都可以免登录查看、提交和管理下载；Configuration 仍需要管理密码。密码留空表示保留原值。旧无密码部署保留公开下载，可用初始化码创建 Configuration 密码。
 
-**记住登录 7 天**为可选项。服务重启或修改密码会使其他浏览器登录失效；在配置页修改密码时，当前登录会保留。Web API 使用同一网页登录会话，修改操作需要 CSRF Token；MCP Token 仅用于 `/mcp`。
+**记住登录 7 天**为可选项：勾选后登录保留七天，浏览器或服务重启后仍有效。未勾选时使用浏览器会话 Cookie，服务重启不会使其失效，最长有效期同样为七天。签名密钥自动生成在 `data/web_session.key`，权限为 0600；升级或重建容器时需要保留该文件。修改密码会使其他浏览器登录失效；在配置页修改密码时，当前登录会保留。Web API 使用同一网页登录会话，修改操作需要 CSRF Token；MCP Token 仅用于 `/mcp`。
+
+从仅在内存中保存签名密钥的旧版升级后，需要重新登录一次；之后服务重启会保留新的登录。
 
 ### 命令行登录
 
@@ -352,6 +354,7 @@ docker build --build-arg APP_VERSION="$(git describe --tags --always --dirty)" -
 | 路径 | 用途 |
 | --- | --- |
 | `data/settings.json` | 配置、凭据、Bot/日志语言、并发与广告规则；自动创建，权限为 0600 |
+| `data/web_session.key` | 浏览器会话签名私钥；保留后服务重启不影响登录 |
 | `data/data.json` | 频道扫描位置、重试消息 ID；保留未启用频道与无关字段 |
 | `data/sessions/` | Telegram 授权 session |
 | `data/bot.yaml` | 既有 Bot 任务/监听元数据 |
