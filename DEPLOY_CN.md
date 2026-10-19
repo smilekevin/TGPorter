@@ -119,7 +119,7 @@ Mock 不连接 Telegram，也不保存设置。需要测试 Configuration 和登
 
 ### 网页配置与交互登录（首选）
 
-通过页头图标切换下载页和 Configuration；**退出**用于结束网页登录。[界面截图](./README.md#webui-preview)见 README。
+通过页头图标切换下载页和 Configuration；配置表单的下拉框与单行输入框等高。**退出**用于结束网页登录。[界面截图](./README.md#webui-preview)见 README。
 
 通过 **Configuration** 管理 Telegram 登录、下载、网页访问和 MCP。设置保存到 `data/settings.json`，请勿在服务运行时手动编辑。已保存的密码和 Token 留空即可保留原值。Telegram 验证码和两步验证密码不会保存。
 
@@ -175,7 +175,7 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `mcp_token` | 仅供 `/mcp` 使用的 Bearer Token；可打印 ASCII 字符串，不含空白，MCP 开启时不能为空 | `""` |
 | `mcp_read_only` | MCP 仅暴露查询工具，不影响独立的网页登录会话 | `false` |
 | `mcp_allowed_hosts` | 额外允许的 Host，域名或 IP，可带端口；默认已允许 localhost / loopback | `[]` |
-| `log_level` | 高级设置下拉选择：`TRACE`、`DEBUG`、`INFO`、`SUCCESS`、`WARNING`、`ERROR`、`CRITICAL`；保存后需重启 | `"INFO"` |
+| `log_level` | 位于高级设置中“网页调试日志”之前，下拉选择：`TRACE`、`DEBUG`、`INFO`、`SUCCESS`、`WARNING`、`ERROR`、`CRITICAL`；保存后需重启 | `"INFO"` |
 | `start_timeout` | Telegram 主会话启动超时，单位秒；不是正常媒体传输的超时 | `60` |
 | `max_concurrent_transmissions` | 0 自动计算；非零为 SDK 传输容量覆盖值 | `0` |
 | `upload_drive` | 可选云盘上传设置，嵌套字段见下表 | `{}` |

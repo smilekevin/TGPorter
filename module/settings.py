@@ -44,11 +44,11 @@ FIELDS = {
     "mcp_token": ("", "Web and MCP", "MCP Token"),
     "mcp_read_only": (False, "Web and MCP", "MCP read only"),
     "mcp_allowed_hosts": ([], "Web and MCP", "MCP service hostname"),
-    "log_level": ("INFO", "Advanced", "Log level"),
     "proxy": ({}, "Advanced", "Telegram proxy"),
     "start_timeout": (60, "Advanced", "Connection timeout (seconds)"),
     "max_concurrent_transmissions": (0, "Advanced", "Transport capacity (0 = automatic)"),
     "upload_drive": ({}, "Advanced", "Cloud upload"),
+    "log_level": ("INFO", "Advanced", "Log level"),
     "debug_web": (False, "Advanced", "Web debug logging"),
 }
 SECRETS = {"api_hash", "bot_token", "web_login_secret", "mcp_token", "proxy"}
