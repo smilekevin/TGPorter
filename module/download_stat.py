@@ -477,8 +477,11 @@ async def update_download_status(
                 "source_chat_id": getattr(node, "source_chat_id", 0),
                 "source_message_id": getattr(node, "source_message_id", 0),
             }
-            _total_download_size += down_byte
+            if not initial:
+                _total_download_size += down_byte
             _placeholder_resolved = False
+            if down_byte >= total_size and total_size > 0:
+                save_downloads()
 
         # Detect silent throttling under the lock; send notifications after releasing it.
         _throttle_action = None  # None / "notify" / "clear"

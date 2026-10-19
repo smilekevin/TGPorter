@@ -193,7 +193,15 @@ Media types, extensions and naming fields use checkboxes; add custom extensions 
 
 `max_download_task` controls simultaneous files (1–6); `file_download_concurrency` controls connections per file (1–32); `download_part_size_mb` sets part size (1–4096 MiB). Defaults are 5 files, 4 connections per file and 64 MiB parts. Leave transport capacity at `0` for automatic sizing.
 
-Pauses, network failures and restarts preserve partial downloads. Existing downloads keep their saved part plan, even after settings change. When deleting a task, select file deletion only if you also want to remove its local files and partial data.
+Each download preallocates one `downloads/.temp/timestamp_guid.tmp.temp` data file. Workers write directly at their range offsets, without separate `.part` files or a merge copy. Version 3 `.parts/manifest.json` records file identity, ranges, worker count and each range's durable prefix. Preallocated file length is not progress. Data is synchronized before atomically updating the checkpoint, normally after 8 MiB of new data or once a second, with forced commits on range completion and orderly stop. An abrupt exit may require downloading data written after the last commit again.
+
+Pauses, network failures and restarts preserve new checkpoints. Saved ranges and worker counts take precedence over changed settings. Old `.part` files, older manifests and sequential `.temp` files without a new manifest are not migrated or resumed. Finish old downloads before upgrading, or explicitly delete the affected task's cache and download again. Unsupported cache is preserved with an error; older versions cannot resume new checkpoints either.
+
+Where supported, allocation reserves disk space; otherwise only logical file length is set, so later writes can still run out of space or exceed a quota. Normal downloads need one file's data plus checkpoint metadata, without a second full merge copy. Linux/macOS use `pwrite`; platforms without it use independently opened file handles for positioned writes. NAS allocation and synchronization guarantees depend on the filesystem.
+
+After every range completes, the file is synchronized and all handles close. Atomic renames first create the ready staging file and then publish it at the final path; completion is recorded afterward. Staging and destination must share a filesystem. Cross-device publication fails and preserves staging instead of copying. Avoid separate filesystem mounts inside the download tree.
+
+When deleting a task, select file deletion only if you also want to remove local files and partial data. Cleanup waits for connections and in-flight disk writes to stop.
 
 Bot/log language is set in Configuration; the header selector controls browser language. Supported codes: `en`, `zh-cn`, `zh-tw`, `ja`, `es`, `fr`, `ru`, `uk`; `zh` means Simplified Chinese. See the [language guide](https://github.com/smilekevin/TGPorter/blob/main/docs/languages.md) to add a translation.
 

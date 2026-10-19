@@ -1,6 +1,9 @@
 """Offline range, checkpoint and concurrency tests; no Telegram login needed."""
 
 import asyncio
+import errno
+import os
+import threading
 import hashlib
 import json
 import subprocess
@@ -14,6 +17,10 @@ from module.parallel_download import CHUNK_SIZE as MB
 from module.parallel_download import download_file, parts_path, part_count, _wait_network_retry
 from module.parallel_download import DownloadWorkersExhausted
 from module.telegram import pyrogram
+
+
+def checkpoint_lengths(path):
+    return json.loads((parts_path(str(path)) / "manifest.json").read_text())["committed_bytes"]
 
 
 class Stopped(Exception):
@@ -79,10 +86,10 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(total, len(self.data))
         self.progress.append(current)
 
-    async def download(self, count=3, part_size=3 * MB):
+    async def download(self, count=3, part_size=3 * MB, **kwargs):
         return await download_file(self.client, "file-id", len(self.data), str(self.path),
                                    "file-identity", count,
-                                   self.report, self.wait_ready, part_size)
+                                   self.report, self.wait_ready, part_size, **kwargs)
 
     async def until(self, predicate):
         async def wait():
@@ -151,6 +158,15 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(parts_path(str(self.path)).exists())
 
     async def test_first_valid_block_is_required_before_next_connection(self):
+        from module.partial_file import PartialFile
+        writes = []
+        real_write = PartialFile.write_at
+        def write(file, offset, data):
+            real_write(file, offset, data)
+            writes.append(offset)
+        writer = patch.object(PartialFile, "write_at", write)
+        writer.start()
+        self.addCleanup(writer.stop)
         started = []
         grants = [asyncio.Event() for _ in range(3)]
         release = asyncio.Event()
@@ -173,9 +189,9 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.client.calls), 1)
             grants[0].set()
             await self.until(lambda: len(started) >= 2)
-            self.assertEqual((parts_path(str(self.path)) / "0.part").stat().st_size, MB)
+            self.assertIn(0, writes)
             healthy_progress.set()
-            await self.until(lambda: (parts_path(str(self.path)) / "0.part").stat().st_size == 2 * MB)
+            await self.until(lambda: MB in writes)
             await asyncio.sleep(0.02)
             self.assertEqual(len(self.client.calls), 2)
             grants[1].set()
@@ -311,7 +327,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await asyncio.wait_for(task, 2)
         self.assertEqual(self.client.tracker["active"], 0)
-        self.assertEqual((parts_path(str(self.path)) / "0.part").stat().st_size, MB)
+        self.assertEqual(checkpoint_lengths(self.path)[0], MB)
 
     async def test_shared_flood_cooldown_delays_other_file_connections(self):
         deadline = asyncio.get_running_loop().time() + 0.08
@@ -383,7 +399,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.retry_wait.assert_not_awaited()
         self.assert_file()
 
-    async def test_out_of_order_ranges_merge_to_identical_file_and_aggregate_progress(self):
+    async def test_out_of_order_ranges_write_identical_file_and_aggregate_progress(self):
         release_first = asyncio.Event()
 
         async def before(index):
@@ -479,7 +495,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
             await self.download()
         directory = parts_path(str(self.path))
         plan = (directory / "manifest.json").read_text()
-        self.assertEqual((directory / "0.part").stat().st_size, MB)
+        self.assertEqual(checkpoint_lengths(self.path)[0], MB)
         self.assertFalse(self.path.exists())
         self.client.early_end = None
         self.client.calls.clear()
@@ -494,7 +510,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.client.short_chunk = 1
         with self.assertRaises(ConnectionError):
             await self.download()
-        self.assertEqual((parts_path(str(self.path)) / "0.part").stat().st_size, MB)
+        self.assertEqual(checkpoint_lengths(self.path)[0], MB)
         self.assertNotIn(len(self.data), self.progress)
         self.client.short_chunk = None
         await self.download()
@@ -513,7 +529,7 @@ class ParallelDownloadTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertEqual(self.client.tracker["active"], 0)
-        self.assertEqual((parts_path(str(self.path)) / "0.part").stat().st_size, MB)
+        self.assertEqual(checkpoint_lengths(self.path)[0], MB)
         self.client.before_chunk = None
         await self.download()
         self.assert_file()
@@ -527,7 +543,9 @@ from test_parallel_download import FakeClient, MB
 from module.parallel_download import download_file
 data=b"".join(bytes([i])*MB for i in range(8))+b"tail"*37
 async def progress(current,total):
-    if current>=3*MB:
+    import json
+    saved=json.loads(Path(sys.argv[1]+".parts/manifest.json").read_text())["committed_bytes"]
+    if sum(saved)>=3*MB:
         os._exit(86)
 async def ready():
     return
@@ -538,7 +556,7 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
                                 cwd=Path(__file__).resolve().parents[1], timeout=10,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 86, result.stderr)
-        saved = sum(p.stat().st_size for p in parts_path(str(self.path)).glob("*.part"))
+        saved = sum(checkpoint_lengths(self.path))
         self.assertGreaterEqual(saved, 3 * MB)
         await self.download(count=1, part_size=100 * MB)
         self.assertEqual(self.progress[0], saved)
@@ -610,25 +628,27 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
             await first
         self.assert_file()
 
-    async def test_import_old_sequential_checkpoint_and_refetch_incomplete_block(self):
-        Path(str(self.path) + ".temp").write_bytes(self.data[:MB + 100])
-        await self.download()
-        self.assert_file()
-        self.assertEqual(self.progress[0], MB)
-        self.assertTrue(all(offset != 0 for offset, _ in self.client.calls))
+    async def test_old_sequential_checkpoint_is_preserved_and_rejected(self):
+        from module.partial_file import DownloadStorageError
+        path = Path(str(self.path) + ".temp")
+        path.write_bytes(self.data[:MB + 100])
+        with self.assertRaises(DownloadStorageError):
+            await self.download()
+        self.assertEqual(path.read_bytes(), self.data[:MB + 100])
+        self.assertEqual(self.client.calls, [])
 
-    async def test_legacy_fixed_range_manifest_resumes_without_repartitioning(self):
+    async def test_old_manifest_is_preserved_and_rejected(self):
         directory = parts_path(str(self.path))
         directory.mkdir()
-        ranges = [[0, 3 * MB], [3 * MB, 6 * MB], [6 * MB, len(self.data)]]
-        (directory / "manifest.json").write_text(json.dumps({
-            "version": 1, "size": len(self.data), "identity": "file-identity",
-            "ranges": ranges, "import_pending": False}))
+        manifest = json.dumps({"version": 2, "size": len(self.data),
+                               "identity": "file-identity"})
+        (directory / "manifest.json").write_text(manifest)
         (directory / "0.part").write_bytes(self.data[:MB])
-        await self.download(count=1, part_size=64 * MB)
-        self.assertEqual(self.progress[0], MB)
-        self.assertEqual(sorted(self.client.calls), [(1, 2), (3, 3), (6, 3)])
-        self.assert_file()
+        with self.assertRaises(ValueError):
+            await self.download()
+        self.assertEqual((directory / "manifest.json").read_text(), manifest)
+        self.assertEqual((directory / "0.part").read_bytes(), self.data[:MB])
+        self.assertEqual(self.client.calls, [])
 
     async def test_fixed_size_parts_include_short_final_part(self):
         await self.download(count=4, part_size=3 * MB)
@@ -651,23 +671,24 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
         self.assertEqual(self.client.calls, [])
         self.assert_file()
 
-    async def test_incomplete_part_tail_is_truncated_before_resume(self):
+    async def test_uncommitted_bytes_are_overwritten_on_resume(self):
         self.client.early_end = 1
         with self.assertRaises(ConnectionError):
             await self.download()
-        part = parts_path(str(self.path)) / "0.part"
-        with part.open("ab") as file:
+        partial = Path(str(self.path) + ".temp")
+        with partial.open("r+b") as file:
+            file.seek(MB)
             file.write(b"incomplete disk write")
         self.client.early_end = None
         await self.download()
         self.assert_file()
 
-    async def test_interrupted_merge_can_resume_without_redownloading_completed_parts(self):
+    async def test_interrupted_publication_resumes_without_redownloading(self):
         initial_wait = self.wait_ready
         async def wait():
             await initial_wait()
-            legacy = Path(str(self.path) + ".temp")
-            if legacy.exists() and legacy.stat().st_size > 0:
+            manifest = parts_path(str(self.path)) / "manifest.json"
+            if manifest.exists() and json.loads(manifest.read_text()).get("phase") == "ready":
                 raise Stopped()
         self.wait_ready = wait
         with self.assertRaises(Stopped):
@@ -689,10 +710,255 @@ asyncio.run(download_file(FakeClient(data),"file-id",len(data),sys.argv[1],
         plan = json.loads(manifest.read_text())
         plan["identity"] = "another-file"
         manifest.write_text(json.dumps(plan))
-        before = (directory / "0.part").read_bytes()
+        before = Path(str(self.path) + ".temp").read_bytes()
         with self.assertRaises(ValueError):
             await self.download()
-        self.assertEqual((directory / "0.part").read_bytes(), before)
+        self.assertEqual(Path(str(self.path) + ".temp").read_bytes(), before)
+
+    async def make_checkpoint(self):
+        self.client.early_end = 1
+        with self.assertRaises(ConnectionError):
+            await self.download(count=1)
+        self.client.early_end = None
+        self.client.calls.clear()
+
+    async def test_preallocated_full_length_does_not_complete_unfinished_file(self):
+        await self.make_checkpoint()
+        self.assertFalse(self.path.exists())
+        self.assertEqual(Path(str(self.path) + ".temp").stat().st_size, len(self.data))
+        self.assertEqual(checkpoint_lengths(self.path), [MB, 0, 0])
+        self.assertEqual(list(parts_path(str(self.path)).glob("*.part")), [])
+        await self.download()
+        self.assert_file()
+        self.assertNotIn((0, 3), self.client.calls)
+
+    async def test_missing_or_truncated_data_never_recreates_committed_prefix(self):
+        from module.partial_file import DownloadStorageError
+        await self.make_checkpoint()
+        path = Path(str(self.path) + ".temp")
+        with path.open("r+b") as file:
+            file.truncate(MB)
+        with self.assertRaises(ValueError):
+            await self.download()
+        self.assertEqual(path.stat().st_size, MB)
+        path.unlink()
+        with self.assertRaises(DownloadStorageError):
+            await self.download()
+        self.assertFalse(path.exists())
+        self.assertEqual(self.client.calls, [])
+
+    async def test_invalid_checkpoint_vectors_are_rejected_before_writing(self):
+        await self.make_checkpoint()
+        manifest = parts_path(str(self.path)) / "manifest.json"
+        plan = json.loads(manifest.read_text())
+        for values in ([MB + 1, 0, 0], [4 * MB, 0, 0], [True, 0, 0], [], [-MB, 0, 0]):
+            with self.subTest(values=values):
+                manifest.write_text(json.dumps(dict(plan, committed_bytes=values)))
+                with self.assertRaises(ValueError):
+                    await self.download()
+        manifest.write_text("broken json")
+        with self.assertRaises(ValueError):
+            await self.download()
+        self.assertEqual(self.client.calls, [])
+
+    async def test_final_callback_observes_published_output_and_can_resume_after_failure(self):
+        final = self.path.parent / "final.bin"
+        async def progress(current, total):
+            if current == total:
+                self.assertEqual(final.read_bytes(), self.data)
+                self.assertFalse(self.path.exists())
+                raise Stopped()
+        self.report = progress
+        with self.assertRaises(Stopped):
+            await self.download(destination=str(final))
+        self.client.calls.clear()
+        self.report = lambda *_: asyncio.sleep(0)
+        self.assertEqual(await self.download(destination=str(final)), str(final))
+        self.assertEqual(self.client.calls, [])
+        self.assertFalse(parts_path(str(self.path)).exists())
+
+    async def test_cross_device_publish_preserves_ready_file_and_does_not_redownload(self):
+        from module.partial_file import DownloadStorageError
+        final = self.path.parent / "final.bin"
+        real_replace = os.replace
+        def replace(source, target):
+            if Path(source) == self.path and Path(target) == final:
+                raise OSError(errno.EXDEV, "different filesystem")
+            return real_replace(source, target)
+        with patch("module.parallel_download.os.replace", replace):
+            with self.assertRaises(DownloadStorageError):
+                await self.download(destination=str(final))
+        self.assertFalse(final.exists())
+        self.assert_file()
+        self.assertNotIn(len(self.data), self.progress)
+        self.client.calls.clear()
+        await self.download(destination=str(final))
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(final.read_bytes(), self.data)
+
+    async def test_publish_conflict_never_overwrites_another_file(self):
+        from module.partial_file import DownloadStorageError
+        final = self.path.parent / "existing.bin"
+        final.write_bytes(b"existing output")
+        with self.assertRaises(DownloadStorageError):
+            await self.download(destination=str(final))
+        self.assertEqual(final.read_bytes(), b"existing output")
+        self.assert_file()
+        self.assertNotIn(len(self.data), self.progress)
+
+    async def test_interruption_after_staging_rename_resumes_without_network(self):
+        from module.partial_file import DownloadStorageError
+        real_replace = os.replace
+        def interrupted(source, target):
+            result = real_replace(source, target)
+            if Path(target) == self.path:
+                raise OSError(errno.EIO, "failure after rename")
+            return result
+        with patch("module.parallel_download.os.replace", interrupted):
+            with self.assertRaises(DownloadStorageError):
+                await self.download()
+        self.assert_file()
+        self.client.calls.clear()
+        await self.download()
+        self.assertEqual(self.client.calls, [])
+        self.assert_file()
+
+    async def test_cancelled_disk_write_finishes_before_download_returns(self):
+        from module.partial_file import PartialFile
+        entered, release = threading.Event(), threading.Event()
+        original = PartialFile.write_at
+        def write(file, offset, data):
+            entered.set()
+            release.wait(5)
+            original(file, offset, data)
+        with patch.object(PartialFile, "write_at", write):
+            task = asyncio.create_task(self.download())
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                task.cancel()
+                await asyncio.sleep(0.02)
+                self.assertFalse(task.done())
+            finally:
+                release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(self.client.tracker["active"], 0)
+        await self.download()
+        self.assert_file()
+
+    async def test_cancelled_publication_discards_only_its_own_renamed_file(self):
+        final = self.path.parent / "final.bin"
+        entered, release = threading.Event(), threading.Event()
+        original = os.replace
+        def replace(source, target):
+            result = original(source, target)
+            if Path(source) == self.path and Path(target) == final:
+                entered.set()
+                release.wait(5)
+            return result
+        with patch("module.parallel_download.os.replace", replace):
+            task = asyncio.create_task(self.download(destination=str(final), discard_requested=lambda: True))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                task.cancel()
+                await asyncio.sleep(0.02)
+                self.assertFalse(task.done())
+            finally:
+                release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertFalse(final.exists())
+        self.assertFalse(self.path.exists())
+        self.assertFalse(parts_path(str(self.path)).exists())
+
+    async def test_checkpoint_failure_keeps_old_commit_and_overwrites_uncommitted_bytes(self):
+        from module.partial_file import DownloadStorageError
+        from module.parallel_download import _save_plan
+        def save(directory, plan):
+            if sum(plan["committed_bytes"]) > 0:
+                raise OSError(errno.ENOSPC, "manifest disk full")
+            return _save_plan(directory, plan)
+        with patch("module.parallel_download._save_plan", save):
+            with self.assertRaises(DownloadStorageError):
+                await self.download()
+        self.assertEqual(sum(checkpoint_lengths(self.path)), 0)
+        self.assertFalse(self.path.exists())
+        self.assertNotIn(len(self.data), self.progress)
+        await self.download()
+        self.assert_file()
+
+    async def test_data_sync_precedes_every_nonempty_checkpoint_commit(self):
+        from module.partial_file import PartialFile
+        from module.parallel_download import _save_plan
+        original_write, original_sync = PartialFile.write_at, PartialFile.sync
+        written = synced = 0
+        commits = []
+        def write(file, offset, data):
+            nonlocal written
+            original_write(file, offset, data)
+            written += len(data)
+        def sync(file):
+            nonlocal synced
+            original_sync(file)
+            synced = written
+        def save(directory, plan):
+            count = sum(plan["committed_bytes"])
+            self.assertLessEqual(count, synced)
+            commits.append(count)
+            _save_plan(directory, plan)
+        with patch.object(PartialFile, "write_at", write), patch.object(PartialFile, "sync", sync), patch(
+                "module.parallel_download._save_plan", save):
+            await self.download()
+        self.assertEqual(commits[-1], len(self.data))
+        self.assert_file()
+
+    async def test_failed_post_rename_directory_sync_is_retried_before_completion(self):
+        from module.partial_file import DownloadStorageError
+        from module.parallel_download import sync_directory
+        final = self.path.parent / "final.bin"
+        def sync(path):
+            if final.exists():
+                raise OSError(errno.EIO, "directory sync failed")
+            sync_directory(path)
+        with patch("module.parallel_download.sync_directory", sync):
+            with self.assertRaises(DownloadStorageError):
+                await self.download(destination=str(final))
+        self.assertEqual(final.read_bytes(), self.data)
+        self.assertNotIn(len(self.data), self.progress)
+        self.client.calls.clear()
+        with patch("module.parallel_download.sync_directory", wraps=sync_directory) as synchronized:
+            await self.download(destination=str(final))
+        self.assertIn(((final.parent,), {}), synchronized.call_args_list)
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(self.progress[-1], len(self.data))
+
+    async def test_cleanup_failure_after_completion_does_not_fail_published_download(self):
+        with patch("module.parallel_download.shutil.rmtree", side_effect=OSError(errno.EIO, "cleanup failed")):
+            result = await self.download()
+        self.assertEqual(result, str(self.path))
+        self.assert_file()
+        self.assertEqual(self.progress[-1], len(self.data))
+        self.client.calls.clear()
+        await self.download()
+        self.assertEqual(self.client.calls, [])
+
+    async def test_all_committed_bytes_resume_without_fictitious_transfer_progress(self):
+        from module.partial_file import DownloadStorageError
+        from module.parallel_download import _save_plan
+        def save(directory, plan):
+            if plan["phase"] == "ready":
+                raise OSError(errno.EIO, "ready checkpoint failed")
+            _save_plan(directory, plan)
+        with patch("module.parallel_download._save_plan", save):
+            with self.assertRaises(DownloadStorageError):
+                await self.download()
+        self.assertEqual(sum(checkpoint_lengths(self.path)), len(self.data))
+        self.client.calls.clear()
+        self.progress.clear()
+        await self.download()
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(self.progress, [len(self.data)])
+        self.assert_file()
 
 
 class PartCountTests(unittest.TestCase):

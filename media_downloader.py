@@ -21,6 +21,7 @@ from module.download_stat import add_failed_download as _add_failed_download
 from module.download_stat import track_download_stream
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
+from module.partial_file import DownloadStorageError
 from module.parallel_download import (download_file, has_parts, discard_partial_download,
                                       DownloadWorkersExhausted)
 from module.language import _t
@@ -232,7 +233,7 @@ _MB = 1024 * 1024
 
 
 async def _download_parallel_media(client, message, temp_file_name, media_size,
-                                   node, ui_file_name, task_start_time, parallelism, part_size):
+                                   node, ui_file_name, task_start_time, parallelism, part_size, destination=None):
     from pyrogram.file_id import FileId
     from module.download_stat import wait_download_ready, is_download_discarded
 
@@ -282,7 +283,7 @@ async def _download_parallel_media(client, message, temp_file_name, media_size,
                                flood_wait=_publish_download_flood,
                                flood_remaining=get_flood_wait_remaining,
                                stream_context=lambda: track_download_stream(
-                                   node.chat_id, message.id, node.task_id))
+                                   node.chat_id, message.id, node.task_id), destination=destination)
 
 
 async def _resume_download_from_temp(
@@ -414,7 +415,7 @@ def _cleanup_stale_temp_files():
                     pass
             else:
                 # Generated names do not encode an output path. Their nonempty
-                # SDK/merge checkpoints must survive startup for recovery.
+                # SDK and single-file checkpoints must survive startup for recovery.
                 if is_staging_name(f[:-5]):
                     continue
                 # Match the staging-relative output path under the configured download root.
@@ -786,7 +787,7 @@ async def download_media(
                 ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
 
             if _can_download(_type, file_formats, file_format):
-                if _is_exist(file_name):
+                if _is_exist(file_name) and not has_parts(temp_file_name):
                     file_size = os.path.getsize(file_name)
                     if media_size > 0 and file_size >= media_size:
                         logger.info(
@@ -1001,7 +1002,7 @@ async def download_media(
             if use_parallel:
                 temp_download_path = await _download_parallel_media(
                     client, message, temp_file_name, media_size, node,
-                    ui_file_name, task_start_time, file_parallelism, part_size,
+                    ui_file_name, task_start_time, file_parallelism, part_size, destination=file_name,
                 )
             else:
                 with track_download_stream(node.chat_id, message_id, node.task_id):
@@ -1016,7 +1017,8 @@ async def download_media(
                 _check_download_finish(media_size, temp_download_path, ui_file_name)
                 await asyncio.sleep(0.5)
                 await wait_download_ready(message_id, node, client)
-                _move_to_download_path(temp_download_path, file_name)
+                if os.path.abspath(temp_download_path) != os.path.abspath(file_name):
+                    _move_to_download_path(temp_download_path, file_name)
                 # Remove the .bak backup after a successful download.
                 bak_path = file_name + ".bak"
                 if os.path.exists(bak_path):
@@ -1054,6 +1056,10 @@ async def download_media(
             if is_download_discarded(message_id, node) and (not use_parallel or temp_download_path):
                 discard_partial_download(temp_file_name)
             return DownloadStatus.SkipDownload, None, ""
+        except DownloadStorageError as error:
+            error_message = str(error)
+            logger.error("Message[{}]: {}", message_id, error_message)
+            break
         except DownloadWorkersExhausted as exhausted:
             # The pool already applied the last connection's three-attempt
             # budget. Retrying the file here would multiply that budget by three.
@@ -1252,7 +1258,7 @@ async def download_media(
             break
     # Before reporting failure, check whether Pyrogram finished writing the temporary file
     # before raising.
-    if temp_file_name and os.path.exists(temp_file_name):
+    if not use_parallel and temp_file_name and os.path.exists(temp_file_name):
         temp_size = os.path.getsize(temp_file_name)
         if media_size > 0 and temp_size >= media_size:
             try:
@@ -1263,7 +1269,7 @@ async def download_media(
                 logger.warning(f"Message[{message_id}]: Failed to move completed file: {e}")
     _cleanup_temp_file(temp_file_name)
     # The destination may already exist from another task or an earlier successful attempt.
-    if file_name and _is_exist(file_name):
+    if not use_parallel and file_name and _is_exist(file_name):
         file_size = os.path.getsize(file_name)
         if media_size > 0 and file_size >= media_size:
             logger.info(f"Message[{message_id}] {ui_file_name}: File already exists ({file_size} bytes); marking skipped")

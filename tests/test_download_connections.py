@@ -281,13 +281,13 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
             self.progress, self.ready, 2 * MB, discard_requested=lambda: discard))
         await self.until(lambda: len(self.active) == 1)
         self.path.write_bytes(b"staged output")
-        Path(str(self.path) + ".temp").write_bytes(b"merge scratch")
+        self.assertEqual(Path(str(self.path) + ".temp").stat().st_size, len(self.data))
         completed = self.path.with_name("completed.bin")
         completed.write_bytes(b"keep")
 
-        def clean(path):
+        def clean(path, destination=None):
             self.assert_closed()
-            discard_partial_download(path)
+            discard_partial_download(path, destination)
 
         with patch("module.parallel_download.discard_partial_download", side_effect=clean):
             discard = True
