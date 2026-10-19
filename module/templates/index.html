@@ -619,6 +619,7 @@
                                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
                                         <span data-i18n="Completed" x-text="t('Completed')">Completed</span>
                                     </span>
+                                    <span x-show="task.completion_reason" class="text-xs text-gray-500" x-text="t(task.completion_reason || '')"></span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
                                     <span class="text-xs text-gray-300">•</span>
                                     <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>

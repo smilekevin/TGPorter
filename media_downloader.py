@@ -18,7 +18,7 @@ from module.runtime_paths import APP_DATA_FILE
 from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
-from module.download_stat import track_download_stream
+from module.download_stat import record_existing_download, track_download_stream
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.partial_file import DownloadStorageError
@@ -609,7 +609,7 @@ async def save_msg_to_file(app, chat_id: Union[int, str], message: pyrogram.type
     )
     os.makedirs(os.path.dirname(file_name), exist_ok=True)
     if _is_exist(file_name):
-        return DownloadStatus.SkipDownload, None
+        return DownloadStatus.SkipDownload, file_name
     with open(file_name, "w", encoding="utf-8") as f:
         f.write(message.text or "")
     return DownloadStatus.SuccessDownload, file_name
@@ -673,9 +673,12 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
         from module.download_stat import delete_download_result_entry as _ddre
         _ddre(node.chat_id, message.id if message else message_id)
     elif download_status is DownloadStatus.SkipDownload:
-        # Remove placeholder from active download list
-        from module.download_stat import delete_download_result_entry as _ddre
-        _ddre(node.chat_id, message.id if message else message_id)
+        if file_name and file_size > 0:
+            record_existing_download(message.id, file_name, file_size, node)
+        else:
+            # Filtered, unsupported and cancelled downloads have no completed file.
+            from module.download_stat import delete_download_result_entry as _ddre
+            _ddre(node.chat_id, message.id if message else message_id)
     await upload_telegram_chat(
         client, node.upload_user if node.upload_user else client,
         app, node, message, download_status, file_name,
@@ -686,7 +689,10 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
             ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
         if await app.upload_file(file_name, update_cloud_upload_stat, (node, message.id, ui_file_name)):
             node.upload_success_count += 1
-    await report_bot_download_status(node.bot, node, download_status, file_size)
+    await report_bot_download_status(
+        node.bot, node, download_status,
+        0 if download_status is DownloadStatus.SkipDownload else file_size,
+    )
     # Send final status with full stats immediately for single downloads
     if node.bot and node.is_finish() and not node.is_stop_transmission:
         from module.pyrogram_extension import report_bot_status
@@ -794,7 +800,7 @@ async def download_media(
                             f"id={message.id} {ui_file_name} "
                             f"{_t('already download,download skipped')}."
                         )
-                        return DownloadStatus.SkipDownload, None, ""
+                        return DownloadStatus.SkipDownload, file_name, ""
                     elif file_size > 0:
                         # Back up the existing file as .bak; remove the backup only after
                         # success.
@@ -1273,7 +1279,7 @@ async def download_media(
         file_size = os.path.getsize(file_name)
         if media_size > 0 and file_size >= media_size:
             logger.info(f"Message[{message_id}] {ui_file_name}: File already exists ({file_size} bytes); marking skipped")
-            return DownloadStatus.SkipDownload, None, ""
+            return DownloadStatus.SkipDownload, file_name, ""
     # Log the specific failure reason before returning
     final_reason = error_message or 'Download failed (unknown reason)'
     logger.warning(f"Message[{message_id}] {ui_file_name}: download failed after retries, reason: {final_reason}")

@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from module import download_stat, web
+from module.app import TaskNode
 
 
 class WebTaskTests(unittest.TestCase):
@@ -90,6 +91,38 @@ class WebTaskTests(unittest.TestCase):
         self.assertEqual(self.post('/delete_task?task_id=task-1').json['code'], '1')
         self.assertTrue(self.file.exists())
         self.assertFalse(download_stat._discarded_tasks)
+
+    def test_existing_file_completion_survives_reload_and_production_routes(self):
+        node = TaskNode(chat_id=1, task_id=1, limit=1)
+        node.task_id_display = '1019-1'
+        download_stat.record_existing_download(2, str(self.file), 5, node)
+        for state in ('created', 'reloaded', 'resubmitted'):
+            with self.subTest(state=state):
+                if state == 'reloaded':
+                    download_stat._download_result.clear()
+                    download_stat.load_downloads()
+                elif state == 'resubmitted':
+                    download_stat.record_existing_download(2, str(self.file), 5, node)
+                self.assertEqual(self.client.get('/get_download_list?already_down=false').json, [])
+                self.assertEqual(self.client.get('/get_completed_count').json['total'], 1)
+                rows = self.client.get('/get_download_list?already_down=true&search=video').json
+                self.assertEqual(rows['total'], 1)
+                row = rows['tasks'][0]
+                self.assertEqual(row['task_id'], '1_2')
+                self.assertEqual(row['status'], 'completed')
+                self.assertEqual(row['completion_reason'], 'already download,download skipped')
+                self.assertEqual(row['save_path'], str(self.file))
+                self.assertEqual(row['download_progress_raw'], 100)
+                self.assertEqual(row['download_speed'], '0.0b/s')
+                self.assertTrue(row['completed_time'])
+        self.assertEqual(self.post('/delete_task?task_id=1_2').json['code'], '1')
+        self.assertTrue(self.file.exists())
+
+    def test_deleted_task_is_not_restored_by_existing_file_completion(self):
+        node = TaskNode(chat_id=1, task_id='task-1', limit=1)
+        self.post('/delete_task?task_id=1_2')
+        download_stat.record_existing_download(2, str(self.file), 5, node)
+        self.assertFalse(download_stat._download_result)
 
     def test_failed_delete_finds_output_and_cleans_only_its_own_staging(self):
         self.assertTrue(self.post('/check_file_exists?task_id=failed-1').json['exists'])

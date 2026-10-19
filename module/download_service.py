@@ -484,6 +484,7 @@ class DownloadService:
                     "eta": eta,
                     "save_path": value["file_name"].replace("\\", "/"),
                     "status": status,
+                    "completion_reason": value.get("completion_reason", ""),
                     "phase": phase,
                     "start_time": start_time,
                     "end_time": end_time,

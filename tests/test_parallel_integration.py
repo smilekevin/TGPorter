@@ -16,6 +16,7 @@ from pyrogram.file_id import FileId, FileType
 import media_downloader as downloader
 from module import bot, download_stat, parallel_download, pyrogram_extension, web
 from module.app import Application, DownloadStatus, ForwardStatus, TaskNode, TaskType
+from module.download_service import DownloadService
 from module.parallel_download import parts_path
 from test_parallel_download import checkpoint_lengths
 from test_parallel_download import FakeClient, MB
@@ -239,6 +240,98 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.result[100][61]["down_byte"], len(self.data))
         self.assertEqual(self.result[100][61]["progress"], 100.0)
         self.client.download_media.assert_not_called()
+
+    async def test_existing_file_stays_completed_without_new_traffic(self):
+        output = self.path / "saved.mp4"
+        output.write_bytes(self.data)
+        self.node.task_id_display = "1019-1"
+        self.node.source_chat_title = "Existing media"
+        for placeholder in (False, True):
+            with self.subTest(placeholder=placeholder):
+                self.result.clear()
+                if placeholder:
+                    await download_stat.update_download_status(
+                        0, 1, 61, str(output), 10, self.node, self.client, initial=True)
+                with patch.object(download_stat, "_total_download_size", 123):
+                    await downloader.download_task(self.client, self.message, self.node)
+                    self.assertEqual(download_stat._total_download_size, 123)
+                service = DownloadService(self.app)
+                self.assertEqual(service.get_download_list(already_down="false"), [])
+                self.assertEqual(service.get_completed_count(), {"total": 1})
+                row = service.get_download_list(already_down="true")["tasks"][0]
+                self.assertEqual(row["status"], "completed")
+                self.assertEqual(row["completion_reason"], "already download,download skipped")
+                self.assertEqual(row["save_path"], str(output))
+                self.assertEqual(row["total_size_bytes"], len(self.data))
+                self.assertEqual(row["download_progress_raw"], 100)
+                self.assertEqual(row["download_speed"], "0.0b/s")
+                self.assertEqual(row["task_id_display"], "1019-1")
+                self.assertEqual(row["chat_title"], "Existing media")
+                self.assertTrue(row["completed_time"])
+                if placeholder:
+                    self.assertEqual(row["start_time"], 10)
+                self.assertEqual(self.node.download_status[61], DownloadStatus.SkipDownload)
+                self.assertEqual(self.node.total_download_byte, 0)
+                download_stat.save_downloads.assert_called()
+        self.assertEqual(output.read_bytes(), self.data)
+        self.assertFalse(self.client.calls)
+        self.client.download_media.assert_not_awaited()
+        self.app.upload_file.assert_not_awaited()
+
+    async def test_filtered_missing_media_and_cancelled_skips_are_not_completed(self):
+        for reason in ("filter", "no-media", "cancel"):
+            with self.subTest(reason=reason):
+                self.result.clear()
+                await download_stat.update_download_status(
+                    0, 1, 61, "pending", 10, self.node, self.client, initial=True)
+                message = self.media_message(b"reference")
+                formats = {"video": ["mkv"]} if reason == "filter" else {"video": ["all"]}
+                if reason == "no-media":
+                    message.video = None
+                    message.media = None
+                with patch.object(self.app, "file_formats", formats), patch.object(
+                        downloader, "_download_parallel_media", AsyncMock(side_effect=pyrogram.StopTransmission)):
+                    await downloader.download_task(self.client, message, self.node)
+                self.assertFalse(self.result)
+                self.assertEqual(DownloadService(self.app).get_completed_count(), {"total": 0})
+
+    async def test_complete_serial_file_found_after_transfer_error_is_recorded(self):
+        del self.app.file_download_concurrency
+        for location in ("partial.mp4", "saved.mp4"):
+            with self.subTest(location=location):
+                self.result.clear()
+                async def finish_then_raise(*args, **kwargs):
+                    (self.path / location).write_bytes(self.data)
+                    raise parallel_download.DownloadWorkersExhausted("Transfer failed after writing")
+                with patch.object(self.client, "download_media", AsyncMock(side_effect=finish_then_raise)):
+                    await downloader.download_task(self.client, self.message, self.node)
+                row = DownloadService(self.app).get_download_list(already_down="true")["tasks"][0]
+                self.assertEqual(row["completion_reason"], "already download,download skipped")
+                self.assertEqual(row["save_path"], str(self.path / "saved.mp4"))
+                self.assertEqual((self.path / "saved.mp4").read_bytes(), self.data)
+                (self.path / "saved.mp4").unlink()
+
+    async def test_existing_text_file_is_recorded_as_completed(self):
+        self.message.video = None
+        self.message.media = None
+        self.message.text = "Saved message"
+        self.app.enable_download_txt = True
+        self.app.temp_save_path = str(self.path)
+        self.app.date_format = ""
+        self.app.get_file_save_path = Mock(return_value="")
+        self.app.get_file_name = Mock(return_value="saved")
+        output = self.path / "saved.txt"
+        output.write_text(self.message.text)
+        await downloader.download_task(self.client, self.message, self.node)
+        row = DownloadService(self.app).get_download_list(already_down="true")["tasks"][0]
+        self.assertEqual(row["save_path"], str(output))
+        self.assertEqual(row["completion_reason"], "already download,download skipped")
+
+    async def test_new_progress_clears_previous_skip_reason(self):
+        download_stat.record_existing_download(61, "saved.mp4", 100, self.node)
+        await download_stat.update_download_status(
+            0, 100, 61, "saved.mp4", 10, self.node, self.client, initial=True)
+        self.assertNotIn("completion_reason", self.result[100][61])
 
     async def test_repeated_flood_waits_do_not_exhaust_attempts(self):
         for error in (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait):
