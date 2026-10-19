@@ -17,6 +17,7 @@ import media_downloader as downloader
 from module import bot, download_stat, parallel_download, pyrogram_extension, web
 from module.app import Application, DownloadStatus, ForwardStatus, TaskNode, TaskType
 from module.parallel_download import parts_path
+from test_parallel_download import checkpoint_lengths
 from test_parallel_download import FakeClient, MB
 
 
@@ -57,6 +58,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(downloader, "_maybe_reconnect_client", AsyncMock(return_value=False)),
             patch.object(downloader, "_add_failed_download", Mock()),
             patch.object(download_stat, "_download_result", self.result),
+            patch.object(download_stat, "_total_download_size", 0),
             patch.object(download_stat, "_download_streams", {}),
             patch.object(download_stat, "_download_lock", asyncio.Lock()),
             patch.object(download_stat, "_paused_tasks", set()),
@@ -116,7 +118,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-            self.assertGreater(sum(path.stat().st_size for path in parts_path(str(staging)).glob("*.part")), 0)
+            self.assertGreater(sum(checkpoint_lengths(staging)), 0)
             self.result.clear()
             self.client.calls.clear()
             self.client.before_chunk = None
@@ -135,7 +137,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(staging.exists())
             self.assertFalse(parts_path(str(staging)).exists())
 
-    async def test_legacy_parts_resume_through_real_metadata_after_upgrade(self):
+    async def test_existing_staging_path_resumes_through_real_metadata(self):
         with self.use_real_media_metadata():
             legacy = str(Path(self.app.temp_save_path) / self.message.chat.title / "61 - 飞，一.mov")
             entered = asyncio.Event()
@@ -201,7 +203,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
-    async def test_startup_keeps_generated_merge_checkpoints_without_inferring_output_paths(self):
+    async def test_startup_keeps_generated_checkpoints_without_inferring_output_paths(self):
         from module.staging import get_staging_path
         root = self.path / "temp"
         root.mkdir()
@@ -376,9 +378,9 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, DownloadStatus.FailedDownload)
         self.assertIn("different file", reason)
         self.assertFalse((self.path / "saved.mp4").exists())
-        self.assertEqual((parts_path(str(self.path / "partial.mp4")) / "0.part").stat().st_size, MB)
+        self.assertEqual(checkpoint_lengths(self.path / "partial.mp4")[0], MB)
 
-    async def test_small_file_uses_one_range_and_skips_merge(self):
+    async def test_small_file_uses_one_range_and_no_part_files(self):
         self.app.download_part_size_mb = 16
         status, path, error = await downloader.download_media(
             self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
@@ -436,9 +438,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.client, self.message, self.app.media_types, self.app.file_formats, self.node))
         await asyncio.wait_for(entered.wait(), 2)
         directory = parts_path(str(self.path / "partial.mp4"))
-        self.assertGreater(sum(path.stat().st_size for path in directory.glob("*.part")), 0)
-        # A merge scratch file must also be removed, without touching downloads.
-        (self.path / "partial.mp4.temp").write_bytes(b"merge scratch")
+        self.assertEqual((self.path / "partial.mp4.temp").stat().st_size, len(self.data))
         return task
 
     def web_request(self, url, **kwargs):
@@ -462,7 +462,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, DownloadStatus.SkipDownload)
         directory = parts_path(str(self.path / "partial.mp4"))
         self.assertTrue((directory / "manifest.json").exists())
-        self.assertGreater(sum(path.stat().st_size for path in directory.glob("*.part")), 0)
+        self.assertGreater(sum(checkpoint_lengths(self.path / "partial.mp4")), 0)
         self.assertEqual(self.client.tracker["active"], 0)
         # Retained data must still produce the original bytes on a new attempt.
         self.node = TaskNode(chat_id=100, task_id=2, limit=1)
@@ -602,18 +602,18 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_batch_web_api_delete_cleans_multiple_files(self):
         await self.cancel_two_files(numeric=False)
 
-    async def test_delete_after_merge_before_final_move_removes_staged_output(self):
-        real_sleep = asyncio.sleep
+    async def test_delete_before_final_publication_removes_staged_output(self):
+        real_ready = download_stat.wait_download_ready
         deleted = False
 
-        async def sleep(delay):
+        async def ready(message_id, node, client):
             nonlocal deleted
-            if delay == 0.5 and not deleted and (self.path / "partial.mp4").exists():
+            if not deleted and (self.path / "partial.mp4").exists():
                 deleted = True
                 self.web_request("/delete_task?task_id=100_61&delete_file=true")
-            await real_sleep(0)
+            await real_ready(message_id, node, client)
 
-        with patch.object(downloader.asyncio, "sleep", sleep):
+        with patch.object(download_stat, "wait_download_ready", ready):
             status, _, _ = await downloader.download_media(
                 self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
         self.assertTrue(deleted)
@@ -648,14 +648,15 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(parts_path(str(self.path / "partial.mp4")).exists())
         self.assertEqual(self.client.tracker["active"], 0)
 
-    async def test_delete_during_merge_cleans_parts_and_merge_scratch(self):
+    async def test_delete_during_preallocation_cleans_checkpoint_and_data(self):
         real_ready = download_stat.wait_download_ready
         deleted = False
 
         async def ready(message_id, node, client):
             nonlocal deleted
             scratch = self.path / "partial.mp4.temp"
-            if not deleted and scratch.exists() and scratch.stat().st_size > 0:
+            if (not deleted and scratch.exists() and scratch.stat().st_size > 0
+                    and self.result.get(100, {}).get(61)):
                 deleted = True
                 self.web_request("/delete_task?task_id=100_61&delete_file=true")
             await real_ready(message_id, node, client)
@@ -680,9 +681,10 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         directory = parts_path(str(self.path / "partial.mp4"))
-        saved = sum(path.stat().st_size for path in directory.glob("*.part"))
+        saved = sum(checkpoint_lengths(self.path / "partial.mp4"))
         self.assertGreater(saved, 0)
         self.result.clear()  # A new process has no previous in-memory statistics.
+        download_stat._total_download_size = 0
         self.client.calls.clear()
         self.app.file_download_concurrency = 1
         self.app.download_part_size_mb = 100
@@ -697,6 +699,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(resumed.wait(), 2)
             self.assertEqual(self.result[100][61]["down_byte"], saved)
             self.assertEqual(self.result[100][61]["download_speed"], 0)
+            self.assertEqual(download_stat._total_download_size, 0)
             with web._flask_app.test_request_context("/get_download_list?already_down=false"):
                 response = web.get_download_list()
                 data = response.get_json() if hasattr(response, "get_json") else json.loads(response)
@@ -706,6 +709,44 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             release.set()
             await task
         self.assertEqual((self.path / "saved.mp4").read_bytes(), self.data)
+
+    async def test_published_recovery_persists_history_without_counting_old_transfer(self):
+        class CallbackInterrupted(Exception):
+            pass
+        async def progress(current, total):
+            if current == total:
+                raise CallbackInterrupted()
+        with self.assertRaises(CallbackInterrupted):
+            await parallel_download.download_file(
+                self.client, FileId.decode(self.message.video.file_id), len(self.data),
+                str(self.path / "partial.mp4"), self.message.video.file_unique_id,
+                3, progress, AsyncMock(), 2 * MB, destination=str(self.path / "saved.mp4"))
+        self.client.calls.clear()
+        download_stat.save_downloads.reset_mock()
+        status, path, _ = await downloader.download_media(
+            self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+        self.assertEqual(status, DownloadStatus.SuccessDownload)
+        self.assertEqual(Path(path).read_bytes(), self.data)
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(download_stat._total_download_size, 0)
+        self.assertEqual(self.result[100][61]["download_speed"], 0)
+        download_stat.save_downloads.assert_called()
+
+    async def test_storage_failure_fails_once_without_reconnecting_or_marking_complete(self):
+        import errno
+        from module.partial_file import PartialFile
+        self.app.file_download_concurrency = 1
+        with patch.object(PartialFile, "write_at", side_effect=OSError(errno.ENOSPC, "disk full")):
+            status, output, reason = await downloader.download_media(
+                self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+        self.assertEqual(status, DownloadStatus.FailedDownload)
+        self.assertIsNone(output)
+        self.assertIn("disk full", reason)
+        self.assertEqual(len(self.client.calls), 1)
+        downloader._maybe_reconnect_client.assert_not_awaited()
+        self.assertEqual(pyrogram_extension._unified_flood_wait["until"], 0)
+        self.assertFalse((self.path / "saved.mp4").exists())
+        self.assertLess(self.result[100][61]["down_byte"], len(self.data))
 
     async def test_real_pyrogram_get_file_parallel_rpc_and_swallowed_error_recovery(self):
         client = pyrogram.Client("offline-range-test", api_id=1, api_hash="offline",

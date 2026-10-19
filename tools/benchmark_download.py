@@ -162,7 +162,7 @@ async def benchmark(client, chat, message_id, counts, config, run_dir, expected=
         hashes = {row["sha256"] for row in rows}
         report["hashes_match"] = len(hashes) == 1 and (expected_hash is None or digest == expected_hash)
         (run_dir / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(f"\nElapsed {elapsed:.2f}s (including merge), SHA-256: {digest}")
+        print(f"\nElapsed {elapsed:.2f}s (including finalization), SHA-256: {digest}")
         if not report["hashes_match"]:
             raise ValueError("File hashes differ; keeping results for diagnosis. The benchmark did not pass")
     report["completed"] = True
@@ -193,9 +193,10 @@ async def resume_download(client, chat, message_id, config, output, count,
     plan = json.loads(manifest.read_text()) if manifest.exists() else None
     expected_offsets = []
     if plan:
+        if plan.get("version") != 3:
+            raise ValueError("Unsupported checkpoint; clear this download cache before benchmarking")
         for index, (start, end) in enumerate(plan["ranges"]):
-            path = manifest.parent / f"{index}.part"
-            length = path.stat().st_size if path.exists() else 0
+            length = plan["committed_bytes"][index]
             if length < end - start:
                 expected_offsets.append(start // CHUNK_SIZE + length // CHUNK_SIZE)
     report = {"completed": False, "file": str(output), "size": size,
@@ -225,7 +226,7 @@ async def resume_download(client, chat, message_id, config, output, count,
         if interrupt_after_mib is not None and current >= interrupt_after_mib * CHUNK_SIZE:
             report["deliberately_interrupted"] = True
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-            print("\nExiting immediately without Python cleanup; preserving part checkpoints.", flush=True)
+            print("\nExiting immediately without Python cleanup; preserving download checkpoints.", flush=True)
             os._exit(86)
 
     async def ready():

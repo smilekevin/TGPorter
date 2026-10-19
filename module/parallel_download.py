@@ -12,6 +12,8 @@ from weakref import WeakValueDictionary
 from loguru import logger
 
 from module.download_connection import DownloadConnection
+from module.partial_file import (PartialFile, DownloadStorageError, disk_operation,
+                                 sync_directory)
 from module.retry_policy import network_backoff
 from module.telegram import pyrogram
 
@@ -27,6 +29,10 @@ class DownloadWorkersExhausted(ConnectionError):
     def __init__(self, error):
         self.error = error
         super().__init__(f"Last download connection failed 3 times: {type(error).__name__}: {error}")
+
+
+class DownloadCheckpointError(DownloadStorageError, ValueError):
+    """Invalid or unsupported checkpoints are local failures, never network errors."""
 
 
 class _PartConnectionError(Exception):
@@ -103,9 +109,23 @@ def has_parts(file_name):
     return parts_path(file_name).exists()
 
 
-def discard_partial_download(file_name):
+def discard_partial_download(file_name, destination=None):
     """Delete only this download's staging files after its writers have stopped."""
     directory = parts_path(file_name)
+    if destination is not None:
+        # A cancelled thread may have completed the final rename. Only remove
+        # the exact inode recorded by this download, never an unrelated output.
+        try:
+            with (directory / "manifest.json").open(encoding="utf-8") as file:
+                plan = json.load(file)
+            target = Path(destination)
+            if (plan.get("version") == 3 and plan.get("phase") == "publishing"
+                    and plan.get("destination") == os.path.abspath(target)
+                    and not Path(file_name).exists() and target.exists()
+                    and _file_stamp(target) == plan.get("file_stamp")):
+                target.unlink()
+        except (OSError, ValueError, AttributeError):
+            pass
     for path in (Path(file_name), Path(file_name + ".temp"), directory):
         try:
             if path.is_symlink() or path.is_file():
@@ -123,7 +143,10 @@ def _save_plan(directory, plan):
     temporary = directory / "manifest.json.tmp"
     with temporary.open("w", encoding="utf-8") as file:
         json.dump(plan, file)
+        file.flush()
+        os.fsync(file.fileno())
     os.replace(temporary, directory / "manifest.json")
+    sync_directory(directory)
 
 
 def part_count(size, part_size):
@@ -131,27 +154,28 @@ def part_count(size, part_size):
     return max(1, (size + part_size - 1) // part_size)
 
 
-def _make_plan(size, workers, identity, import_pending, part_size):
+def _make_plan(size, workers, identity, part_size):
     ranges = [[start, min(start + part_size, size)] for start in range(0, size, part_size)]
-    return {"version": 2, "size": size, "identity": identity,
-            "ranges": ranges, "workers": min(workers, len(ranges)),
-            "part_size": part_size, "import_pending": import_pending}
+    return {"version": 3, "storage": "single-file", "phase": "initializing",
+            "size": size, "identity": identity, "ranges": ranges,
+            "workers": min(workers, len(ranges)), "part_size": part_size,
+            "committed_bytes": [0] * len(ranges)}
 
 
 def _read_plan(directory, size, identity):
     with (directory / "manifest.json").open(encoding="utf-8") as file:
         plan = json.load(file)
-    if (plan.get("version") not in (1, 2) or plan.get("size") != size
-            or plan.get("identity") != identity):
-        raise ValueError("Partial download belongs to a different file")
+    if (not isinstance(plan, dict) or plan.get("version") != 3
+            or plan.get("size") != size or plan.get("identity") != identity):
+        raise ValueError("Unsupported checkpoint or partial download belongs to a different file; clear its cache to restart")
     ranges = plan.get("ranges")
     if not isinstance(ranges, list) or not ranges:
         raise ValueError("Invalid partial download ranges")
-    if plan["version"] == 2:
-        if type(plan.get("workers")) is not int or not 1 <= plan["workers"] <= len(ranges):
-            raise ValueError("Invalid partial download worker count")
-        if type(plan.get("part_size")) is not int or plan["part_size"] < CHUNK_SIZE or plan["part_size"] % CHUNK_SIZE:
-            raise ValueError("Invalid partial download part size")
+    if type(plan.get("workers")) is not int or not 1 <= plan["workers"] <= len(ranges):
+        raise ValueError("Invalid partial download worker count")
+    part_size = plan.get("part_size")
+    if type(part_size) is not int or part_size < CHUNK_SIZE or part_size % CHUNK_SIZE:
+        raise ValueError("Invalid partial download part size")
     previous = 0
     for bounds in ranges:
         if (not isinstance(bounds, list) or len(bounds) != 2
@@ -164,17 +188,39 @@ def _read_plan(directory, size, identity):
         previous = end
     if previous != size:
         raise ValueError("Partial download ranges do not cover the file")
+    committed = plan.get("committed_bytes")
+    if (plan.get("storage") != "single-file"
+            or plan.get("phase") not in ("initializing", "downloading", "ready", "publishing")
+            or not isinstance(committed, list) or len(committed) != len(ranges)):
+        raise ValueError("Invalid single-file checkpoint")
+    for length, (start, end) in zip(committed, ranges):
+        if (type(length) is not int or not 0 <= length <= end - start
+                or (length != end - start and length % CHUNK_SIZE)):
+            raise ValueError("Invalid committed range length")
+    if plan["phase"] == "initializing" and any(committed):
+        raise ValueError("Uninitialized download has committed bytes")
+    if plan["phase"] in ("ready", "publishing"):
+        if any(length != end - start for length, (start, end) in zip(committed, ranges)):
+            raise ValueError("Incomplete download marked ready")
+        stamp = plan.get("file_stamp")
+        if not isinstance(stamp, list) or len(stamp) != 4 or any(type(v) is not int for v in stamp):
+            raise ValueError("Invalid ready file identity")
     return plan
+
+
+def _file_stamp(path):
+    stat = path.stat()
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]
 
 
 async def download_file(client, file_id, size, file_name, identity, parallelism,
                         progress, wait_ready, part_size=64 * CHUNK_SIZE, request_started=None,
                         discard_requested=None, refresh_file_id=None,
-                        flood_wait=None, flood_remaining=None, stream_context=None):
+                        flood_wait=None, flood_remaining=None, stream_context=None, destination=None):
     """Keep ranges across retries/restarts and validate every received block.
 
     Workers take the next unfinished part when their current part completes.
-    Part lengths are its checkpoints; incomplete blocks are fetched again.
+    Committed prefixes are its checkpoints; uncommitted blocks are fetched again.
     New connections start gradually. Failed workers return their ranges while
     healthy workers continue; only the final worker has a three-attempt budget.
     Flood callbacks publish and inspect the application's shared cooldown.
@@ -188,10 +234,10 @@ async def download_file(client, file_id, size, file_name, identity, parallelism,
                 return await _download_file(client, file_id, size, file_name, identity,
                                             parallelism, progress, wait_ready, part_size,
                                             request_started, refresh_file_id,
-                                            flood_wait, flood_remaining, stream_context)
+                                            flood_wait, flood_remaining, stream_context, destination)
             finally:
                 if discard_requested is not None and discard_requested():
-                    discard_partial_download(file_name)
+                    await disk_operation(discard_partial_download, file_name, destination)
 
     async def watch_control():
         # Cancellation must work even when a request or slot acquisition hangs.
@@ -225,63 +271,68 @@ async def _wait_network_retry(seconds, wait_ready):
 
 async def _download_file(client, file_id, size, file_name, identity, parallelism,
                          progress, wait_ready, part_size, request_started,
-                         refresh_file_id, flood_wait, flood_remaining, stream_context):
+                         refresh_file_id, flood_wait, flood_remaining, stream_context, destination):
     if size <= 0 or parallelism < 1 or part_size < CHUNK_SIZE or part_size % CHUNK_SIZE:
         raise ValueError("File size and worker count must be positive; part size must be whole MiB")
     directory = parts_path(file_name)
     manifest = directory / "manifest.json"
-    plan = _read_plan(directory, size, identity) if manifest.exists() else None
     await wait_ready()
-    legacy = Path(file_name + ".temp")
-    # A previous attempt may have finished before its final callback returned.
     output = Path(file_name)
-    if plan is not None and output.exists() and output.stat().st_size == size:
-        await progress(size, size)
-        shutil.rmtree(directory)
-        return file_name
+    destination = Path(destination or file_name)
+    partial = PartialFile(file_name + ".temp", size)
+    try:
+        plan = await disk_operation(_read_plan, directory, size, identity) if manifest.exists() else None
+        return await _download_to_file(client, file_id, size, file_name, identity, parallelism,
+                                       progress, wait_ready, part_size, request_started,
+                                       refresh_file_id, flood_wait, flood_remaining, stream_context,
+                                       directory, plan, output, destination, partial)
+    except ValueError as error:
+        raise DownloadCheckpointError(str(error)) from error
+    except OSError as error:
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            raise
+        raise DownloadStorageError(f"Local download storage failed: {error}") from error
+    finally:
+        await disk_operation(partial.close)
+
+
+async def _download_to_file(client, file_id, size, file_name, identity, parallelism,
+                            progress, wait_ready, part_size, request_started,
+                            refresh_file_id, flood_wait, flood_remaining, stream_context,
+                            directory, plan, output, destination, partial):
     if plan is None:
-        directory.mkdir(parents=True, exist_ok=True)
-        plan = _make_plan(size, parallelism, identity, legacy.exists(), part_size)
-        _save_plan(directory, plan)
+        if partial.path.exists() or output.exists() or directory.exists():
+            raise DownloadStorageError("Unrecognized download cache; remove it to restart this download")
+        plan = _make_plan(size, parallelism, identity, part_size)
+        await disk_operation(directory.mkdir, 0o700, True, True)
+        await disk_operation(_save_plan, directory, plan)
     ranges = plan["ranges"]
-    paths = [directory / f"{index}.part" for index in range(len(ranges))]
+    downloaded = list(plan["committed_bytes"])
+    if plan["phase"] in ("ready", "publishing"):
+        return await _publish_file(directory, plan, output, destination, partial.path,
+                                   progress, wait_ready)
+    await disk_operation(partial.open, plan["phase"] == "initializing")
+    if plan["phase"] == "initializing":
+        plan["phase"] = "downloading"
+        await disk_operation(_save_plan, directory, plan)
 
-    # Import an old sequential checkpoint without deleting it until copied.
-    if plan["import_pending"]:
-        if legacy.exists():
-            existing = legacy.stat().st_size
-            if existing > size:
-                raise ValueError("Sequential checkpoint exceeds file size")
-            prefix = existing if existing == size else existing // CHUNK_SIZE * CHUNK_SIZE
-            with legacy.open("rb") as source:
-                for path, (start, end) in zip(paths, ranges):
-                    length = max(0, min(end, prefix) - start)
-                    with path.open("wb") as target:
-                        source.seek(start)
-                        while length:
-                            await wait_ready()
-                            chunk = source.read(min(CHUNK_SIZE, length))
-                            if not chunk:
-                                raise ConnectionError("Sequential checkpoint ended early")
-                            target.write(chunk)
-                            length -= len(chunk)
-                            await asyncio.sleep(0)
-        plan["import_pending"] = False
-        _save_plan(directory, plan)
-        legacy.unlink(missing_ok=True)
+    checkpoint_lock = asyncio.Lock()
+    checkpoint_time = time.monotonic()
 
-    downloaded = []
-    for path, (start, end) in zip(paths, ranges):
-        length = path.stat().st_size if path.exists() else 0
-        if length > end - start:
-            raise ValueError("Partial range exceeds its expected size")
-        if length < end - start:
-            aligned = length // CHUNK_SIZE * CHUNK_SIZE
-            if aligned != length:
-                with path.open("r+b") as file:
-                    file.truncate(aligned)
-            length = aligned
-        downloaded.append(length)
+    async def checkpoint(force=False):
+        nonlocal checkpoint_time
+        async with checkpoint_lock:
+            snapshot = list(downloaded)
+            delta = sum(snapshot) - sum(plan["committed_bytes"])
+            if not delta or (not force and delta < 8 * CHUNK_SIZE
+                             and time.monotonic() - checkpoint_time < 1):
+                return
+            # Snapshot only complete writes, then order durable data before metadata.
+            await disk_operation(partial.sync)
+            updated = dict(plan, committed_bytes=snapshot)
+            await disk_operation(_save_plan, directory, updated)
+            plan.update(updated)
+            checkpoint_time = time.monotonic()
 
     report_lock = asyncio.Lock()
 
@@ -326,21 +377,18 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
         logger.info("Downloading {} part {}/{} at offset {}", file_name,
                     index + 1, len(ranges), start + downloaded[index])
         try:
-            with paths[index].open("ab") as file:
-                async for chunk in stream:
-                    await wait_ready()
-                    expected = min(CHUNK_SIZE, end - start - downloaded[index])
-                    if not expected or len(chunk) != expected:
-                        raise _PartConnectionError(ConnectionError(
-                            "Downloaded block has an unexpected length"), requested_id)
-                    file.write(chunk)
-                    file.flush()
-                    downloaded[index] += len(chunk)
-                    # Confirm transport startup only after a valid block is on
-                    # disk; unrelated healthy workers cannot unlock this slot.
-                    if gate.finish_start():
-                        logger.info("Confirmed independent download startup for {}", connection.label)
-                    await report()
+            async for chunk in stream:
+                await wait_ready()
+                expected = min(CHUNK_SIZE, end - start - downloaded[index])
+                if not expected or len(chunk) != expected:
+                    raise _PartConnectionError(ConnectionError(
+                        "Downloaded block has an unexpected length"), requested_id)
+                await disk_operation(partial.write_at, start + downloaded[index], chunk)
+                downloaded[index] += len(chunk)
+                if gate.finish_start():
+                    logger.info("Confirmed independent download startup for {}", connection.label)
+                await checkpoint(force=downloaded[index] == end - start)
+                await report()
             if downloaded[index] != end - start:
                 # Pyrogram can swallow network/reference errors in get_file.
                 raise _PartConnectionError(ConnectionError(
@@ -348,7 +396,8 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
         finally:
             await stream.aclose()
 
-    await report()
+    if sum(downloaded) < size:
+        await report()
     # Retry earlier unfinished ranges before moving on to later parts.
     queue = asyncio.PriorityQueue()
     for index, (start, end) in enumerate(ranges):
@@ -439,45 +488,92 @@ async def _download_file(client, file_id, size, file_name, identity, parallelism
             gate.finish_start()
             live.discard(task)
 
-    tasks = {asyncio.create_task(worker(index)) for index in range(workers)}
-    live.update(tasks)
-    completed = asyncio.create_task(queue.join())
-    try:
-        pending = set(tasks)
-        while pending:
-            done, _ = await asyncio.wait(pending | {completed}, return_when=asyncio.FIRST_COMPLETED)
-            for task in done - {completed}:
-                task.result()
-            if completed in done:
-                break
-            pending.difference_update(done)
-    finally:
-        completed.cancel()
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(completed, *tasks, return_exceptions=True)
+    async def periodic_checkpoint():
+        while True:
+            await asyncio.sleep(1)
+            await checkpoint(force=True)
 
-    if len(paths) == 1:
-        # Single-range downloads need no second full-size temporary copy.
+    async def run_workers():
+        tasks = {asyncio.create_task(worker(index)) for index in range(workers)}
+        live.update(tasks)
+        timer = asyncio.create_task(periodic_checkpoint())
+        completed = asyncio.create_task(queue.join())
+        try:
+            pending = set(tasks) | {timer}
+            while pending:
+                done, _ = await asyncio.wait(pending | {completed}, return_when=asyncio.FIRST_COMPLETED)
+                for task in done - {completed}:
+                    task.result()
+                if completed in done:
+                    break
+                pending.difference_update(done)
+        finally:
+            completed.cancel()
+            timer.cancel()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(completed, timer, *tasks, return_exceptions=True)
+
+    try:
+        await run_workers()
+    finally:
+        await checkpoint(force=True)
+    await disk_operation(partial.sync)
+    await disk_operation(partial.close)
+    plan.update(phase="ready", file_stamp=await disk_operation(_file_stamp, partial.path))
+    await disk_operation(_save_plan, directory, plan)
+    return await _publish_file(directory, plan, output, destination, partial.path,
+                               progress, wait_ready)
+
+
+async def _publish_file(directory, plan, output, destination, partial_path, progress, wait_ready):
+    """Resume either rename without redownloading or exposing incomplete output."""
+    key = "publish:" + os.path.abspath(destination)
+    lock = _file_locks.setdefault(key, asyncio.Lock())
+    async with lock:
         await wait_ready()
-        os.replace(paths[0], file_name)
-    else:
-        # Parts remain intact if merging is interrupted or the disk fills up.
-        with legacy.open("wb") as target:
-            for path in paths:
-                with path.open("rb") as source:
-                    while True:
-                        await wait_ready()
-                        chunk = source.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        target.write(chunk)
-                        await asyncio.sleep(0)
-        if legacy.stat().st_size != size:
-            raise ConnectionError("Merged download has an unexpected size")
-        await wait_ready()
-        os.replace(legacy, file_name)
-    await progress(size, size)
-    shutil.rmtree(directory)
-    return file_name
+        target = os.path.abspath(destination)
+        if plan["phase"] == "publishing" and plan.get("destination") != target:
+            raise ValueError("Partial download publication target changed")
+        if partial_path.exists():
+            if _file_stamp(partial_path) != plan["file_stamp"] or output.exists():
+                raise ValueError("Unexpected ready download files")
+            await disk_operation(os.replace, partial_path, output)
+            await disk_operation(sync_directory, output.parent)
+        if output != destination and output.exists():
+            if _file_stamp(output) != plan["file_stamp"]:
+                raise ValueError("Ready download identity changed")
+            await disk_operation(destination.parent.mkdir, 0o755, True, True)
+            if destination.exists():
+                raise DownloadStorageError("Download destination already exists")
+            plan.update(phase="publishing", destination=target)
+            await disk_operation(_save_plan, directory, plan)
+            await wait_ready()
+            try:
+                await disk_operation(os.replace, output, destination)
+            except asyncio.CancelledError:
+                # Cancellation can arrive after rename has completed in its thread.
+                # Put our own file back so staging cleanup/preservation owns it.
+                if (not output.exists() and destination.exists()
+                        and _file_stamp(destination) == plan["file_stamp"]):
+                    await disk_operation(os.replace, destination, output)
+                    await disk_operation(sync_directory, destination.parent)
+                    await disk_operation(sync_directory, output.parent)
+                raise
+        elif output != destination and plan["phase"] != "publishing":
+            raise ValueError("Ready download file is missing")
+        if not destination.is_file() or _file_stamp(destination) != plan["file_stamp"]:
+            raise ValueError("Published download has an unexpected size")
+        # Recovery after a successful rename must retry failed directory syncs.
+        await disk_operation(sync_directory, destination.parent)
+        if output.parent != destination.parent:
+            await disk_operation(sync_directory, output.parent)
+        await progress(plan["size"], plan["size"])
+        try:
+            await disk_operation(shutil.rmtree, directory)
+            await disk_operation(sync_directory, directory.parent)
+        except DownloadStorageError as error:
+            # The published file and completion callback have already committed.
+            logger.warning("Could not clean completed download checkpoint {}: {}", directory, error)
+        return str(destination)

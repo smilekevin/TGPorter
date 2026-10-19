@@ -24,8 +24,8 @@ def get_staging_path(directory, account, chat_id, message_id, media_identity,
     """Use a reproducible UUID so task retries and restarts keep the same data.
 
     The timestamp comes from the message rather than the current attempt.
-    Existing legacy checkpoints keep their paths until completion; no writers
-    or saved part plans are moved while selecting a name.
+    Existing checkpoint paths are reused without moving writers or plans.
+    The storage layer validates checkpoint versions before writing any data.
     """
     identity = json.dumps([str(account), str(chat_id), str(message_id), str(media_identity)],
                           ensure_ascii=True, separators=(",", ":"))

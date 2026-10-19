@@ -35,7 +35,7 @@
 
 ### 下载
 
-- **单文件多流并行下载** — 分别设置同时下载文件数、每文件连接数和分片大小
+- **单文件多流并行下载** — 预分配单个临时文件，各连接按 offset 写入，无需合并；文件并发、每文件连接数和分片大小独立设置
 - **多类型媒体** — audio / document / photo / video / voice / animation / video_note
 - **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
 - **单条下载** — 发送 `t.me` 链接或转发媒体消息给 Bot
@@ -271,7 +271,7 @@ Bot、网页和 MCP 共用下载后端。任务与历史记录保存在 `data/`�
 
 ### 本 fork 的新增功能
 
-- **单文件多流并行下载** — 支持分片下载和断点续传。[下载配置](./DEPLOY_CN.md#配置参数说明)
+- **单文件多流并行下载** — 单文件预分配、按 offset 写入，支持新版断点续传。[下载配置](./DEPLOY_CN.md#配置参数说明)
 - **MCP Agent 接入** — 通过 Agent 提交和管理下载任务。[MCP 部署](./DEPLOY_CN.md#mcp-agent-接入)
 - **多架构镜像** — 提供 amd64 和 arm64 镜像。[镜像部署](./DEPLOY_CN.md#docker-镜像部署)
 
@@ -390,7 +390,7 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
 
 ### Download
 
-- **Parallel streams per file** — configure simultaneous files, connections per file and part size
+- **Parallel streams per file** — write ranges directly into one preallocated temporary file without merging; configure files, connections and part size independently
 - **Multi-type media** — audio / document / photo / video / voice / animation / video_note
 - **Batch download** — specify a message ID range `[start, end]` with an optional filter
 - **Single download** — send a `t.me` link or forward media to the Bot
@@ -626,7 +626,7 @@ This fork is based directly on [MangoIsIllegal/hermes-telegram-downloader](https
 
 ### Features Added in This Fork
 
-- **Parallel streams per file** — part downloads with resume support. [Download settings](./DEPLOY.md#parameters)
+- **Parallel streams per file** — preallocated random-access downloads with resume support for new checkpoints. [Download settings](./DEPLOY.md#parameters)
 - **MCP agent integration** — submit and manage tasks through agents. [MCP setup](./DEPLOY.md#mcp-agent-integration)
 - **Multi-platform images** — prebuilt amd64 and arm64 images. [Image deployment](./DEPLOY.md#docker-image-deployment)
 

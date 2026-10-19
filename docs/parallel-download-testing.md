@@ -8,6 +8,7 @@
 在已安装项目依赖的环境中，从仓库根目录运行：
 
 ```sh
+python -B -m unittest discover -s tests -p 'test_partial_file.py' -v
 python -B -m unittest discover -s tests -p 'test_parallel*.py' -v
 python -B -m unittest discover -s tests -p 'test_download_connections.py' -v
 python -B -m unittest discover -s tests -v
@@ -15,17 +16,21 @@ python -B -m unittest discover -s tests -v
 
 测试通过模拟 `get_file` 返回不同内容的 1 MiB 数据块，验证：
 
-- 乱序返回后合并文件的 SHA-256 与原始数据一致，尾部不足 1 MiB 也正确。
+- 乱序 offset 写入后单文件的 SHA-256 与原始数据一致，尾部不足 1 MiB 也正确。
 - 多个文件独立启动自己的固定大小切片，worker 完成切片后继续领取下一片，不再预留全局下载名额。
 - 使用真实 Pyrogram 下载代码、模拟网络 Session，验证同一数据中心的两个文件、每文件四个 worker 创建八个独立连接，同一 worker 的后续切片沿用该连接；单分片文件之间也不复用连接。
 - 暂停保留原连接，取消、启动中断和客户端重启会清理连接；跨数据中心授权和 CDN 文件哈希校验继续使用 Pyrogram 的处理逻辑。
 - 暂停恢复不改变切片计划和 worker 数；取消可打断挂起的请求或等待并发名额的任务。
-- 断流、短块、旧串行断点、非完整块、程序重启和合并中断均能保留断点并正确续传。
+- 断流、短块、未提交的磁盘写入、程序重启和发布中断均能保留新版断点并正确续传。旧串行断点和旧 manifest 明确拒绝，保留原文件，不迁移。
 - 现有下载入口能刷新过期文件引用，并使用消息所属账号刷新引用。
 - UI 数据只有一个文件进度记录，已下载字节汇总全部分片。
-- 网页删除使用的真实 Flask 接口、Web API 单删/批删及 Bot 停止回调均会清理对应临时数据；下载中、暂停中、合并中和合并后归位前取消均有覆盖。
+- 网页删除使用的真实 Flask 接口、Web API 单删/批删及 Bot 停止回调均会清理对应临时数据；下载中、暂停中、预分配期间和最终发布前取消均有覆盖。
 - 用户取消先关闭连接，再删除该下载的临时文件和 `.parts/`；程序关闭和异常中断保留断点。取消单个文件不影响同任务其他文件，取消后同消息可创建新任务重新下载。
 - 固定大小切片包含不足一片的尾部，小文件只创建必要的 worker，配置保存和非法配置校验正确。
+- 覆盖 `pwrite` 短写、零写、独立句柄 fallback、超过 4 GiB 的 offset、预分配失败和双重取消后等待磁盘操作完成。
+- 预分配文件从开始就具有完整逻辑大小，但 manifest 的 `committed_bytes` 才是续传依据；缺失、截短或非法断点不得误报完成。
+- 数据先同步，再提交 manifest；manifest 磁盘满保留旧提交，恢复时覆盖未提交的字节。
+- staging rename 后或最终完成回调中断可只重试发布；`EXDEV` 保留 staging，目标冲突不覆盖其他文件。
 
 ## 真实下载验收
 
@@ -48,7 +53,7 @@ python -B tools/benchmark_download.py --config /path/to/settings.json \
   --message https://t.me/channel/123 --lanes 1 4
 ```
 
-每次测速使用新目录，自动校验单路和多路结果的 SHA-256，保存各轮传输时间、含合并的总耗时及平均速度：
+每次测速使用新目录，自动校验单路和多路结果的 SHA-256，保存各轮传输时间、含同步和原子发布的总耗时及平均速度：
 
 ```sh
 python -B tools/benchmark_download.py --message https://t.me/channel/123 --lanes 1 4
@@ -92,12 +97,12 @@ python -B tools/benchmark_download.py --chat me --message-id 123 --lanes 1 4
    可以在重启前修改单文件 worker 数或切片大小，验证原任务没有重新分片。
 6. 用约 40 MiB、100 MiB 和 500 MiB 的文件验证切片大小：上述配置应分别使用 1、2 和 8 片，worker 数最多为 4。
 7. 如需验证 Bot 自有消息，再直接给现有 Bot 发送文件，验证进度、引用刷新和最终哈希。
-8. 下载产生数据后，分别通过网页删除、`POST /delete_task?task_id=…`、`POST /batch_delete`（JSON `task_ids`）以及 Bot 的 `/stop` 菜单取消任务。
-   等下载协程结束后，确认对应 `downloads/.temp/` 中的临时文件、合并文件和 `.parts/` 已删除，连接已关闭；其他下载文件及已完成文件保持原状。
+8. 下载产生数据后，分别通过网页删除、`POST /delete_task?task_id=…`、`POST /batch_delete`（JSON `task_ids`）以及 Bot 的 `/stop` 菜单取消任务；网页/API/MCP 在本步骤显式选择 `delete_file=true`。
+   等下载协程结束后，确认对应 `downloads/.temp/` 中的预分配数据文件、staging 成品和 `.parts/` 已删除，连接已关闭；其他下载文件及已完成文件保持原状。
    `Removed cancelled download data: …` 日志表示具体临时路径已清理。暂停和程序退出后仍应保留断点，以便恢复。
 
 完成时间改善与否取决于账号限速、连接延迟、代理带宽和磁盘。离线测试确认文件正确性和调度规则，
-实际加速比例需要通过上述真实下载对比测量。多分片合并会短暂占用最多约两倍文件大小的临时空间。
+实际加速比例需要通过上述真实下载对比测量。正常下载只有一份预分配数据文件，没有合并阶段或第二份完整副本。空间预约不可用时，逻辑大小不代表物理空间已经分配；NAS 上仍需验收磁盘满与配额错误。
 
 ## 真实进程中断与续传测试
 
@@ -125,3 +130,12 @@ python -B tools/benchmark_download.py --work-dir local_test/resume-test \
 `.resume.json` 会记录恢复的字节基数、保存的分片范围、预期和实际请求偏移以及最终 SHA-256。
 验收时检查 `resumed_from_bytes` 大于 0、请求从各分片断点开始、`completed` 和 `hash_matches` 均为 `true`。
 页面接口的离线集成测试还会验证：恢复后保留一个汇总进度条，已有断点字节不计入初始下载速度。
+
+
+## 平台与存储验收
+
+在 Linux Alpine amd64/arm64、macOS、Windows 和实际 NAS 文件系统分别验证新建下载、暂停/重启续传与 SHA-256。离线 fallback 测试不代替 Windows 原生验收。
+记录原实现与新实现相同输入的总耗时、磁盘读写量、峰值空间和同步耗时。新增下载不应出现 `N.part` 或完整 merge 副本。
+在独立测试卷模拟预分配、写入、同步、manifest 更新和最终 rename 失败，确认不会触发 Telegram 重连，清理前没有残留写入。
+最终目录必须与 staging 同文件系统；跨设备目标应明确失败并保留可再次发布的数据，不能出现部分最终文件。
+强制退出测试只能验证进程中断；断电持久性还取决于文件系统、挂载方式与存储设备。
