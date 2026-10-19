@@ -31,44 +31,31 @@ class StartupReached(BaseException):
 
 
 class MainStartupProxyTests(unittest.TestCase):
-    def test_main_reaches_telegram_start_with_disabled_and_configured_proxies(self):
+    def test_web_login_constructs_real_clients_with_disabled_and_configured_proxies(self):
+        from module.telegram_login import TelegramLogin, WebLoginClient
         for settings in PROXY_CASES:
             with self.subTest(settings=settings), tempfile.TemporaryDirectory() as directory:
-                app = Application("unused-config.yaml", "unused-data.json")
+                app = Application("unused-config.yaml", str(Path(directory) / "data.json"))
                 app.assign_config({"api_id": 123, "api_hash": "offline", "media_types": [],
                                    "file_formats": {}, **settings})
                 app.session_file_path = directory
                 reached = []
 
-                async def start(client):
+                async def connect(client):
                     reached.append(client)
                     self.assertEqual(client.proxy, normalize_proxy(settings.get("proxy") or None))
                     raise StartupReached
 
-                async def stop(client):
-                    client.executor.shutdown()
-
+                manager = TelegramLogin(app, AsyncMock(), AsyncMock())
                 try:
-                    with ExitStack() as stack:
-                        for replacement in (
-                            patch.object(downloader, "app", app),
-                            patch.object(app, "pre_run", Mock()),
-                            patch.object(app, "save_app_data", Mock()),
-                            patch.object(downloader, "_cleanup_stale_temp_files", Mock()),
-                            patch.object(downloader, "init_web", Mock()),
-                            patch.object(downloader, "save_downloads", Mock()),
-                            patch.object(downloader, "start_server", AsyncMock(side_effect=start)),
-                            patch.object(downloader, "stop_server", AsyncMock(side_effect=stop)),
-                            patch.object(downloader, "stop_download_bot", AsyncMock()),
-                            patch.object(pyrogram.types.Message, "_parse", pyrogram.types.Message._parse),
-                            patch.object(TCP, "TIMEOUT", TCP.TIMEOUT),
-                        ):
-                            stack.enter_context(replacement)
+                    with patch.object(WebLoginClient, "connect", new=connect):
                         with self.assertRaises(StartupReached):
-                            downloader.main()
+                            app.loop.run_until_complete(manager._connect())
                     self.assertEqual(len(reached), 1)
                     self.assertEqual(list(Path(directory).iterdir()), [])
                 finally:
+                    if manager.client is not None:
+                        manager.client.executor.shutdown()
                     app.loop.close()
                     app.executor.shutdown()
                     asyncio.set_event_loop(None)

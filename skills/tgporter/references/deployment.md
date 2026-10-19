@@ -11,26 +11,26 @@ what remains unverified.
 
 ## Read the maintained deployment guide
 
-Release and CI ZIPs include the matching deployment guide, configuration example and
-Compose file.
-When `release.md` and `project/DEPLOY_EN.md` are present beside this reference, read
-`release.md` and `../release.json` first, then read `project/DEPLOY_EN.md` and
-`project/config.yaml.example` locally. The guide is an unchanged general reference;
+Release and CI ZIPs include the matching deployment guide, Compose file and an
+optional YAML example for one-time initial configuration.
+When `release.md` and `project/DEPLOY.md` are present beside this reference, read
+`release.md` and `../release.json` first, then read `project/DEPLOY.md` locally.
+Web Configuration is preferred. `project/config.yaml.example` is optional and is imported only before settings exist; it never automatically enables terminal login. Explicit `--login` selects the optional terminal flow described in the guide.
+The guide is an unchanged general reference;
 use the exact image, tag, download URLs and commands from the build metadata in
 place of generic `latest` or `main` examples. Use the bundled
 `project/docker-compose.yaml`, whose service image is set to this release.
-Consult `project/DEPLOY_EN.md#parameters` for configuration meanings and defaults.
+Consult `project/DEPLOY.md#parameters` for configuration meanings and defaults.
 No GitHub document fetch is needed for this bundle.
 
-Otherwise, if a matching source checkout is available, read its `DEPLOY_EN.md` and
-`config.yaml.example`. Otherwise fetch the
-[deployment guide](https://github.com/smilekevin/TGPorter/blob/main/DEPLOY_EN.md#prerequisites)
-and [configuration example](https://github.com/smilekevin/TGPorter/blob/main/config.yaml.example).
+Otherwise, if a matching source checkout is available, read its `DEPLOY.md`.
+Otherwise fetch the
+[deployment guide](https://github.com/smilekevin/TGPorter/blob/main/DEPLOY.md#prerequisites).
 These links follow the main branch. For an existing instance, prefer its release
 tag or commit when known. If documentation cannot be read, explain that limitation
 before proposing version-specific installation commands.
 
-Keep complete commands and configuration defaults in `DEPLOY_EN.md`; follow its
+Keep complete commands and configuration defaults in `DEPLOY.md`; follow its
 Docker image, Compose or Python installation section for the user's environment.
 Consult its parameter reference for required fields, defaults, naming rules,
 scan settings, proxies and optional uploads before writing configuration. Keep
@@ -47,21 +47,25 @@ only when requested.
   proxies are environment-specific.
 - Reuse the main TG Porter image/service. MCP runs at `/mcp` on the existing
   `web_port` (default 5000); it needs no additional container or listener.
-- Preserve `downloads/`, `data/` and `config.yaml`. Mount configuration read-only
-  and data writable. Before an upgrade, follow the guide's backup and session
+- Replace Compose host-path placeholders with the user's chosen writable absolute download and configuration/data directories before starting. Reuse existing instance mounts for upgrades; keep container paths `/app/downloads` and `/app/data`. Configuration is managed
+  in the web page and saved to `data/settings.json`. Before an upgrade, follow the guide's backup and session
   migration instructions; avoid concurrent processes using the same sessions.
 
 ## Configure and connect
 
-1. Have the user provide Telegram API credentials in protected local
-   configuration and complete the documented interactive Telegram login. Keep
+1. Start the service in the background, then have the user claim Configuration
+   using the setup code from service logs, create the management password,
+   provide API ID, API Hash and the required Bot Token in Basic configuration,
+   then verify and sign in. Downloads use the Bot by default; selecting a user
+   account reveals phone login. Keep
    verification codes, two-step passwords and session files private. The main
-   download account needs access to the intended posts. A command/notification
-   Bot is optional for MCP-only operation (`bot_token: ""`).
+   download account needs access to the intended posts. Existing deployments without a
+   command Bot retain backend compatibility; new basic login requires a Token.
 2. Enable `mcp_enabled` with a non-empty random `mcp_token`. Choose read-only mode
    if the user only needs queries; download submission requires write tools.
-   Change startup configuration only as part of the authorized setup and restart
-   the existing service when needed. Leave runtime JSON to the application.
+   Change settings in Configuration only as part of the authorized setup and
+   restart the existing service when the page indicates it is required. Leave
+   settings and task JSON writes to the application.
 3. Configure a reachable `/mcp` URL in the user's agent client using Streamable
    HTTP and the MCP-only bearer token. Store the token through the client's
    protected credential mechanism where available. Do not place it in this skill,

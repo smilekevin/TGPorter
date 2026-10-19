@@ -1,4 +1,4 @@
-"""Persist runtime changes while treating startup configuration as read-only."""
+"""Keep task checkpoints separate from managed settings and obsolete YAML imports."""
 
 import copy
 import json
@@ -27,7 +27,7 @@ class AppDataTests(unittest.TestCase):
         self.data_file = self.root / 'data.json'
         self.config_file.write_text(
             '# Preserve comments, spelling and initial values.\n'
-            'api_id: test\napi_hash: test\nmedia_types: []\nfile_formats: {}\n'
+            'api_id: 123\napi_hash: test\nmedia_types: []\nfile_formats: {}\n'
             'language: ZH\nmax_download_task: 2\n'
             'filter_advertisement_list: [initial-filter]\n'
             'replace_advertisement_list: [initial-replacement]\n'
@@ -46,6 +46,9 @@ class AppDataTests(unittest.TestCase):
 
     def read_data(self):
         return json.loads(self.data_file.read_text())
+
+    def read_settings(self):
+        return json.loads((self.data_file.parent / "settings.json").read_text())
 
     def write_data(self, data):
         self.data_file.write_text(json.dumps(data), encoding='utf-8')
@@ -75,7 +78,9 @@ class AppDataTests(unittest.TestCase):
         self.assertEqual(app.config, initial_config)
         data = self.read_data()
         self.assertEqual(data['other'], 'keep')
-        self.assertEqual(data['max_download_task'], 6)
+        self.assertEqual(self.read_settings()['max_download_task'], 6)
+        self.assertNotIn('max_download_task', data)
+        self.assertNotIn('language', data)
         self.assertNotIn('api_id', data)
         self.assertNotIn('api_hash', data)
         records = {item['chat_id']: item for item in data['chat']}
@@ -117,7 +122,7 @@ class AppDataTests(unittest.TestCase):
         app = self.load()
         app.group_add_advertisement = {-1001: 'numeric ad', 'public_channel': 'named ad'}
         app.save_app_data()
-        self.assertEqual(self.read_data()['group_add_advertisement'], {
+        self.assertEqual(self.read_settings()['group_add_advertisement'], {
             '-1001': 'numeric ad', 'public_channel': 'named ad'})
         self.assertEqual(self.load().group_add_advertisement, {
             -1001: 'numeric ad', 'public_channel': 'named ad'})
@@ -131,7 +136,7 @@ class AppDataTests(unittest.TestCase):
         initial = self.data_file.read_bytes()
         app.save_app_data(False)
         self.assertEqual(self.data_file.read_bytes(), initial)
-        self.assertEqual(app.app_data['language'], 'zh-cn')
+        self.assertNotIn('language', app.app_data)
         self.assertEqual(self.config_file.read_bytes(), self.original)
 
     def test_saves_replace_json_atomically_and_serialize_concurrent_writers(self):
@@ -142,7 +147,7 @@ class AppDataTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=4) as executor:
                 list(executor.map(lambda _: app.save_app_data(), range(12)))
             self.assertEqual(replace.call_count, 12)
-        self.assertEqual(self.read_data()['language'], 'zh-cn')
+        self.assertEqual(self.read_settings()['language'], 'zh-cn')
         self.assertEqual(list(self.root.glob('.data-*.tmp')), [])
         self.assertEqual(self.config_file.read_bytes(), self.original)
 
@@ -179,7 +184,7 @@ class BotAdDataTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.yaml'
             data = Path(directory) / 'data/data.json'
-            config.write_text('api_id: test\napi_hash: test\nmedia_types: []\nfile_formats: {}\n')
+            config.write_text('api_id: 123\napi_hash: test\nmedia_types: []\nfile_formats: {}\n')
             original = config.read_bytes()
             config.chmod(0o444)
             app = Application(str(config), str(data))
@@ -189,7 +194,7 @@ class BotAdDataTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(json.loads(data.read_text()), {})
 
                 async def reply(*args, **kwargs):
-                    self.assertEqual(json.loads(data.read_text())['language'], 'fr')
+                    self.assertEqual(json.loads((data.parent / 'settings.json').read_text())['language'], 'fr')
                     self.assertEqual(config.read_bytes(), original)
 
                 client = SimpleNamespace(send_message=AsyncMock(side_effect=reply))
@@ -210,7 +215,7 @@ class BotAdDataTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.yaml'
             data = Path(directory) / 'data.json'
-            config.write_text('api_id: test\napi_hash: test\nmedia_types: []\nfile_formats: {}\n')
+            config.write_text('api_id: 123\napi_hash: test\nmedia_types: []\nfile_formats: {}\n')
             original = config.read_bytes()
             app = Application(str(config), str(data))
             restarted = None
@@ -235,7 +240,7 @@ class BotAdDataTests(unittest.IsolatedAsyncioTestCase):
                                 expected = {str(key): value for key, value in expected.items()}
 
                             async def reply(*args, **kwargs):
-                                self.assertEqual(json.loads(data.read_text())[key], expected)
+                                self.assertEqual(json.loads((data.parent / 'settings.json').read_text())[key], expected)
                                 self.assertEqual(config.read_bytes(), original)
 
                             client.send_message.side_effect = reply

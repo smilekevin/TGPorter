@@ -12,7 +12,7 @@ from pyrogram import Client
 
 from lang import _t
 from module.app import TaskNode
-from module.runtime_paths import LOG_DIR
+from module.runtime_paths import DATA_DIR
 from utils.format import format_byte
 
 
@@ -570,7 +570,7 @@ async def update_download_status(
         _last_download_time = cur_time
 
 
-_HISTORY_FILE = os.path.join(LOG_DIR, "download_history.json")
+_HISTORY_FILE = os.path.join(DATA_DIR, "download_history.json")
 
 
 def save_downloads():

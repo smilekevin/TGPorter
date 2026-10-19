@@ -32,8 +32,8 @@ python -B -m unittest discover -s tests -v
 可以使用独立的本地测速入口，直接运行应用使用的分片下载核心。它需要项目 Python 依赖，
 通过登录账号读取 Telegram 文件，不需要启动 Bot 或 WebUI；耗时不包含 WebUI/Bot 回调开销。
 
-先在 Git 忽略的 `local_test/config.yaml` 中填写 `api_id`、`api_hash` 和代理。
-并发设置与应用配置相同。首次登录在本地终端运行，可输入 Bot Token，或输入手机号、验证码及必要的两步验证密码：
+先在应用 Configuration 页面保存 API 凭据和代理，测速工具默认读取 `data/settings.json`。
+并发设置与应用一致；测速使用独立目录与 session。首次登录在本地终端运行，可输入 Bot Token，或输入手机号、验证码及必要的两步验证密码：
 
 ```sh
 python -B tools/benchmark_download.py --login
@@ -43,7 +43,7 @@ python -B tools/benchmark_download.py --login
 将测速登录数据单独保存在 `local_test/telegram-benchmark/sessions/`，之后运行时省略 `--session`：
 
 ```sh
-python -B tools/benchmark_download.py --config /path/to/config.yaml \
+python -B tools/benchmark_download.py --config /path/to/settings.json \
   --session /path/to/media_downloader.session \
   --message https://t.me/channel/123 --lanes 1 4
 ```

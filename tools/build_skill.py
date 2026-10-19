@@ -20,7 +20,7 @@ PROJECT = PACKAGE / "references/project"
 # Keep the handoff focused on operating the application, independently of future
 # developer documents added to the repository.
 PROJECT_FILES = (
-    "DEPLOY_EN.md", "LICENSE", "config.yaml.example", "docker-compose.yaml",
+    "DEPLOY.md", "LICENSE", "config.yaml.example", "docker-compose.yaml",
 )
 
 
@@ -84,7 +84,7 @@ def render_release_guide(release):
         f"{origin}"
         f"- [Skill ZIP]({release['download_url']})\n"
         f"- [Application source ZIP]({release['source_url']})\n"
-        f"- [Versioned configuration download]({release['config_url']})\n"
+        f"- [Obsolete configuration migration reference]({release['config_url']})\n"
         f"- [Source Compose template]({release['compose_url']})\n\n"
         "## Use this bundle\n\n"
         "Use the image and source references on this page for this bundle.\n"
@@ -104,20 +104,26 @@ def render_release_guide(release):
         )
     text += (
         "## Prepare deployment\n\n"
-        "Read the bundled [deployment guide](project/DEPLOY_EN.md#prerequisites)\n"
-        "and [configuration parameter reference](project/DEPLOY_EN.md#parameters).\n"
-        "Copy the bundled [configuration example](project/config.yaml.example)\n"
-        "and [Compose file](project/docker-compose.yaml) to the user's chosen\n"
-        "deployment directory, preserving existing configuration and data.\n"
-        "Set credentials, download paths and the actual proxy configuration\n"
-        "before starting. Run these commands from that deployment directory:\n\n"
+        "Read the bundled [deployment guide](project/DEPLOY.md#prerequisites)\n"
+        "and [configuration parameter reference](project/DEPLOY.md#parameters).\n"
+        "Copy the bundled [Compose file](project/docker-compose.yaml) to the user's\n"
+        "chosen deployment directory, preserving existing data and downloads.\n"
+        "Before starting, replace its host-path placeholders with the user's actual\n"
+        "absolute configuration/data and download directories; retain existing mounts\n"
+        "when upgrading. Container paths stay /app/data and /app/downloads.\n"
+        "Web Configuration is preferred. The [YAML example](project/config.yaml.example)\n"
+        "is optional for first-start import; existing settings always win. Login uses\n"
+        "the web page by default; explicit --login selects terminal authorization.\n"
+        "Run these commands from the deployment directory:\n\n"
         "```bash\n"
         "docker compose pull tgporter\n"
-        "docker compose run --rm tgporter\n"
+        "docker compose up -d tgporter\n"
+        "docker compose logs tgporter\n"
         "```\n\n"
-        "Complete interactive Telegram login, stop the foreground run, then\n"
-        "start the service in the background:\n\n"
-        "```bash\ndocker compose up -d tgporter\n```\n\n"
+        "Open the service's /configuration page and use the setup code from the\n"
+        "logs to create the management password. Set API credentials, download\n"
+        "paths and any required proxy, then sign in to Telegram in that page.\n"
+        "Settings and sessions are managed under the writable data mount.\n\n"
         "For a source installation or local image build, use the source ZIP\n"
         "linked above or check out the exact source:\n\n"
         f"```bash\n{checkout}\n```\n\n"

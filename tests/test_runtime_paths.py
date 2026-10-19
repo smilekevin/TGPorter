@@ -17,7 +17,7 @@ class RuntimePathsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             config = root / 'config.yaml'
-            config.write_text('api_id: test\napi_hash: test\nmedia_types: []\nfile_formats: {}\n')
+            config.write_text('api_id: 123\napi_hash: test\nmedia_types: []\nfile_formats: {}\n')
             original = config.read_bytes()
             config.chmod(0o444)
             script = '''
@@ -56,9 +56,10 @@ finally:
                 'sessions': str(root / 'data/sessions'),
                 'temp': str(root / 'downloads/.temp'),
             })
-            for name in ('data.json', 'bot.yaml', 'log/bot_tasks.json',
-                         'log/task_counter.json', 'log/download_history.json'):
+            for name in ('settings.json', 'data.json', 'bot.yaml', 'bot_tasks.json',
+                         'task_counter.json', 'download_history.json'):
                 self.assertTrue((root / 'data' / name).is_file(), name)
+            self.assertFalse(list((root / 'data/log').glob('*.json')))
             self.assertTrue((root / 'data/sessions').is_dir())
             self.assertTrue((root / 'downloads/.temp').is_dir())
             self.assertEqual(set(path.name for path in root.iterdir()), {'config.yaml', 'data', 'downloads'})

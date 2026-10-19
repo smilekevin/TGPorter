@@ -371,11 +371,11 @@ def get_config(config, key, default=None, val_type=str, verbose=True):
 
 
 class Application:
-    """Load startup configuration and persist runtime data separately."""
+    """Load managed settings and persist task checkpoints separately."""
 
     def __init__(
         self,
-        config_file: str,
+        config_file: str = "config.yaml",
         app_data_file: str = APP_DATA_FILE,
         application_name: str = "UndefineApp",
     ):
@@ -410,6 +410,7 @@ class Application:
         self.api_id: str = ""
         self.api_hash: str = ""
         self.bot_token: str = ""
+        self.use_user_account: bool = False
         self._chat_id: str = ""
         self.media_types: List[str] = []
         self.file_formats: dict = {}
@@ -418,6 +419,11 @@ class Application:
         self.config: dict = {}
         self.app_data: dict = {}
         self._app_data_lock = threading.RLock()
+        from module.settings import SettingsStore
+        self.settings = SettingsStore(os.path.join(self.data_path, "settings.json"))
+        self._runtime_settings_snapshot = {}
+        self.setup_token = ""
+        self.telegram_login = None
         self.file_path_prefix: List[str] = ["chat_title", "media_datetime"]
         self.file_name_prefix: List[str] = ["message_id", "file_name"]
         self.file_name_prefix_split: str = " - "
@@ -436,6 +442,7 @@ class Application:
         self.language = Language.EN
         self.after_upload_telegram_delete: bool = True
         self.web_login_secret: str = ""
+        self.public_web = False
         self.mcp_token: str = ""
         self.mcp_enabled: bool = False
         self.mcp_read_only: bool = False
@@ -443,18 +450,12 @@ class Application:
         self.debug_web: bool = False
         self.log_level: str = "INFO"
         self.start_timeout: int = 60
-        self.allowed_user_ids: yaml.comments.CommentedSeq = yaml.comments.CommentedSeq(
-            []
-        )
-        self.date_format: str = "%Y_%m"
+        self.allowed_user_ids: List = []  # Human download accounts are authorized automatically.
+        self.date_format: str = "%Y_%m"  # Format for the optional media-date directory component.
         self.drop_no_audio_video: bool = False
         self.enable_download_txt: bool = False
-        self.filter_advertisement_list: yaml.comments.CommentedSeq = (
-            yaml.comments.CommentedSeq([])
-        )
-        self.replace_advertisement_list: yaml.comments.CommentedSeq = (
-            yaml.comments.CommentedSeq([])
-        )
+        self.filter_advertisement_list: List = []
+        self.replace_advertisement_list: List = []
         self.group_add_advertisement: dict = {}
         self.forward_limit_call = LimitCall(max_limit_call_times=33)
 
@@ -481,12 +482,13 @@ class Application:
         # pylint: disable = R0912
         # TODO: judge the storage if enough,and provide more path
         if _config.get("save_path") is not None:
-            self.save_path = _config["save_path"]
+            self.save_path = os.path.abspath(_config["save_path"])
         self.temp_save_path = os.path.join(self.save_path, ".temp")
 
         self.api_id = _config["api_id"]
         self.api_hash = _config["api_hash"]
         self.bot_token = _config.get("bot_token", "")
+        self.use_user_account = _config.get("use_user_account", False)
 
         self.media_types = _config["media_types"]
         self.file_formats = _config["file_formats"]
@@ -498,38 +500,16 @@ class Application:
             self.proxy = _config["proxy"]
         if _config.get("restart_program"):
             self.restart_program = _config["restart_program"]
-        if _config.get("file_path_prefix"):
+        if _config.get("file_path_prefix") is not None:
             self.file_path_prefix = _config["file_path_prefix"]
-        if _config.get("file_name_prefix"):
+        if _config.get("file_name_prefix") is not None:
             self.file_name_prefix = _config["file_name_prefix"]
 
-        if _config.get("upload_drive"):
-            upload_drive_config = _config["upload_drive"]
-            if upload_drive_config.get("enable_upload_file"):
-                self.cloud_drive_config.enable_upload_file = upload_drive_config[
-                    "enable_upload_file"
-                ]
-
-            if upload_drive_config.get("rclone_path"):
-                self.cloud_drive_config.rclone_path = upload_drive_config["rclone_path"]
-
-            if upload_drive_config.get("remote_dir"):
-                self.cloud_drive_config.remote_dir = upload_drive_config["remote_dir"]
-
-            if upload_drive_config.get("before_upload_file_zip"):
-                self.cloud_drive_config.before_upload_file_zip = upload_drive_config[
-                    "before_upload_file_zip"
-                ]
-
-            if upload_drive_config.get("after_upload_file_delete"):
-                self.cloud_drive_config.after_upload_file_delete = upload_drive_config[
-                    "after_upload_file_delete"
-                ]
-
-            if upload_drive_config.get("upload_adapter"):
-                self.cloud_drive_config.upload_adapter = upload_drive_config[
-                    "upload_adapter"
-                ]
+        upload_drive_config = _config.get("upload_drive", {})
+        for key in ("enable_upload_file", "rclone_path", "remote_dir", "before_upload_file_zip",
+                    "after_upload_file_delete", "upload_adapter"):
+            if key in upload_drive_config:
+                setattr(self.cloud_drive_config, key, upload_drive_config[key])
 
         self.file_name_prefix_split = _config.get(
             "file_name_prefix_split", self.file_name_prefix_split
@@ -558,6 +538,7 @@ class Application:
         self.max_concurrent_transmissions = _config.get(
             "max_concurrent_transmissions", self.max_concurrent_transmissions
         )
+        self._transport_capacity_override = _config.get("max_concurrent_transmissions", 0)
 
         language = _config.get("language", "EN")
 
@@ -572,6 +553,7 @@ class Application:
 
         web_login_secret = _config.get("web_login_secret", self.web_login_secret)
         self.web_login_secret = "" if web_login_secret is None else str(web_login_secret)
+        self.public_web = _config.get("public_web", False)
         mcp_token = _config.get("mcp_token", self.mcp_token)
         if mcp_token is None:
             mcp_token = ""
@@ -600,7 +582,7 @@ class Application:
             _config,
             "allowed_user_ids",
             self.allowed_user_ids,
-            yaml.comments.CommentedSeq,
+            list,
         )
 
         self.date_format = get_config(
@@ -622,14 +604,14 @@ class Application:
             _config,
             "filter_advertisement_list",
             self.filter_advertisement_list,
-            yaml.comments.CommentedSeq,
+            list,
         ))
 
         self.replace_advertisement_list = copy.deepcopy(get_config(
             _config,
             "replace_advertisement_list",
             self.replace_advertisement_list,
-            yaml.comments.CommentedSeq,
+            list,
         ))
 
         if _config.get("group_add_advertisement"):
@@ -711,30 +693,7 @@ class Application:
         return True
 
     def assign_app_data(self, app_data: dict) -> bool:
-        """Restore runtime overrides, falling back to existing startup configuration."""
-        if "max_download_task" in app_data:
-            workers = app_data["max_download_task"]
-            if type(workers) is not int or workers < 1:
-                raise ValueError("Saved max_download_task must be a positive integer")
-            self.max_download_task = workers
-            self.max_concurrent_transmissions = workers * max(5, self.file_download_concurrency)
-        if "language" in app_data:
-            try:
-                self.language = parse_language(app_data["language"])
-            except ValueError:
-                logger.warning("Invalid runtime language; using configured language")
-        for key in ("filter_advertisement_list", "replace_advertisement_list"):
-            if key in app_data:
-                setattr(self, key, get_config(app_data, key, getattr(self, key),
-                                             list))
-        if "group_add_advertisement" in app_data:
-            self.group_add_advertisement = get_config(
-                app_data, "group_add_advertisement", self.group_add_advertisement, dict)
-            # JSON object keys are strings; Telegram numeric chat IDs remain integers in memory.
-            self.group_add_advertisement = {
-                int(key) if str(key).lstrip("-").isdigit() else key: value
-                for key, value in self.group_add_advertisement.items()
-            }
+        """Restore task checkpoints; settings migrate separately during load_config()."""
         for chat in app_data.get("chat", []):
             chat_id = chat.get("chat_id")
             if chat_id in self.chat_download_config:
@@ -889,8 +848,9 @@ class Application:
         return True
 
     def save_app_data(self, immediate: bool = True):
-        """Snapshot runtime state and optionally write data.json; never write config.yaml."""
+        """Save settings changed by Bot/API callers and snapshot task checkpoints."""
         with self._app_data_lock:
+            self.save_runtime_settings(immediate)
             chats = self.app_data.setdefault("chat", [])
             for chat_id, value in self.chat_download_config.items():
                 unfinished_ids = set(value.ids_to_retry)
@@ -913,14 +873,37 @@ class Application:
                 record["last_read_message_id"] = value.last_read_message_id + 1
                 record["ids_to_retry"] = value.ids_to_retry
 
-            self.app_data["language"] = self.language.value
-            self.app_data["max_download_task"] = self.max_download_task
-            for key in ("filter_advertisement_list", "replace_advertisement_list",
-                        "group_add_advertisement"):
-                self.app_data[key] = copy.deepcopy(getattr(self, key))
+            from module.settings import RUNTIME_FIELDS
+            for key in RUNTIME_FIELDS:
+                self.app_data.pop(key, None)
 
             if immediate:
                 self._write_app_data()
+
+    def runtime_settings(self):
+        from module.settings import RUNTIME_FIELDS
+        return {key: copy.deepcopy(self.language.value if key == "language" else getattr(self, key))
+                for key in RUNTIME_FIELDS}
+
+    def save_runtime_settings(self, immediate=True):
+        """Do not overwrite saved, restart-pending settings during checkpoint writes."""
+        values = self.runtime_settings()
+        changed = {key: value for key, value in values.items()
+                   if value != self._runtime_settings_snapshot.get(key)}
+        if immediate and changed:
+            self.settings.save(changed)
+            self._runtime_settings_snapshot = values
+
+    def set_download_limit(self, workers):
+        """Persist the live file limit before publishing it to request/loop callers."""
+        with self._app_data_lock:
+            self.settings.save({"max_download_task": workers})
+            self.max_download_task = workers
+            self.max_concurrent_transmissions = self.transport_capacity(workers)
+            self._runtime_settings_snapshot["max_download_task"] = workers
+
+    def transport_capacity(self, workers):
+        return getattr(self, "_transport_capacity_override", 0) or workers * max(5, self.file_download_concurrency)
 
     def _write_app_data(self):
         """Create the data directory and replace runtime JSON atomically under the save lock."""
@@ -946,29 +929,101 @@ class Application:
         set_language(language)
 
     def load_config(self):
-        """Load user config"""
-        with open(
-            os.path.join(os.path.abspath("."), self.config_file), encoding="utf-8"
-        ) as f:
-            config = _yaml.load(f.read())
-            if config:
-                self.config = config
-                self.assign_config(self.config)
-
+        """Prefer managed settings; import optional YAML only before settings exist."""
+        from module.settings import FIELDS, RUNTIME_FIELDS, defaults
+        settings_exist = os.path.exists(self.settings.path)
         if os.path.exists(self.app_data_file):
             with open(self.app_data_file, encoding="utf-8") as stream:
                 app_data = json.load(stream)
             if not isinstance(app_data, dict):
                 raise ValueError("Runtime data must be a JSON object")
             self.app_data = app_data
-            self.assign_app_data(self.app_data)
+        if settings_exist:
+            self.settings.load()
         else:
+            values = defaults()
+            legacy = os.path.join(os.path.abspath("."), self.config_file)
+            if os.path.isfile(legacy):
+                with open(legacy, encoding="utf-8") as stream:
+                    old = _yaml.load(stream) or {}
+                # Round-trip YAML containers are converted before writing JSON.
+                old = json.loads(json.dumps(old))
+                values.update({key: value for key, value in old.items() if key in FIELDS and value is not None})
+                # Unset YAML sequences used the old loader's defaults, and older
+                # installations without a per-file setting used one connection.
+                if old.get("file_download_concurrency") is None:
+                    values["file_download_concurrency"] = 1
+                if old.get("chat_id") and not old.get("chat"):
+                    chat_id = old["chat_id"]
+                    values["chat"] = [{"chat_id": chat_id,
+                        "last_read_message_id": old.get("last_read_message_id", 0),
+                        "download_filter": (old.get("download_filter") or {}).get(str(chat_id), "")}]
+                if "download_min_part_size_mb" in old and "download_part_size_mb" not in old:
+                    values["download_part_size_mb"] = old["download_min_part_size_mb"]
+                values["api_id"] = int(values["api_id"])
+                values["use_user_account"] = old.get("use_user_account", True)
+                values["proxy"] = values["proxy"] or {}
+                values["mcp_token"] = values["mcp_token"] or ""
+                values["public_web"] = not bool(values["web_login_secret"])
+                logger.info("Imported optional startup configuration into data/settings.json")
+            for key in RUNTIME_FIELDS:
+                if key in self.app_data:
+                    values[key] = self.app_data[key]
+            self.settings.save(values, setup_complete=bool(values["web_login_secret"]))
+            self.settings.infer_account_mode = os.path.isfile(legacy)
+        self.apply_settings()
+        migrated_keys = RUNTIME_FIELDS & self.app_data.keys()
+        for key in migrated_keys:
+            self.app_data.pop(key)
+        if not os.path.exists(self.app_data_file) or migrated_keys:
             # An initial empty snapshot must not advance configured scan bounds.
             self._write_app_data()
 
-    def pre_run(self):
+    def apply_settings(self):
+        """Apply a saved snapshot before the Telegram backend starts."""
+        self.config = copy.deepcopy(self.settings.values)
+        if not self.config.get("max_concurrent_transmissions"):
+            self.config.pop("max_concurrent_transmissions", None)
+        self.chat_download_config.clear()
+        self.proxy = {}
+        self.cloud_drive_config = CloudDriveConfig()
+        self.assign_config(self.config)
+        self.group_add_advertisement = {
+            int(key) if str(key).lstrip("-").isdigit() else key: value
+            for key, value in self.settings.values["group_add_advertisement"].items()
+        }
+        self.assign_app_data(self.app_data)
+        self._runtime_settings_snapshot = self.runtime_settings()
+
+    def apply_live_settings(self):
+        """Update future work without replacing active scans or saved part plans."""
+        from module.settings import LIVE_FIELDS
+        values = self.settings.values
+        if not hasattr(self, "active_settings"):
+            self.active_settings = {}
+        for key in LIVE_FIELDS - {"language", "save_path", "forward_limit", "max_concurrent_transmissions",
+                                   "group_add_advertisement"}:
+            if hasattr(self, key):
+                setattr(self, key, copy.deepcopy(values[key]))
+        self.set_language(parse_language(values["language"]))
+        self.save_path = os.path.abspath(values["save_path"])
+        self.temp_save_path = os.path.join(self.save_path, ".temp")
+        self.forward_limit_call.max_limit_call_times = values["forward_limit"]
+        self._transport_capacity_override = values["max_concurrent_transmissions"]
+        self.max_concurrent_transmissions = self.transport_capacity(self.max_download_task)
+        self.group_add_advertisement = {
+            int(key) if str(key).lstrip("-").isdigit() else key: value
+            for key, value in values["group_add_advertisement"].items()
+        }
+        self._runtime_settings_snapshot = self.runtime_settings()
+        for key in LIVE_FIELDS:
+            self.active_settings[key] = copy.deepcopy(values[key])
+        self.pre_run(initialize_upload=False)
+
+    def pre_run(self, initialize_upload=True):
         """before run application do"""
-        self.cloud_drive_config.pre_run()
+        if initialize_upload:
+            self.cloud_drive_config.pre_run()
         for directory in (self.data_path, self.log_file_path, self.session_file_path,
                           self.temp_save_path):
             os.makedirs(directory, exist_ok=True)

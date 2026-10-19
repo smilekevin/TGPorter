@@ -21,7 +21,7 @@ class WebWorkerTests(unittest.TestCase):
         self.data_file = self.root / 'data.json'
         self.config_file.write_text(
             '# Keep the startup limit and this comment.\n'
-            'api_id: test\napi_hash: test\nmedia_types: []\nfile_formats: {}\n'
+            'api_id: 123\napi_hash: test\nmedia_types: []\nfile_formats: {}\n'
             'max_download_task: 2\nfile_download_concurrency: 8\n', encoding='utf-8')
         self.data_file.write_text('{"chat": []}\n', encoding='utf-8')
         self.app = self.load_application()
@@ -30,7 +30,7 @@ class WebWorkerTests(unittest.TestCase):
         patches = (
             patch.object(web, '_app', self.app),
             patch.object(bot, '_bot', SimpleNamespace(client=self.telegram_client)),
-            patch.object(self.app, 'save_app_data', wraps=self.app.save_app_data),
+            patch.object(self.app.settings, 'save', wraps=self.app.settings.save),
             patch.object(sys.modules['__main__'], '_worker_pool_set_target', create=True),
             patch('module.pyrogram_extension.set_max_concurrent_transmissions'),
         )
@@ -46,6 +46,7 @@ class WebWorkerTests(unittest.TestCase):
         self.addCleanup(app.loop.close)
         self.addCleanup(app.executor.shutdown)
         app.load_config()
+        app.settings.setup_complete = True
         return app
 
     def test_live_adjustments_save_runtime_json_and_resize_workers(self):
@@ -61,10 +62,10 @@ class WebWorkerTests(unittest.TestCase):
                 self.assertEqual(self.app.max_concurrent_transmissions, workers * 8)
                 self.resize.assert_called_with(workers)
                 self.resize_transmissions.assert_called_with(self.telegram_client, workers * 8)
-                self.app.save_app_data.assert_called_with(True)
+                self.app.settings.save.assert_called_with({'max_download_task': workers})
                 self.assertEqual(self.app.config['max_download_task'], 2)
                 self.assertEqual(self.config_file.read_bytes(), original)
-                self.assertEqual(json.loads(self.data_file.read_text())['max_download_task'], workers)
+                self.assertEqual(json.loads((self.data_file.parent / 'settings.json').read_text())['max_download_task'], workers)
         self.assertEqual(self.load_application().max_download_task, 6)
 
     def test_later_runtime_saves_keep_worker_limit_even_without_configured_default(self):
@@ -83,7 +84,7 @@ class WebWorkerTests(unittest.TestCase):
                 restarted = self.load_application()
                 self.assertEqual(restarted.max_download_task, 3)
                 self.assertEqual(restarted.max_concurrent_transmissions, 24)
-                self.assertEqual(restarted.config.get('max_download_task'), configured)
+                self.assertEqual(restarted.config.get('max_download_task'), 3)
 
     def test_invalid_limits_leave_runtime_and_config_unchanged(self):
         original = self.config_file.read_bytes(), self.data_file.read_bytes()
@@ -95,7 +96,7 @@ class WebWorkerTests(unittest.TestCase):
         self.assertEqual(self.app.max_download_task, 2)
         self.resize.assert_not_called()
         self.resize_transmissions.assert_not_called()
-        self.app.save_app_data.assert_not_called()
+        self.app.settings.save.assert_not_called()
         self.assertEqual((self.config_file.read_bytes(), self.data_file.read_bytes()), original)
 
 

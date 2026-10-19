@@ -2,7 +2,7 @@
 
 TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务管理逻辑。它可提交单条 Telegram 消息链接并管理任务。每个请求都要求配置的 `mcp_token`。
 
-完整安装、Token 生成与配置、Streamable HTTP 客户端示例、Docker / NAS 部署和更新步骤统一维护在 [DEPLOY.md 的 MCP Agent 接入](../DEPLOY.md#mcp-agent-接入)。
+完整安装、Token 生成与配置、Streamable HTTP 客户端示例、Docker / NAS 部署和更新步骤统一维护在 [DEPLOY_CN.md 的 MCP Agent 接入](../DEPLOY_CN.md#mcp-agent-接入)。
 
 ## 工具与参数
 
@@ -13,7 +13,7 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 | `check_task_file` | `task_id` | 查询已完成任务的文件是否存在、路径和文件名 |
 | `submit_download` | `url` | 提交单条 Telegram 消息链接，持久化进入待下载队列 |
 | `set_download_state` | `state`: paused / downloading | 全局暂停 / 恢复 |
-| `set_max_workers` | `workers`: 1–6 | 设置同时下载的文件数，立即保存到运行 JSON，重启后保留；不改变单文件分片 worker 数 |
+| `set_max_workers` | `workers`: 1–6 | 设置同时下载的文件数，立即保存到 `data/settings.json`，重启后保留；不改变单文件分片 worker 数 |
 | `pause_task` / `resume_task` | `task_id` | 暂停 / 恢复单个任务 |
 | `retry_task` | `task_id` | 重试一个失败任务 |
 | `batch_retry_tasks` | `task_ids` | 批量重试失败任务 |
@@ -22,7 +22,7 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 
 任务操作使用列表中的 `task_id`，不是 `task_id_display`。`list_downloads` 默认查询 active、offset 0、每页 100 条，最大 500 条；active 包含单独暂停的任务，实际状态看每条记录的 `status`。仅 completed 支持 `search`；批量操作最多 100 个任务。
 
-`submit_download` 接受长度不超过 2048 的 HTTPS `t.me` 消息链接。返回 `task_id`（进行中/已完成）、`pending_task_id`（待执行/取消）和展示用的 `task_id_display`；尚未完成的重复提交返回原任务，`duplicate: true`。账号权限、链接形式、超时和入队语义见 [提交下载](../DEPLOY.md#提交下载)。
+`submit_download` 接受长度不超过 2048 的 HTTPS `t.me` 消息链接。返回 `task_id`（进行中/已完成）、`pending_task_id`（待执行/取消）和展示用的 `task_id_display`；尚未完成的重复提交返回原任务，`duplicate: true`。账号权限、链接形式、超时和入队语义见 [提交下载](../DEPLOY_CN.md#提交下载)。
 
 ## 结果与错误
 
@@ -37,7 +37,7 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 | `flood_wait_remaining` | Bot 限流剩余秒数 |
 | `heartbeat_interval` | 后续心跳间隔，默认 `60` 秒 |
 
-心跳启动时立即探测；`connected` 需要近期匹配的 Pong，成功探测超过 70 秒未更新显示 `unknown`。未配置 `bot_token` 返回 `disabled`。这只描述 Bot 会话，不代表主账号或下载连接。启动与诊断见 [Bot 心跳与消息诊断](../DEPLOY.md#bot-心跳与消息诊断)。
+心跳启动时立即探测；`connected` 需要近期匹配的 Pong，成功探测超过 70 秒未更新显示 `unknown`。未配置 `bot_token` 返回 `disabled`。这只描述 Bot 会话，不代表主账号或下载连接。启动与诊断见 [Bot 心跳与消息诊断](../DEPLOY_CN.md#bot-心跳与消息诊断)。
 
 - 工具返回结构化对象，列表包含 `tasks` 和 `total`。状态查询汇总共用任务逻辑的数据。
 - 共用任务逻辑返回 `code="0"` 时转为 MCP 工具错误，不能当成操作成功。HTTP 缺少或错误 Token 返回 `401`。
@@ -61,7 +61,7 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 
 TG Porter’s integrated `/mcp` endpoint exposes 13 typed tools on the main service and calls internal task-management operations directly. Every request requires the configured `mcp_token`. Tools submit single Telegram post links and manage downloads.
 
-Complete installation, token generation/configuration, Streamable HTTP client examples, Docker/NAS deployment and updates are maintained in [DEPLOY_EN.md: MCP Agent Integration](../DEPLOY_EN.md#mcp-agent-integration).
+Complete installation, token generation/configuration, Streamable HTTP client examples, Docker/NAS deployment and updates are maintained in [DEPLOY.md: MCP Agent Integration](../DEPLOY.md#mcp-agent-integration).
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
@@ -70,7 +70,7 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 | `check_task_file` | `task_id` | Check a completed file's existence, path and name |
 | `submit_download` | `url` | Persist a single Telegram post in the download queue |
 | `set_download_state` | `state`: paused / downloading | Pause/resume global processing |
-| `set_max_workers` | `workers`: 1–6 | Set simultaneous files and save immediately to runtime JSON for restarts; leaves per-file part workers unchanged |
+| `set_max_workers` | `workers`: 1–6 | Set simultaneous files and save immediately to `data/settings.json` for restarts; leaves per-file part workers unchanged |
 | `pause_task` / `resume_task` | `task_id` | Pause/resume an individual task |
 | `retry_task` / `batch_retry_tasks` | `task_id` / `task_ids` | Requeue failed tasks |
 | `delete_task` / `batch_delete_tasks` | `task_id` / `task_ids`, `delete_file` | Cancel/delete tasks; `delete_file=true` removes files and partial data |
@@ -78,7 +78,7 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 
 Use exact `task_id` values, not `task_id_display`. Lists default to active, offset zero and 100 entries, with at most 500 per page; active includes individually paused tasks, identified by each record's `status`. Only completed supports search. Batches accept up to 100 task IDs.
 
-`submit_download` accepts HTTPS `t.me` post links up to 2048 characters and returns `task_id` for active/completed records, `pending_task_id` for pending/cancellation, and a display-only `task_id_display`. Repeating an unfinished post returns the same task with `duplicate: true`. See [Submit a Download](../DEPLOY_EN.md#submit-a-download) for account requirements, supported links, timeouts and queue semantics.
+`submit_download` accepts HTTPS `t.me` post links up to 2048 characters and returns `task_id` for active/completed records, `pending_task_id` for pending/cancellation, and a display-only `task_id_display`. Repeating an unfinished post returns the same task with `duplicate: true`. See [Submit a Download](../DEPLOY.md#submit-a-download) for account requirements, supported links, timeouts and queue semantics.
 
 `get_status.bot_status` returns the same cached snapshot as the WebUI `/get_bot_status` endpoint, including in `mcp_read_only` mode, without sending Telegram requests:
 
@@ -91,7 +91,7 @@ Use exact `task_id` values, not `task_id_display`. Lists default to active, offs
 | `flood_wait_remaining` | Remaining Bot cooldown seconds |
 | `heartbeat_interval` | Subsequent probe interval, default `60` seconds |
 
-The heartbeat probes immediately on startup. `connected` requires a recent matching Pong; a successful probe older than 70 seconds becomes `unknown`. Without `bot_token`, the status is `disabled`. This describes only the Bot session, independently of the main account and media connections. See [Bot Heartbeat and Message Diagnostics](../DEPLOY_EN.md#bot-heartbeat-and-message-diagnostics).
+The heartbeat probes immediately on startup. `connected` requires a recent matching Pong; a successful probe older than 70 seconds becomes `unknown`. Without `bot_token`, the status is `disabled`. This describes only the Bot session, independently of the main account and media connections. See [Bot Heartbeat and Message Diagnostics](../DEPLOY.md#bot-heartbeat-and-message-diagnostics).
 
 Results are structured objects; lists contain `tasks` and `total`. Shared-operation failures (`code="0"`) become MCP tool errors; missing or invalid HTTP tokens return `401`. Batch retries report `queued` and `errors` for partial failures, and acceptance does not imply download completion. Check task state before repeating timed-out writes.
 

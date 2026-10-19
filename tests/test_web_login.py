@@ -63,7 +63,7 @@ class WebLoginTests(unittest.TestCase):
         with patch.object(download_service, "get_download_result", Mock()) as get_result, \
                 patch.object(download_service, "set_download_state", Mock()) as set_state:
             for route in self.app.url_map.iter_rules():
-                if route.endpoint in {"static", "index", "login", "logout"}:
+                if route.endpoint in {"static", "index", "login", "logout", "configuration.configuration"}:
                     continue
                 method = "POST" if "POST" in route.methods else "GET"
                 with self.subTest(route=route.rule, method=method):

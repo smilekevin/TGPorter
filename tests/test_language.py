@@ -110,7 +110,8 @@ class LanguageTests(unittest.TestCase):
                     app.assign_config({'api_id': 'test', 'api_hash': 'test',
                                        'media_types': [], 'file_formats': {}, 'language': value})
                     app.save_app_data()
-                    self.assertEqual(app.app_data['language'], lang.normalize_language(value))
+                    self.assertEqual(app.settings.values['language'], lang.normalize_language(value))
+                    self.assertNotIn('language', app.app_data)
                     self.assertFalse(Path(app.config_file).exists())
                 finally:
                     app.loop.close()

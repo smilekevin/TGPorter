@@ -1,5 +1,7 @@
-# TG Porter configuration
-# Read-only startup configuration. Runtime progress, ad rules and Bot language save to data/data.json.
+# OPTIONAL: initial YAML configuration; web Configuration is preferred.
+# Copy to config.yaml and edit before the first start; imported only when data/settings.json is absent.
+# Login uses Configuration by default. Add --login explicitly for terminal authorization.
+# Example values are not all application defaults; edit credentials, paths and proxy for your environment.
 api_hash: your_api_hash
 api_id: your_api_id
 # Bot for commands and notifications; set to "" when submitting tasks only through MCP.
@@ -50,7 +52,7 @@ download_part_size_mb: 64
 web_host: 0.0.0.0
 web_port: 5000
 # WebUI password; change before deployment. Set to "" to disable password login.
-web_login_secret: "replace-with-a-long-password"
+web_login_secret: "Replace-with-your-password1"
 # Optional random token for /mcp only, independent of the WebUI password; Web APIs use sessions only.
 mcp_token: ""
 # Optional /mcp endpoint on the same web_port as WebUI / Web APIs; requires mcp_token when enabled.
