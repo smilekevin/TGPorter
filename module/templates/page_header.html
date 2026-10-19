@@ -1,0 +1,20 @@
+<div class="page-container app-header-row">
+    <a href="/" class="app-brand">
+        <span class="app-brand-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v1a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1m-4-4-4 4m0 0-4-4m4 4V4"/></svg></span>
+        <div class="app-brand-copy">
+            {% if header_dashboard %}<h1 class="app-brand-title">TG Porter</h1><span class="app-brand-version" x-text="version" x-show="version"></span>
+            {% else %}<span class="app-brand-title">TG Porter</span><span class="app-brand-version">{{ header_version }}</span>{% endif %}
+        </div>
+    </a>
+    <nav class="app-header-controls">
+        {% if header_dashboard %}{% with navigation_href='/configuration', navigation_label='Configuration' %}{% include 'navigation_icon.html' %}{% endwith %}
+        {% elif not setup_required %}{% with navigation_href='/', navigation_label='Dashboard' %}{% include 'navigation_icon.html' %}{% endwith %}{% endif %}
+        <select data-language-switch aria-label="Language" class="language-switch"{% if header_dashboard %} @change="locale = WebI18n.setLanguage($event.target.value)"{% endif %}>{% include 'language_options.html' %}</select>
+        {% if header_signed_in %}
+        <form action="{{ url_for('logout') }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ header_csrf_token }}">
+            <button type="submit" class="app-sign-out"><span data-i18n="Sign out">Sign out</span></button>
+        </form>
+        {% endif %}
+    </nav>
+</div>

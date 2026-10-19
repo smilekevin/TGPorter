@@ -5,6 +5,7 @@
     const supported = Object.keys(catalogs);
     const storageKey = 'web_language';
     const isLoginPage = document.title === 'Sign in - TG Porter';
+    const isConfigurationPage = document.title === 'Configuration - TG Porter';
     function normalize(value) {
         const code = String(value || '').toLowerCase().replaceAll('_', '-');
         const parts = code.split('-');
@@ -51,12 +52,18 @@
             document.querySelectorAll('[data-i18n]').forEach(element => {
                 element.textContent = api.t(element.dataset.i18n);
             });
+            document.querySelectorAll('[data-i18n-label]').forEach(element => {
+                const label = api.t(element.dataset.i18nLabel);
+                element.setAttribute('aria-label', label);
+                element.setAttribute('title', label);
+            });
             document.querySelectorAll('[data-language-switch]').forEach(element => {
                 element.value = api.language;
             });
             if (isLoginPage) {
                 document.title = api.t('Sign in - TG Porter');
             }
+            if (isConfigurationPage) document.title = api.t('Configuration - TG Porter');
         },
         setLanguage(value) {
             const language = normalize(value);

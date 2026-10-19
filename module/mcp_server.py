@@ -2,6 +2,8 @@
 
 import asyncio
 import hmac
+import ipaddress
+import re
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -43,6 +45,15 @@ def validate_allowed_hosts(value):
                 or parsed.path or parsed.query or parsed.fragment
                 or parsed.netloc.endswith(":") or parsed.port == 0):
             raise ValueError(f"{name} entries must contain only host and optional port")
+        try:
+            ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            hostname = parsed.hostname[:-1] if parsed.hostname.endswith(".") else parsed.hostname
+            if (len(hostname) > 253 or "[" in entry or "]" in entry
+                    or ("." in hostname and hostname.replace(".", "").isdigit())
+                    or any(re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", label) is None
+                           for label in hostname.split("."))):
+                raise ValueError(f"{name} entries must contain a valid hostname or IP address")
         normalized.append(entry.lower())
     return list(dict.fromkeys(normalized))
 

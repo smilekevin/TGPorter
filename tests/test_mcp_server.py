@@ -491,7 +491,9 @@ class MCPConfigurationTests(unittest.TestCase):
         invalid_hosts = [None, "nas.example.com", [123], [""], ["*"], ["nas.example.com:*"],
                          ["https://nas.example.com"], ["nas.example.com/mcp"], ["user:pass@nas.example.com"],
                          ["nas.example.com?token=x"], ["nas.example.com#x"], ["nas.example.com:bad"],
-                         ["nas.example.com:65536"], ["nas.example.com:"], ["nas.example.com:0"], ["has space"]]
+                         ["nas.example.com:65536"], ["nas.example.com:"], ["nas.example.com:0"], ["has space"],
+                         ["bad..example.com"], ["host.."], ["-bad.example.com"], ["bad-.example.com"],
+                         ["bad_name.example.com"], ["999.1.2.3"], ["a" * 64 + ".example.com"]]
         for value in invalid_hosts:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.configure({"mcp_allowed_hosts": value})

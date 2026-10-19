@@ -15,6 +15,7 @@ ENV/
 downloads/
 data/
 data.json
+settings.json
 config.yaml
 data.yaml
 log/

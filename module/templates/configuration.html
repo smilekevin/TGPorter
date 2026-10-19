@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#2563eb">
+    <title>Configuration - TG Porter</title>
+    {% include 'language_catalogs.html' %}
+    <script src="{{ url_for('static', filename='web_i18n.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='configuration.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='navigation.css') }}">
+    <script id="configuration-data" type="application/json">{{ {'setup': setup_required, 'csrf': csrf_token, 'schema': schema}|tojson }}</script>
+    <script defer src="{{ url_for('static', filename='configuration.js') }}"></script>
+</head>
+<body>
+    <header class="app-header configuration-header">{% with header_dashboard=false %}{% include 'page_header.html' %}{% endwith %}</header>
+    <main class="page-container">
+        <div class="intro"><h1 data-i18n="Configuration">Configuration</h1>
+            <p data-i18n="Manage Telegram, downloads and access in one place.">Manage Telegram, downloads and access in one place.</p></div>
+        <p id="notice" role="status" aria-live="polite" hidden></p>
+        {% if setup_required %}
+        <section class="card setup"><div class="section-heading"><span class="step">1</span><div><h2 data-i18n="Welcome to TG Porter">Welcome to TG Porter</h2><p data-i18n="Use the setup code from the service logs to create your web password.">Use the setup code from the service logs to create your web password.</p></div></div>
+            <form id="setup-form">
+                <label for="setup-code" data-i18n="Setup code">Setup code</label><input id="setup-code" name="code" autocomplete="off" required maxlength="128" autofocus>
+                <label for="setup-password" data-i18n="Web password">Web password</label><input id="setup-password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="512" pattern="{{ password_pattern }}">
+                <p class="help" data-i18n="{{ password_help }}">{{ password_help }}</p>
+                <button type="submit" data-i18n="Create password and continue">Create password and continue</button>
+            </form>
+        </section>
+        {% else %}
+        <div id="restart-notice" class="restart" hidden><strong data-i18n="Restart required">Restart required</strong><p data-i18n="Settings are saved. Restart the service to apply the listed changes; downloads keep their checkpoints.">Settings are saved. Restart the service to apply the listed changes; downloads keep their checkpoints.</p><span id="restart-fields"></span></div>
+        <form id="settings-form">
+            <div class="settings-layout"><aside aria-label="Configuration sections">{% for section in sections %}<a href="#section-{{ loop.index }}" data-i18n="{{ section }}">{{ section }}</a>{% endfor %}</aside><div>
+            {% for section in sections %}
+            <section class="card settings-section" id="section-{{ loop.index }}"><h2 data-i18n="{{ section }}">{{ section }}</h2>
+                {% if section == 'Basic configuration' %}<div class="login-panel" id="telegram-setup"><p data-i18n="Enter API ID, API Hash and Bot Token, then verify and sign in. Downloads use the bot unless you choose a user account.">Enter API ID, API Hash and Bot Token, then verify and sign in. Downloads use the bot unless you choose a user account.</p>{% endif %}
+                <div class="field-grid">
+                {% for field in schema|selectattr('section', 'equalto', section) %}
+                <div class="field{% if field.type in ['dict', 'list', 'bool'] or field.key in ['proxy', 'bot_token', 'web_login_secret'] %} wide{% endif %}" data-field="{{ field.key }}"{% if field.key == 'date_format' %} hidden{% endif %}>
+                    {% set label = 'Management password' if field.key == 'web_login_secret' else ('Public downloads' if field.key == 'public_web' else field.label) %}
+                    <label for="setting-{{ field.key }}"><span data-i18n="{{ label }}">{{ label }}</span>{% if field.key in ['api_id', 'api_hash', 'bot_token'] %}<span class="required" aria-label="Required"> *</span>{% endif %}{% if field.restart %}<small data-restart-label="{{ field.key }}" data-i18n="Requires restart">Requires restart</small>{% endif %}</label>
+                    {% if field.key == 'language' %}<select id="setting-{{ field.key }}" data-setting="{{ field.key }}">{% include 'language_options.html' %}</select>
+                    {% elif field.key == 'log_level' %}<select id="setting-{{ field.key }}" data-setting="{{ field.key }}">{% for level in ['TRACE', 'DEBUG', 'INFO', 'SUCCESS', 'WARNING', 'ERROR', 'CRITICAL'] %}<option value="{{ level }}">{{ level }}</option>{% endfor %}</select>
+                    {% elif field.key == 'proxy' %}
+                    <div id="setting-proxy" data-editor="proxy"></div>
+                    {% elif field.type == 'bool' %}<input id="setting-{{ field.key }}" data-setting="{{ field.key }}" type="checkbox">
+                    {% elif field.type in ['dict', 'list'] %}<div id="setting-{{ field.key }}" data-editor="{{ field.key }}"></div>
+                    {% else %}<input id="setting-{{ field.key }}" data-setting="{{ field.key }}" type="{{ 'password' if field.type == 'secret' else ('number' if field.type == 'int' else 'text') }}" {% if field.type == 'secret' %}autocomplete="new-password" maxlength="512"{% endif %}{% if field.key == 'web_login_secret' %} minlength="8" pattern="{{ password_pattern }}"{% endif %}{% if field.limits %}min="{{ field.limits[0] }}" max="{{ field.limits[1] }}"{% endif %}>
+                    {% endif %}
+                    {% if field.type == 'secret' %}<p class="help secret-status" data-secret="{{ field.key }}"></p>{% endif %}
+                    {% if field.key == 'web_login_secret' %}<p class="help" data-i18n="{{ password_help }}">{{ password_help }}</p>{% endif %}
+                    {% if field.key == 'mcp_allowed_hosts' %}<p class="help" data-i18n="The hostname used to request the MCP service must match.">The hostname used to request the MCP service must match.</p>{% endif %}
+                    {% if field.key == 'public_web' %}<p class="help" data-i18n="The download page does not require password login.">The download page does not require password login.</p>{% endif %}
+                    {% if field.key == 'allowed_user_ids' %}<p class="help" data-i18n="Add your numeric Telegram user ID to use bot commands. A signed-in user account is automatically allowed. Legacy me entries grant no user access in bot download mode.">Add your numeric Telegram user ID to use bot commands. A signed-in user account is automatically allowed. Legacy me entries grant no user access in bot download mode.</p>{% endif %}
+                </div>
+                {% if field.key == 'use_user_account' %}
+                <div id="telegram-card" class="wide">
+                    <div id="phone-row" hidden><label for="phone" data-i18n="Phone number">Phone number</label><input id="phone" type="tel" autocomplete="tel" placeholder="+1234567890" maxlength="20"></div>
+                    <div id="code-row" hidden><label for="phone-code" data-i18n="Verification code">Verification code</label><input id="phone-code" autocomplete="one-time-code" inputmode="numeric" maxlength="16"></div>
+                    <div id="password-row" hidden><label for="two-step-password" data-i18n="Your account requires two-step verification. Enter your account password.">Your account requires two-step verification. Enter your account password.</label><input id="two-step-password" type="password" autocomplete="off" maxlength="512"></div>
+                    <div class="account-summary"><span id="telegram-state" class="badge" role="status"></span><span id="account-name"></span></div>
+                    <div class="actions"><button id="telegram-submit" type="button" data-i18n="Verify and sign in">Verify and sign in</button><button id="telegram-cancel" type="button" class="secondary" hidden data-i18n="Cancel login">Cancel login</button><button id="telegram-logout" type="button" class="danger" hidden data-i18n="Sign out of Telegram">Sign out of Telegram</button><div id="telegram-test-row" hidden><button id="telegram-test" type="button" class="secondary" data-i18n="Test connection">Test connection</button><span id="telegram-connection" role="status" aria-live="polite"></span></div></div>
+                    <p id="telegram-message" class="help" role="status"></p>
+                </div>
+                </div></div><div class="field-grid account-options">
+                {% endif %}
+                {% endfor %}
+            </div></section>
+            {% endfor %}
+            </div></div>
+            <div class="save-bar"><div class="page-container save-bar-inner"><span id="save-status" data-i18n="Changes are saved to this server.">Changes are saved to this server.</span><button type="submit" data-i18n="Save settings">Save settings</button></div></div>
+        </form>
+        {% endif %}
+    </main>
+</body>
+</html>

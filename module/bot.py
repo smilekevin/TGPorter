@@ -196,6 +196,8 @@ class DownloadBot:
         self.task_node: dict = {}
         self.is_running = True
         self.allowed_user_ids: List[Union[int, str]] = []
+        self._allowed_user_filter = pyrogram.filters.user()
+        self._download_account = None
         self._listen_handler_ref = None
 
         meta = MetaData(datetime(2022, 8, 5, 14, 35, 12), 0, "", 0, 0, 0, "", 0)
@@ -381,7 +383,8 @@ class DownloadBot:
         """Log receipt before authorization without recording message content."""
         self._last_message_at = time.monotonic()
         sender = getattr(message, "from_user", None)
-        allowed = sender is not None and sender.id in self.allowed_user_ids
+        allowed = sender is not None and (sender.id in self.allowed_user_ids or
+                  bool(getattr(sender, "username", None) and sender.username.lower() in self.allowed_user_ids))
         kind = "media" if message.media else "text"
         if message.text and message.text.startswith("/"):
             kind = "command"
@@ -990,11 +993,32 @@ class DownloadBot:
                     self.config = config
                     self.assign_config(self.config)
 
+        if getattr(getattr(app, "telegram_login", None), "validate_bot_credentials", False):
+            # A saved session alone does not validate newly supplied API/Token
+            # credentials. Authorize the existing command client before startup.
+            app.telegram_login.set_stage("Connecting command bot")
+            await self.bot.connect()
+            app.telegram_login.set_stage("Verifying command bot credentials")
+            await self.bot.sign_in_bot(app.bot_token)
+            await self.bot.storage.save()
+            app.telegram_login.set_stage("Reconnecting command bot")
+            await self.bot.disconnect()
+        if getattr(app, "telegram_login", None):
+            app.telegram_login.set_stage("Initializing command bot")
         await self.bot.start()
 
         self.bot_info = await self.bot.get_me()
 
+        admin = await self.client.get_me()
+        self._download_account = admin
+        self.allowed_user_ids = []
+        if getattr(app, "telegram_login", None):
+            app.telegram_login.set_stage("Resolving allowed users")
         for allowed_user_id in self.app.allowed_user_ids:
+            # Legacy me identifies the download account, never the Bot's owner.
+            # Human download accounts are included below without a peer lookup.
+            if allowed_user_id == "me":
+                continue
             # Numeric allowlist entries identify senders directly; a Bot-owned
             # main account may not have met that user and cannot resolve it yet.
             if isinstance(allowed_user_id, int) or (
@@ -1008,10 +1032,13 @@ class DownloadBot:
             except Exception as e:
                 logger.warning(f"set allowed_user_ids error: {e}")
 
-        admin = await self.client.get_me()
         if not getattr(admin, "is_bot", False):
             self.allowed_user_ids.append(admin.id)
+        self._allowed_user_filter.clear()
+        self._allowed_user_filter.update(self.allowed_user_ids)
 
+        if getattr(app, "telegram_login", None):
+            app.telegram_login.set_stage("Registering bot commands")
         await self.bot.set_bot_commands(commands)
 
         self._register_bot_handlers()
@@ -1032,12 +1059,31 @@ class DownloadBot:
             self._register_listen_handler()
             logger.info("Auto-registered listen handler for config chats")
 
+    def set_live_allowed_users(self, entries):
+        """Replace the shared authorization filter without restarting handlers."""
+        allowed = []
+        for value in entries:
+            if value == "me":
+                continue
+            if isinstance(value, int) or value.lstrip("-").isdigit():
+                allowed.append(int(value))
+            else:
+                allowed.append(value.lower().lstrip("@"))
+        account = self._download_account
+        if account is not None and not getattr(account, "is_bot", False):
+            allowed.append(account.id)
+        self.allowed_user_ids = allowed
+        self._allowed_user_filter.clear()
+        self._allowed_user_filter.update(allowed)
+
     def _register_bot_handlers(self):
         """Register all bot MessageHandlers and CallbackQueryHandler.
 
         Called from start() and _reconnect_bot() — stop() clears handlers,
         so they must be re-registered after every reconnect.
         """
+        self._allowed_user_filter.clear()
+        self._allowed_user_filter.update(self.allowed_user_ids)
         def add_handler(handler):
             handler.callback = self._logged_bot_handler(handler.callback)
             self.bot.add_handler(handler)
@@ -1047,77 +1093,77 @@ class DownloadBot:
             MessageHandler(
                 query_tasks,
                 filters=pyrogram.filters.command(["query"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 download_from_bot,
                 filters=pyrogram.filters.command(["download"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 forward_messages,
                 filters=pyrogram.filters.command(["forward"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 download_forward_media,
                 filters=pyrogram.filters.media
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 download_from_link,
                 filters=pyrogram.filters.regex(r"^https://t.me.*")
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 set_listen_forward_msg,
                 filters=pyrogram.filters.command(["listen_forward"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 help_command,
                 filters=pyrogram.filters.command(["help"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 get_info,
                 filters=pyrogram.filters.command(["get_info"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 help_command,
                 filters=pyrogram.filters.command(["start"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 set_language,
                 filters=pyrogram.filters.command(["set_language"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 add_filter,
                 filters=pyrogram.filters.command(["add_filter"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
 
@@ -1125,35 +1171,35 @@ class DownloadBot:
             MessageHandler(
                 add_filter_advertisement_filter,
                 filters=pyrogram.filters.command(["add_ad"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 remove_filter_advertisement_filter,
                 filters=pyrogram.filters.command(["remove_ad"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 add_replace_advertisement_filter,
                 filters=pyrogram.filters.command(["add_replace_ad"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 remove_replace_advertisement_filter,
                 filters=pyrogram.filters.command(["remove_replace_ad"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
         add_handler(
             MessageHandler(
                 set_add_advertisement,
                 filters=pyrogram.filters.command(["set_ad"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
 
@@ -1161,13 +1207,13 @@ class DownloadBot:
             MessageHandler(
                 stop,
                 filters=pyrogram.filters.command(["stop"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
 
         add_handler(
             CallbackQueryHandler(
-                on_query_handler, filters=pyrogram.filters.user(self.allowed_user_ids)
+                on_query_handler, filters=self._allowed_user_filter
             )
         )
 
@@ -1176,7 +1222,7 @@ class DownloadBot:
             MessageHandler(
                 forward_to_comments,
                 filters=pyrogram.filters.command(["forward_to_comments"])
-                & pyrogram.filters.user(self.allowed_user_ids),
+                & self._allowed_user_filter,
             )
         )
 
@@ -1293,7 +1339,20 @@ async def stop_download_bot():
     _bot._pending_consumer_task = None
     _bot.heartbeat_task = None
     if _bot.bot:
-        await _bot.bot.stop()
+        if getattr(_bot.bot, "is_initialized", True):
+            await _bot.bot.stop()
+        elif _bot.bot.is_connected:
+            await _bot.bot.disconnect()
+        else:
+            # A failed startup may own a transport/storage before initialization.
+            transport_session = getattr(_bot.bot, "session", None)
+            if transport_session is not None:
+                await transport_session.stop()
+            if getattr(_bot.bot.storage, "conn", None) is not None:
+                await _bot.bot.storage.close()
+        executor = getattr(_bot.bot, "executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False)
 
 
 async def send_help_str(client: pyrogram.Client, chat_id):

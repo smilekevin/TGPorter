@@ -1,0 +1,22 @@
+/* Shared page width, brand and navigation for dashboard and Configuration. */
+.page-container { box-sizing: border-box; width: 100%; max-width: 80rem; margin-left: auto; margin-right: auto; padding-left: 24px; padding-right: 24px; }
+.app-header { background: #fff; border-top: 3px solid #2563eb; border-bottom: 1px solid #e5e7eb; padding-top: env(safe-area-inset-top); box-shadow: 0 4px 24px rgb(31 51 86 / 5%); }
+.app-header-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; padding-bottom: 12px; }
+.app-brand { display: flex; align-items: center; gap: 12px; flex: none; color: #111827; text-decoration: none; }
+.app-brand-icon { display: flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 36px; border-radius: 8px; color: #fff; background: linear-gradient(to bottom right, #3b82f6, #4f46e5); box-shadow: 0 1px 3px rgb(0 0 0 / 10%); }
+.app-brand-title { display: block; margin: 0; font-size: 18px; font-weight: 600; line-height: 22.5px; letter-spacing: -.035em; }
+.app-brand-version { display: block; margin: 0; color: #9ca3af; font-size: 12px; font-weight: 400; line-height: 16px; }
+.app-header-controls { display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.app-header-controls form { margin: 0; }
+.app-header .app-sign-out { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; color: #4b5563; font: 500 14px/20px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; cursor: pointer; white-space: nowrap; }
+.app-header .app-sign-out:hover { background: #f3f4f6; filter: none; }
+.app-header .language-switch { width: 110px; max-width: 110px; padding: 6px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; color: #374151; font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+@media (max-width: 639px) {
+    .page-container { padding-left: 16px; padding-right: 16px; }
+    .app-header-row { flex-wrap: wrap; gap: 12px; }
+    .app-header-controls { flex: 1; justify-content: flex-end; gap: 8px; }
+}
+.navigation-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 38px; height: 38px; border: 1px solid #e3e9f2; border-radius: 9px; color: #52647e; background: #fff; text-decoration: none; }
+.navigation-icon svg { display: block; flex: none; }
+.navigation-icon:hover { color: #2563eb; border-color: #c9d9f6; background: #f3f7ff; }
+.navigation-icon:focus-visible { outline: 3px solid #bdd4ff; outline-offset: 2px; }

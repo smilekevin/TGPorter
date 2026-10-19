@@ -4,7 +4,7 @@
 
 Bot、已翻译日志和 WebUI 共用 `lang/` 包，每种语言一个 UTF-8 JSON 文件。使用 JSON 的原因是 Python 和浏览器都能直接读取，无需 XML 解析器、额外依赖或生成代码。重复词汇使用同一个英文键；语序不同的完整句子使用独立词条和 `{count}` 等命名占位符。
 
-支持：`en`、`zh-cn`（简体中文）、`zh-tw`（繁体中文）、`ja`、`es`、`fr`、`ru`、`uk`。语言代码不区分大小写，接受下划线形式；旧 `ZH` / `zh` 回退 `zh-cn`，`UA` / `ua` 对应 `uk`。Bot 与网页各自选择语言。配置方法见[部署指南](../DEPLOY.md)。
+支持：`en`、`zh-cn`（简体中文）、`zh-tw`（繁体中文）、`ja`、`es`、`fr`、`ru`、`uk`。语言代码不区分大小写，接受下划线形式；旧 `ZH` / `zh` 回退 `zh-cn`，`UA` / `ua` 对应 `uk`。Bot 与网页各自选择语言。配置方法见[部署指南](../DEPLOY_CN.md)。
 
 添加新语言：
 
@@ -24,7 +24,7 @@ Bot、已翻译日志和 WebUI 共用 `lang/` 包，每种语言一个 UTF-8 JSO
 
 The Bot, translated logs and WebUI share the `lang/` package, with one UTF-8 JSON file per language. JSON is readable by Python and browsers without XML parsers, extra dependencies or generated code. Shared vocabulary uses the same English key; complete sentences use separate entries with named placeholders such as `{count}` so languages can change word order.
 
-Supported codes: `en`, `zh-cn` (Simplified Chinese), `zh-tw` (Traditional Chinese), `ja`, `es`, `fr`, `ru`, `uk`. Codes are case insensitive and accept underscores. Legacy `ZH` / `zh` resolve to `zh-cn`; `UA` / `ua` resolve to `uk`. Bot and browser language preferences are independent. See the [deployment guide](../DEPLOY_EN.md) for configuration.
+Supported codes: `en`, `zh-cn` (Simplified Chinese), `zh-tw` (Traditional Chinese), `ja`, `es`, `fr`, `ru`, `uk`. Codes are case insensitive and accept underscores. Legacy `ZH` / `zh` resolve to `zh-cn`; `UA` / `ua` resolve to `uk`. Bot and browser language preferences are independent. See the [deployment guide](../DEPLOY.md) for configuration.
 
 To add a language:
 

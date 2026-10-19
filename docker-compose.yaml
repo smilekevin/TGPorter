@@ -3,19 +3,15 @@ services:
     image: ghcr.io/smilekevin/tgporter:latest
     container_name: tgporter
     network_mode: bridge
-    stdin_open: true
-    tty: true
     ports:
       - "5000:5000"
     environment:
       - TZ=Asia/Shanghai
-      - http_proxy=socks5://172.17.0.1:1080
-      - https_proxy=socks5://172.17.0.1:1080
     volumes:
-      # Download directory (change to your actual path)
-      - "./downloads:/app/downloads/"
-      # Read-only startup configuration
-      - "./config.yaml:/app/config.yaml:ro"
-      # Runtime JSON, logs, task history and Telegram sessions
-      - "./data:/app/data"
+      # Replace /path/to/downloads with your absolute host download directory.
+      - "/path/to/downloads:/app/downloads/"
+      # Replace /path/to/tgporter/data with your absolute host configuration/data directory.
+      - "/path/to/tgporter/data:/app/data"
+      # Optional first-start import only; web Configuration is preferred.
+      # - "/path/to/config.yaml:/app/config.yaml:ro"
     restart: unless-stopped

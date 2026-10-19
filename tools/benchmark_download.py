@@ -46,9 +46,9 @@ def message_target(link):
 
 def load_config(path):
     with path.open(encoding="utf-8") as file:
-        config = YAML(typ="safe").load(file)
+        config = json.load(file) if path.suffix == ".json" else YAML(typ="safe").load(file)
     if not isinstance(config, dict):
-        raise ValueError("The configuration must be a YAML object")
+        raise ValueError("The configuration must be an object")
     try:
         api_id = int(config.get("api_id", ""))
     except (TypeError, ValueError):
@@ -292,7 +292,7 @@ async def run(args, config):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=ROOT / "local_test" / "config.yaml")
+    parser.add_argument("--config", type=Path, default=ROOT / "data" / "settings.json")
     parser.add_argument("--work-dir", type=Path, default=ROOT / "local_test" / "telegram-benchmark")
     parser.add_argument("--session", type=Path, help="Copy an existing user session on first use without modifying its deployment")
     parser.add_argument("--login", action="store_true", help="Sign in interactively in the terminal and save the local session")

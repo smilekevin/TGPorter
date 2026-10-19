@@ -21,6 +21,7 @@ _flask_app = Flask(__name__, static_folder='static', static_url_path='/static')
 _flask_app.context_processor(template_context)
 _flask_app.secret_key = secrets.token_bytes(32)
 _flask_app.config.update(
+    MAX_CONTENT_LENGTH=1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_REFRESH_EACH_REQUEST=False,
@@ -60,6 +61,13 @@ def create_web_app(app: Application):
 
     global _app
     _app = app
+    if getattr(app, "settings", None) is not None:
+        import copy
+        app.active_settings = copy.deepcopy(app.settings.values)
+        if not app.settings.setup_complete and not app.setup_token:
+            from loguru import logger as app_logger
+            app.setup_token = secrets.token_urlsafe(24)
+            app_logger.warning("First-time setup code: {}", app.setup_token)
     _flask_app.debug = getattr(app, "debug_web", False)
     mcp_app = None
     if getattr(app, "mcp_enabled", False):
@@ -115,12 +123,38 @@ def _csrf_token() -> str:
     return session["web_csrf_token"]
 
 
+@_flask_app.context_processor
+def page_header_context():
+    """Offer the same management-session controls on both pages, even in public mode."""
+    signed_in = bool(_web_login_secret()) and _is_authenticated()
+    return {"header_signed_in": signed_in,
+            "header_csrf_token": _csrf_token() if signed_in else ""}
+
+
 @_flask_app.before_request
 def require_web_login():
     """Require a password session and CSRF for dashboard and Web API requests."""
-    if not _web_login_secret() or request.endpoint == "static":
+    if request.endpoint == "static":
         return None
-    if request.endpoint != "login" and not _is_authenticated():
+    settings = getattr(_app, "settings", None)
+    public_web = bool(getattr(_app, "public_web", False))
+    configuration_request = bool(request.endpoint and request.endpoint.startswith("configuration."))
+    if settings is not None and not settings.setup_complete:
+        if not public_web and request.endpoint not in ("configuration.configuration", "configuration.setup"):
+            if request.endpoint in ("index", "login"):
+                return redirect("/configuration")
+            return jsonify(error="setup_required"), 401
+    elif configuration_request and not _is_authenticated():
+        if request.endpoint == "configuration.configuration":
+            return redirect(url_for("login"))
+        return jsonify(error="authentication_required", login_url=url_for("login")), 401
+    if ((not _web_login_secret() or public_web) and not configuration_request
+            and request.endpoint not in ("login", "logout")):
+        return None
+    if not _web_login_secret() and not configuration_request:
+        return None
+    if (request.endpoint not in ("login", "configuration.configuration", "configuration.setup")
+            and not _is_authenticated()):
         if request.endpoint == "index":
             return redirect(url_for("login"))
         return jsonify(error="authentication_required", login_url=url_for("login")), 401
@@ -140,7 +174,7 @@ def require_web_login():
 
 @_flask_app.after_request
 def prevent_authenticated_response_cache(response):
-    if _web_login_secret() and request.endpoint != "static":
+    if (_web_login_secret() or (request.endpoint or "").startswith("configuration.")) and request.endpoint != "static":
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -195,11 +229,15 @@ def init_web(app: Application):
 @_flask_app.route("/")
 def index():
     """Render the dashboard after the shared authentication check."""
-    login_required = bool(_web_login_secret())
+    login_required = bool(_web_login_secret()) and not getattr(_app, "public_web", False)
     return render_template(
         "index.html", web_login_required=login_required,
         web_csrf_token=_csrf_token() if login_required else "",
     )
+
+
+from module.configuration import blueprint as configuration_blueprint
+_flask_app.register_blueprint(configuration_blueprint)
 
 
 def _download_service():

@@ -15,6 +15,7 @@
     {% include 'language_catalogs.html' %}
     <script src="{{ url_for('static', filename='web_i18n.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='navigation.css') }}">
     <script src="{{ url_for('static', filename='dashboard_polling.js') }}"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -66,57 +67,11 @@
     <div class="dashboard-header sticky top-0 z-30 sticky-header-top">
 
     <!-- Header -->
-    <header class="bg-white border-b border-gray-200 shadow-sm safe-top">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3">
-            <div class="flex items-center justify-between">
-                <!-- Logo & Title -->
-                <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-sm">
-                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                        </svg>
-                    </div>
-                    <div>
-                        <h1 class="text-lg font-semibold text-gray-900 leading-tight">TG Porter</h1>
-                        <p class="text-xs text-gray-400" x-text="version" x-show="version"></p>
-                    </div>
-                </div>
-
-                <!-- Speed & Controls -->
-                <div class="flex items-center gap-2 sm:gap-4">
-                    <select data-language-switch aria-label="Language" class="language-switch" style="max-width: 110px; padding: 6px; border: 1px solid #d1d5db; border-radius: 8px; background: white; color: #374151; font-size: 13px;" @change="locale = WebI18n.setLanguage($event.target.value)">
-                        {% include 'language_options.html' %}
-                    </select>
-                    <!-- Download Speed (desktop) -->
-                    <div class="hidden sm:flex items-center gap-2 text-sm text-gray-600">
-                        <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-                        </svg>
-                        <div class="flex flex-col">
-                            <span class="font-mono font-medium" x-text="downloadSpeed">0.00 B/s</span>
-                            <span class="text-xs text-gray-500" x-text="t('Active streams: {count}', {count: activeStreams})"></span>
-                        </div>
-                    </div>
-                    <!-- Download Speed (mobile) -->
-                    <div class="flex sm:hidden items-center gap-1.5">
-                        <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-                        </svg>
-                        <div class="flex flex-col text-xs">
-                            <span class="font-mono font-medium text-gray-700" x-text="downloadSpeed">0.00 B/s</span>
-                            <span class="text-gray-500" x-text="t('Active streams: {count}', {count: activeStreams})"></span>
-                        </div>
-                    </div>
-                    {% if web_login_required %}
-                    <form action="{{ url_for('logout') }}" method="post">
-                        <input type="hidden" name="csrf_token" value="{{ web_csrf_token }}">
-                        <button type="submit" class="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200"><span data-i18n="Sign out" x-text="t('Sign out')">Sign out</span></button>
-                    </form>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-        <div class="bot-connection max-w-7xl mx-auto px-4 sm:px-6 pb-3" role="status" aria-live="polite">
+    <header class="app-header safe-top">
+        {% with header_dashboard=true %}{% include 'page_header.html' %}{% endwith %}
+    </header>
+    <div class="dashboard-status page-container">
+        <div class="bot-connection" role="status" aria-live="polite">
             <span class="bot-connection-badge" :data-state="botStatus.status">
                 <span class="bot-connection-dot" aria-hidden="true"></span>
                 <span x-text="t('Telegram Bot')"></span>
@@ -129,9 +84,16 @@
             <span x-show="botStatus.status === 'flood_wait'"
                   x-text="t('Retry in {seconds}s', {seconds: botStatus.flood_wait_remaining})"></span>
         </div>
-    </header>
+        <div class="download-metrics">
+            <svg width="14" height="14" class="text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+            </svg>
+            <span class="font-mono font-medium" x-text="downloadSpeed">0.00 B/s</span>
+            <span x-text="t('Active streams: {count}', {count: activeStreams})"></span>
+        </div>
+    </div>
 
-    <form @submit.prevent="submitDownload()" class="submission-panel max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap gap-2">
+    <form @submit.prevent="submitDownload()" class="submission-panel page-container py-4 flex flex-wrap gap-2">
         <label for="download-url" class="sr-only" x-text="t('Telegram post link')"></label>
         <input id="download-url" type="url" required maxlength="2048" x-model="downloadUrl"
                placeholder="https://t.me/channel/123" :disabled="submitting"
@@ -143,7 +105,7 @@
 
     <!-- Tab Navigation (Desktop Only) -->
     <div class="hidden sm:block bg-white border-b border-gray-100 shadow-sm">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6">
+        <div class="page-container">
             <nav class="flex gap-0" role="tablist">
                 <button
                                     @click="activeTab = 'active'; selectedTasks = []"
@@ -207,7 +169,7 @@
 
     <!-- Batch Action Bar -->
     <div x-show="selectedTasks.length > 0" x-transition class="batch-bar bg-blue-50 border-b border-blue-100">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between">
+        <div class="page-container py-2.5 flex items-center justify-between">
             <span class="text-sm text-blue-700 font-medium" x-text="t('Selected: {count}', {count: selectedTasks.length})"></span>
             <div class="flex items-center gap-2">
                 <button x-show="activeTab === 'active'" @click="batchSetPaused(true)" :disabled="batchBusy || !canPauseSelected"
@@ -238,7 +200,7 @@
     </div>
 
     <!-- Main Content -->
-    <main class="dashboard-main max-w-7xl mx-auto px-4 sm:px-6 py-6">
+    <main class="dashboard-main page-container py-6">
         <div class="task-tools mb-5">
         <div class="task-search">
             <label for="task-search" class="sr-only" x-text="t('Search task ID or filename...')"></label>

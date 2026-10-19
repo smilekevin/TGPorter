@@ -1,6 +1,5 @@
 """Verify the release skill can be read without fetching project documentation."""
 
-import ast
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -16,6 +15,7 @@ from zipfile import ZipFile
 import yaml
 
 from tools.build_skill import build_skill
+from module.settings import FIELDS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +39,7 @@ class SkillReleaseTests(unittest.TestCase):
         self.assertEqual(set(self.files), {
             "tgporter/SKILL.md", "tgporter/references/deployment.md",
             "tgporter/references/release.md", "tgporter/release.json",
-            "tgporter/references/project/DEPLOY_EN.md", "tgporter/references/project/LICENSE",
+            "tgporter/references/project/DEPLOY.md", "tgporter/references/project/LICENSE",
             "tgporter/references/project/config.yaml.example",
             "tgporter/references/project/docker-compose.yaml",
         })
@@ -52,7 +52,7 @@ class SkillReleaseTests(unittest.TestCase):
         for source, destination in {
             "skills/tgporter/SKILL.md": "tgporter/SKILL.md",
             "skills/tgporter/references/deployment.md": "tgporter/references/deployment.md",
-            "DEPLOY_EN.md": "tgporter/references/project/DEPLOY_EN.md",
+            "DEPLOY.md": "tgporter/references/project/DEPLOY.md",
             "config.yaml.example": "tgporter/references/project/config.yaml.example",
             "LICENSE": "tgporter/references/project/LICENSE",
         }.items():
@@ -116,18 +116,18 @@ class SkillReleaseTests(unittest.TestCase):
     def test_release_build_does_not_depend_on_guide_headings_or_commands(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
-            for name in ("DEPLOY_EN.md", "LICENSE", "config.yaml.example", "docker-compose.yaml",
+            for name in ("DEPLOY.md", "LICENSE", "config.yaml.example", "docker-compose.yaml",
                          "skills/tgporter/SKILL.md", "skills/tgporter/references/deployment.md"):
                 target = directory / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / name).read_bytes())
-            guide = directory / "DEPLOY_EN.md"
+            guide = directory / "DEPLOY.md"
             guide.write_text("# Renamed installation guide\n\n```bash\ndocker image pull --quiet example:edge\n```\n")
             setup = directory / "skills/tgporter/references/deployment.md"
             setup.write_text("# Setup notes without predefined section headings\n")
             archive = build_skill(directory, directory / "output", tag=TAG, commit=COMMIT)
             with ZipFile(archive) as package:
-                self.assertEqual(package.read("tgporter/references/project/DEPLOY_EN.md"), guide.read_bytes())
+                self.assertEqual(package.read("tgporter/references/project/DEPLOY.md"), guide.read_bytes())
                 self.assertEqual(package.read("tgporter/references/deployment.md"), setup.read_bytes())
                 self.assertIn(f"docker pull {IMAGE}:{TAG}", package.read("tgporter/references/release.md").decode())
 
@@ -135,30 +135,21 @@ class SkillReleaseTests(unittest.TestCase):
         skill = self.files["tgporter/SKILL.md"].decode()
         setup = self.files["tgporter/references/deployment.md"].decode()
         self.assertIn("references/release.md", skill)
-        self.assertIn("project/DEPLOY_EN.md#parameters", setup)
+        self.assertIn("project/DEPLOY.md#parameters", setup)
         self.assertIn("project/config.yaml.example", setup)
         self.assertIn("../release.json", setup)
         self.assertIn("Inspect the connected MCP definitions", skill)
         self.assertNotIn("openai.yaml", "\n".join(self.files))
+        release = self.files["tgporter/references/release.md"].decode()
+        self.assertIn("/configuration", release)
+        self.assertIn("docker compose up -d tgporter", release)
+        self.assertNotIn("docker compose run --rm", release)
+        self.assertNotIn("interactive Telegram login", release)
 
     def test_both_language_parameter_references_cover_configurable_fields(self):
-        keys = set(yaml.safe_load(self.files["tgporter/references/project/config.yaml.example"]))
-        for node in ast.walk(ast.parse((ROOT / "module/app.py").read_text())):
-            if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
-                    and node.value.id == "_config" and isinstance(node.slice, ast.Constant)):
-                keys.add(node.slice.value)
-            if not isinstance(node, ast.Call):
-                continue
-            if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "_config" and node.func.attr == "get"
-                    and node.args and isinstance(node.args[0], ast.Constant)):
-                keys.add(node.args[0].value)
-            if (isinstance(node.func, ast.Name) and node.func.id == "get_config"
-                    and len(node.args) > 1 and isinstance(node.args[0], ast.Name)
-                    and node.args[0].id == "_config" and isinstance(node.args[1], ast.Constant)):
-                keys.add(node.args[1].value)
-        text = self.files["tgporter/references/project/DEPLOY_EN.md"].decode()
-        for language, section in (("Chinese", (ROOT / "DEPLOY.md").read_text().split("### 配置参数说明", 1)[1]),
+        keys = set(FIELDS)
+        text = self.files["tgporter/references/project/DEPLOY.md"].decode()
+        for language, section in (("Chinese", (ROOT / "DEPLOY_CN.md").read_text().split("### 配置参数说明", 1)[1]),
                                   ("English", text.split("### Parameters", 1)[1])):
             documented = set(re.findall(r"^\| `([^`]+)` \|", section, re.M))
             self.assertFalse(keys - documented, f"{language} undocumented keys: {keys - documented}")
@@ -170,7 +161,7 @@ class SkillReleaseTests(unittest.TestCase):
 
     def test_repeated_build_is_identical_and_does_not_edit_sources(self):
         original_archive = self.archive.read_bytes()
-        inputs = [ROOT / "DEPLOY.md", ROOT / "DEPLOY_EN.md", ROOT / "README.md", ROOT / "docker-compose.yaml",
+        inputs = [ROOT / "DEPLOY_CN.md", ROOT / "DEPLOY.md", ROOT / "README.md", ROOT / "docker-compose.yaml",
                   ROOT / "skills/tgporter/references/deployment.md"]
         original = {path: path.read_bytes() for path in inputs}
         build_skill(ROOT, self.directory.name, tag=TAG, commit=COMMIT, digest=DIGEST)

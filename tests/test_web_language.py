@@ -27,10 +27,13 @@ const vm = require('node:vm');
 function boot(languages, saved, blocked = false, title = 'Sign in - TG Porter') {
     const label = { dataset: { i18n: 'Downloading' }, textContent: '' };
     const select = { value: '', addEventListener() {} };
+    const icon = { dataset: { i18nLabel: 'Configuration' }, textContent: '<svg></svg>', attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value; } };
     const document = {
         documentElement: {}, title,
         getElementById: () => ({textContent: JSON.stringify(PAYLOAD)}),
-        querySelectorAll: selector => selector === '[data-i18n]' ? [label] : [select],
+        querySelectorAll: selector => ({ '[data-i18n]': [label], '[data-i18n-label]': [icon],
+                                        '[data-language-switch]': [select] }[selector] || []),
         addEventListener: (event, callback) => callback(),
     };
     const storage = new Map(saved ? [['web_language', saved]] : []);
@@ -42,7 +45,7 @@ function boot(languages, saved, blocked = false, title = 'Sign in - TG Porter') 
         },
     };
     vm.runInNewContext(SOURCE, context);
-    return { api: context.window.WebI18n, document, label, select, storage };
+    return { api: context.window.WebI18n, document, label, select, storage, icon };
 }
 for (const [languages, expected] of [
     [['zh-TW'], 'zh-tw'], [['zh-Hans-CN'], 'zh-cn'], [['zh-Hant-TW'], 'zh-tw'], [['zh'], 'zh-cn'], [['en-US'], 'en'], [['ru-RU'], 'ru'], [['uk-UA'], 'uk'],
@@ -79,6 +82,12 @@ assert.equal(denied.api.language, 'ru');
 assert.equal(denied.api.setLanguage('en'), 'en');
 assert.equal(boot(['uk-UA'], 'ua').api.language, 'uk');
 const dashboard = boot(['en-US'], null, false, 'TG Porter');
+assert.equal(dashboard.icon.attributes['aria-label'], 'Configuration');
+assert.equal(dashboard.icon.attributes.title, 'Configuration');
+dashboard.api.setLanguage('zh-cn');
+assert.equal(dashboard.icon.attributes['aria-label'], '配置');
+assert.equal(dashboard.icon.attributes.title, '配置');
+assert.equal(dashboard.icon.textContent, '<svg></svg>');
 dashboard.api.setLanguage('uk');
 assert.equal(dashboard.document.title, 'TG Porter');
 """.replace("SOURCE", json.dumps(source)).replace("PAYLOAD", json.dumps({"catalogs": CATALOGS, "aliases": ALIASES, "patterns": MESSAGE_PATTERNS}))

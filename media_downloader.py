@@ -1294,7 +1294,7 @@ def _check_config() -> bool:
 
         load_downloads()
     except Exception as e:
-        logger.exception(f"load config error: {e}")
+        logger.error("Unable to load application settings ({})", type(e).__name__)
         return False
     return True
 
@@ -1900,7 +1900,7 @@ async def stop_server(client: pyrogram.Client):
     await client.stop()
 
 
-def main():
+def main(terminal_login=False):
     """Main function"""
     # ── Patch A: Increase TCP timeout to 900s (15 min) ──
     # Pyrogram default TCP.TIMEOUT=10s causes reconnect storms when TG throttles
@@ -1970,48 +1970,76 @@ def main():
     _PMsg._parse = _safe_msg_parse
     logger.info("Patched Message._parse: ChannelInvalid no longer drops updates")
 
+    from module.telegram_login import TelegramLogin
     tasks = []
-    client = HookClient(
-        "media_downloader", api_id=app.api_id, api_hash=app.api_hash,
-        proxy=app.proxy or None, workdir=app.session_file_path,
-        start_timeout=app.start_timeout, no_updates=False,
-    )
-    try:
-        app.pre_run()
-        _cleanup_stale_temp_files()
-        init_web(app)
-        set_max_concurrent_transmissions(client, app.max_concurrent_transmissions)
-        app.loop.run_until_complete(start_server(client))
-        # Create queue AFTER event loop is running to ensure it binds to the
-        # correct loop. Creating asyncio.Queue at module import time (before
-        # loop starts) can cause put/get to use different loop references,
-        # resulting in workers never receiving items.
+
+    async def stop_backend(client):
+        """Stop consumers and writers before closing the session; retain checkpoints."""
         global queue
-        queue = _DownloadQueue(client)
-        logger.success(_t("Successfully started (Press Ctrl+C to stop)"))
-        app.loop.create_task(download_all_chat(client))
-        logger.info("File workers start on demand (max_download_task={})", app.max_download_task)
-        # Start the shared silent-throttling recovery monitor.
-        tasks.append(app.loop.create_task(_throttle_restart_loop(client)))
-        if app.bot_token:
-            app.loop.run_until_complete(start_download_bot(app, client, add_download_task, download_chat_task))
-        else:
-            app.loop.run_until_complete(start_download_backend(app, client, add_download_task, download_chat_task))
+        try:
+            await stop_download_bot()
+        except Exception as error:
+            logger.warning("Bot shutdown during reconfiguration failed ({})", type(error).__name__)
+        if isinstance(queue, _DownloadQueue):
+            await queue.stop()
+        queue = None
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        tasks.clear()
+        if client.is_initialized:
+            await stop_server(client)
+        elif client.is_connected:
+            await client.disconnect()
+        from module.bot import _bot
+        _bot.client = _bot.bot = None
+        _main_client_ref["client"] = None
+        save_downloads()
+        app.save_app_data()
+
+    async def start_backend(client):
+        global queue
+        try:
+            app.cloud_drive_config.pre_run()
+            set_max_concurrent_transmissions(client, app.max_concurrent_transmissions)
+            await start_server(client)
+            queue = _DownloadQueue(client)
+            if app.bot_token:
+                await start_download_bot(app, client, add_download_task, download_chat_task)
+            else:
+                await start_download_backend(app, client, add_download_task, download_chat_task)
+            tasks.append(asyncio.create_task(download_all_chat(client)))
+            tasks.append(asyncio.create_task(_throttle_restart_loop(client)))
+            logger.success(_t("Successfully started (Press Ctrl+C to stop)"))
+        except BaseException:
+            await stop_backend(client)
+            raise
+
+    monitor = None
+    try:
+        app.pre_run(initialize_upload=False)
+        _cleanup_stale_temp_files()
+        app.telegram_login = TelegramLogin(app, start_backend, stop_backend)
+        if terminal_login:
+            monitor = app.loop.create_task(app.telegram_login.login_in_terminal())
+            app.loop.run_until_complete(monitor)
+        init_web(app)
+        monitor = app.loop.create_task(app.telegram_login.run())
         _exec_loop()
     except KeyboardInterrupt:
         logger.info(_t("KeyboardInterrupt"))
     except Exception as e:
         logger.exception("{}", e)
+        if terminal_login:
+            raise SystemExit(1) from None
     finally:
         app.is_running = False
+        if monitor is not None:
+            monitor.cancel()
+            app.loop.run_until_complete(asyncio.gather(monitor, return_exceptions=True))
+        if app.telegram_login and app.telegram_login.client is not None:
+            app.loop.run_until_complete(app.telegram_login._close())
         save_downloads()
-        app.loop.run_until_complete(stop_download_bot())
-        if isinstance(queue, _DownloadQueue):
-            app.loop.run_until_complete(queue.stop())
-        for task in tasks:
-            task.cancel()
-        app.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-        app.loop.run_until_complete(stop_server(client))
         logger.info(_t("Stopped"))
         logger.info("Saving runtime data to data/data.json")
         app.save_app_data()
@@ -2023,5 +2051,10 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Download Telegram media with TG Porter")
+    parser.add_argument("--login", action="store_true",
+                        help="Complete Telegram login in the terminal before starting the WebUI")
+    arguments = parser.parse_args()
     if _check_config():
-        main()
+        main(terminal_login=arguments.login)

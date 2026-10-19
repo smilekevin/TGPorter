@@ -72,5 +72,6 @@ config.yaml
 data.yaml
 data/
 data.json
+settings.json
 *.scss
 *.css.map
