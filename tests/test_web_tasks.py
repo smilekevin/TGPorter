@@ -77,6 +77,28 @@ class WebTaskTests(unittest.TestCase):
         self.assertEqual(completed[0]['active_streams'], 0)
         self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 0)
 
+    def test_rounded_progress_does_not_complete_a_file_before_its_last_byte(self):
+        record = download_stat._download_result[1][2]
+        total = 100 * 1024 * 1024
+        record.update(total_size=total, down_byte=total - 1, progress=100.0,
+                      download_speed=0, start_time=1, end_time=1)
+        active = self.client.get('/get_download_list?already_down=false').json
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]['status'], 'active')
+        self.assertEqual(active[0]['download_progress_raw'], 99.9)
+        self.assertEqual(self.client.get('/get_completed_count').json['total'], 0)
+        self.assertEqual(self.client.get('/get_download_list?already_down=true').json['tasks'], [])
+        self.post('/pause_task?task_id=1_2')
+        self.assertEqual(self.client.get('/get_download_list?already_down=false').json[0]['status'], 'paused')
+        self.post('/resume_task?task_id=1_2')
+        record['down_byte'] = total
+        self.assertEqual(self.client.get('/get_download_list?already_down=false').json, [])
+        completed = self.client.get('/get_download_list?already_down=true').json
+        self.assertEqual(completed['total'], 1)
+        self.assertEqual(completed['tasks'][0]['status'], 'completed')
+        self.assertEqual(completed['tasks'][0]['download_progress_raw'], 100)
+        self.assertEqual(self.client.get('/get_completed_count').json['total'], 1)
+
     def test_submission_validates_json_and_link_without_touching_telegram(self):
         self.assertEqual(self.client.post('/submit_download', json={'url': 'https://t.me/a/1'}).status_code, 400)
         for payload in (None, [], 'text'):

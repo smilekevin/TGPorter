@@ -78,7 +78,20 @@ def index():
 def get_download_list():
     already_down = request.args.get("already_down") == "true"
     data = MOCK_COMPLETED if already_down else MOCK_ACTIVE
+    if already_down:
+        query = request.args.get("search", "").strip().lower()
+        data = [task for task in data if not query or query in
+                f"{task['task_id']} {task['filename']}".lower()]
+        offset = max(0, request.args.get("offset", 0, type=int))
+        limit = max(0, request.args.get("limit", 0, type=int))
+        tasks = data[offset:offset + limit] if limit else data
+        return jsonify(tasks=tasks, total=len(data), offset=offset, limit=limit)
     return Response(json.dumps(data), mimetype='application/json')
+
+
+@app.route("/get_completed_count")
+def get_completed_count():
+    return jsonify(total=len(MOCK_COMPLETED))
 
 @app.route("/get_failed_downloads")
 def get_failed_downloads():

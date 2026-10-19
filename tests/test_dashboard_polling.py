@@ -263,13 +263,13 @@ vm.runInContext(SOURCE, context);
     app.taskSearch = 'new';
     app.onTaskSearchInput();
     assert.equal(app.selectedTasks.length, 0);
-    release({tasks:[{task_id:'old', download_progress_raw:100}], total:1});
+    release({tasks:[{task_id:'old', status:'completed', download_progress_raw:100}], total:1});
     await outdated;
     assert.equal(app.completedTasks.length, 0, 'old responses must not replace the new search');
     app.completedLoading = false;
     context.authenticatedFetch = async url => {
         assert.ok(url.includes('search=new'));
-        return {json: async () => ({tasks:[{task_id:'new', download_progress_raw:100}], total:1})};
+        return {json: async () => ({tasks:[{task_id:'new', status:'completed', download_progress_raw:100}], total:1})};
     };
     await app.loadMoreCompleted();
     assert.equal(app.completedTasks[0].task_id, 'new');

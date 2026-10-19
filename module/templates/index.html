@@ -136,7 +136,7 @@
                                     </span>
                                 </button>
                                 <button
-                                    @click="activeTab = 'completed'; selectedTasks = []"
+                                    @click="showCompleted()"
                                     class="px-4 py-3 text-sm font-medium transition-colors relative"
                                     :class="activeTab === 'completed' ? 'tab-active' : 'tab-inactive'"
                                     :aria-selected="activeTab === 'completed'"
@@ -970,6 +970,9 @@
             pendingRequestId: 0,
             taskSearchTimer: null,
             completedLastTotal: 0,
+            completedPolling: false,
+            completedRefreshPending: false,
+            completedRefreshVersion: 0,
             scrollListener: null,
             toast: { show: false, message: '', type: 'success' },
             batchBusy: false,
@@ -1055,7 +1058,7 @@
                         lastPending = now;
                         requests.push(this.pollPendingRefresh(), this.fetchFailed());
                     }
-                    if (now - lastCompleted >= 10000) {
+                    if (this.completedRefreshPending || now - lastCompleted >= 10000) {
                         lastCompleted = now;
                         requests.push(this.pollCompletedCount());
                     }
@@ -1075,7 +1078,7 @@
                 const scrollHeight = document.documentElement.scrollHeight;
                 const clientHeight = document.documentElement.clientHeight;
                 if (this.activeTab === 'completed') {
-                    if (this.completedLoading || !this.completedHasMore) return;
+                    if (this.completedLoading || (!this.taskSearch && this.completedPolling) || !this.completedHasMore) return;
                     if (scrollTop + clientHeight >= scrollHeight - 300) {
                         this.loadMoreCompleted();
                     }
@@ -1088,55 +1091,86 @@
                 }
             },
 
-            async pollCompletedCount() {
-                if (this.taskSearch) return; // Don't poll during search
+            async showCompleted() {
+                this.activeTab = 'completed';
+                this.selectedTasks = [];
+                if (this.taskSearch) await this.fetchCompleted(true);
+                else await this.pollCompletedCount(true);
+            },
+
+            async pollCompletedCount(force = false) {
+                if (force) {
+                    this.completedRefreshPending = true;
+                    this.completedRefreshVersion++;
+                }
+                if (this.taskSearch || this.completedPolling || this.completedLoading) return;
+                this.completedPolling = true;
                 const requestId = this.completedRequestId;
+                const version = this.completedRefreshVersion;
+                const refresh = this.completedRefreshPending;
+                // Keep failed or invalidated refreshes eligible for the next poll.
+                this.completedRefreshPending = true;
                 try {
                     const res = await authenticatedFetch('/get_completed_count');
+                    if (res.ok === false) throw new Error('Completed count request failed');
                     const data = await res.json();
                     if (this.taskSearch || requestId !== this.completedRequestId) return;
-                    const newTotal = data.total;
-                    if (newTotal > this.completedLastTotal) {
-                        const diff = newTotal - this.completedLastTotal;
-                        this.completedLastTotal = newTotal;
-                        this.completedTotal = newTotal;
-                        // Fetch only the new items (prepend)
-                        const res2 = await authenticatedFetch(`/get_download_list?already_down=true&offset=0&limit=${diff}`);
-                        const data2 = await res2.json();
-                        if (this.taskSearch || requestId !== this.completedRequestId) return;
-                        const newTasks = (data2.tasks || data2).filter(t => t.download_progress_raw >= 100);
-                        // Prepend new tasks, avoid duplicates
-                        const existingIds = new Set(this.completedTasks.map(t => t.task_id));
-                        const fresh = newTasks.filter(t => !existingIds.has(t.task_id));
-                        if (fresh.length > 0) {
-                            this.completedTasks = [...fresh, ...this.completedTasks];
-                        }
+                    if (!Number.isInteger(data.total) || data.total < 0) throw new Error('Invalid completed count');
+                    if (!refresh && data.total === this.completedLastTotal) {
+                        if (version === this.completedRefreshVersion) this.completedRefreshPending = false;
+                        return;
                     }
-                } catch(e) {}
+                    // Refresh a bounded head page. Counts may change between the
+                    // two requests, so a count delta cannot identify missing rows.
+                    const res2 = await authenticatedFetch(`/get_download_list?already_down=true&offset=0&limit=${this.completedLimit}`);
+                    if (res2.ok === false) throw new Error('Completed list request failed');
+                    const data2 = await res2.json();
+                    if (this.taskSearch || requestId !== this.completedRequestId) return;
+                    const tasks = data2.tasks || data2;
+                    if (!Array.isArray(tasks) || !Number.isInteger(data2.total) || data2.total < 0) throw new Error('Invalid completed list');
+                    const head = tasks.filter(task => task.status === 'completed');
+                    // Preserve older loaded pages only when the head page joins
+                    // them. A large burst must not leave a gap in pagination.
+                    const anchor = head.length ? this.completedTasks.findIndex(task =>
+                        task.task_id === head[head.length - 1].task_id) : -1;
+                    const tail = tasks.length === this.completedLimit && anchor >= 0 ?
+                        this.completedTasks.slice(anchor + 1) : [];
+                    const ids = new Set(head.map(task => task.task_id));
+                    this.completedTasks = [...head, ...tail.filter(task => !ids.has(task.task_id))];
+                    this.completedOffset = this.completedTasks.length;
+                    this.completedTotal = data2.total;
+                    this.completedLastTotal = data2.total;
+                    this.completedHasMore = this.completedOffset < this.completedTotal;
+                    if (version === this.completedRefreshVersion) this.completedRefreshPending = false;
+                } catch(e) {
+                    // Do not acknowledge a new count until its rows are loaded.
+                } finally {
+                    this.completedPolling = false;
+                }
             },
 
             async loadMoreCompleted() {
-                if (this.completedLoading || !this.completedHasMore) return;
+                if (this.completedLoading || (!this.taskSearch && this.completedPolling) || !this.completedHasMore) return;
                 this.completedLoading = true;
                 const requestId = ++this.completedRequestId;
                 const query = this.taskSearch;
+                const offset = this.completedOffset;
                 try {
                     const searchParam = query ? `&search=${encodeURIComponent(query)}` : '';
                     const res = await authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedOffset}&limit=${this.completedLimit}${searchParam}`);
+                    if (res.ok === false) throw new Error('Completed page request failed');
                     const data = await res.json();
                     if (query !== this.taskSearch || requestId !== this.completedRequestId) return;
                     const tasks = data.tasks || data;
-                    const newTasks = tasks.filter(t => t.download_progress_raw >= 100);
+                    const newTasks = tasks.filter(t => t.status === 'completed');
                     // Deduplicate against existing tasks
                     const existingIds = new Set(this.completedTasks.map(t => t.task_id));
                     const fresh = newTasks.filter(t => !existingIds.has(t.task_id));
                     this.completedTasks = [...this.completedTasks, ...fresh];
                     this.completedOffset += tasks.length;
-                    this.completedTotal = data.total || this.completedTasks.length;
-                    this.completedLastTotal = this.completedTotal;
-                    if (tasks.length < this.completedLimit) {
-                        this.completedHasMore = false;
-                    }
+                    this.completedTotal = data.total ?? this.completedTasks.length;
+                    if (!query && offset === 0) this.completedLastTotal = this.completedTotal;
+                    this.completedHasMore = this.completedOffset < this.completedTotal;
                 } catch(e) {}
                 if (requestId === this.completedRequestId) this.completedLoading = false;
             },
@@ -1159,6 +1193,7 @@
             },
 
             resetCompletedList() {
+                this.completedRequestId++;
                 this.completedTasks = [];
                 this.completedOffset = 0;
                 this.completedHasMore = true;
@@ -1246,7 +1281,13 @@
                 try {
                     const res = await authenticatedFetch('/get_download_list?already_down=false');
                     const data = await res.json();
-                    const newTasks = data.filter(t => t.download_progress_raw < 100);
+                    if (res.ok === false || !Array.isArray(data)) throw new Error('Active list request failed');
+                    const newTasks = data.filter(task => task.status !== 'completed');
+                    const ids = new Set(newTasks.map(task => task.task_id));
+                    if (this.activeTasks.some(task => !ids.has(task.task_id))) {
+                        if (this.taskSearch && !this.completedLoading) await this.fetchCompleted(true);
+                        else await this.pollCompletedCount(true);
+                    }
                     // Smart merge: update existing tasks in-place instead of replacing
                     // the entire array. Alpine's Proxy reactivity only re-renders DOM
                     // elements whose bound values actually changed (speed, ETA, progress),
@@ -1268,6 +1309,7 @@
 
             async fetchCompleted(reset = false) {
                 if (reset) {
+                    this.completedRequestId++;
                     this.completedTasks = [];
                     this.completedOffset = 0;
                     this.completedHasMore = true;
@@ -1606,33 +1648,14 @@
                             this.selectedTasks = [];
                             // Remove deleted tasks from all local arrays immediately
                             const deleteIds = new Set(dm.taskIds);
-                            const deletedCount = dm.taskIds.length;
                             this.completedTasks = this.completedTasks.filter(t => !deleteIds.has(t.task_id));
                             this.activeTasks = this.activeTasks.filter(t => !deleteIds.has(t.task_id));
                             this.pendingTasks = this.pendingTasks.filter(t => !deleteIds.has(t.task_id));
                             this.failedTasks = this.failedTasks.filter(t => !deleteIds.has(t.task_id));
-                            // Reload equivalent number of new items (cap 100)
-                            const reloadLimit = Math.min(deletedCount, 100);
-                            if (this.completedHasMore && reloadLimit > 0) {
-                                const searchParam = this.taskSearch ? `&search=${encodeURIComponent(this.taskSearch)}` : '';
-                                authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=${reloadLimit}${searchParam}`)
-                                    .then(r => r.json()).then(d => {
-                                        const tasks = d.tasks || d;
-                                        const existingIds = new Set(this.completedTasks.map(t => t.task_id));
-                                        const fresh = tasks.filter(t => t.download_progress_raw >= 100 && !existingIds.has(t.task_id));
-                                        this.completedTasks = [...this.completedTasks, ...fresh];
-                                        this.completedOffset = this.completedTasks.length;
-                                        this.completedTotal = d.total || this.completedTotal;
-                                        this.completedLastTotal = this.completedTotal;
-                                    }).catch(() => {});
-                            } else {
-                                this.completedOffset = this.completedTasks.length;
-                            }
-                            // Update total count from server
-                            authenticatedFetch('/get_completed_count').then(r => r.json()).then(d => {
-                                this.completedTotal = d.total;
-                                this.completedLastTotal = this.completedTotal;
-                            }).catch(() => {});
+                            this.completedRequestId++;
+                            this.completedLoading = false;
+                            if (this.taskSearch) await this.fetchCompleted(true);
+                            else await this.pollCompletedCount(true);
                         } else {
                             this.showToast(data.message || WebI18n.t('Deletion failed'), 'error');
                         }
@@ -1660,25 +1683,10 @@
                             this.activeTasks = this.activeTasks.filter(t => t.task_id !== tid);
                             this.pendingTasks = this.pendingTasks.filter(t => t.task_id !== tid);
                             this.failedTasks = this.failedTasks.filter(t => t.task_id !== tid);
-                            if (this.completedHasMore) {
-                                const searchParam = this.taskSearch ? `&search=${encodeURIComponent(this.taskSearch)}` : '';
-                                authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedTasks.length}&limit=1${searchParam}`)
-                                    .then(r => r.json()).then(d => {
-                                        const tasks = d.tasks || d;
-                                        const existingIds = new Set(this.completedTasks.map(t => t.task_id));
-                                        const fresh = tasks.filter(t => t.download_progress_raw >= 100 && !existingIds.has(t.task_id));
-                                        this.completedTasks = [...this.completedTasks, ...fresh];
-                                        this.completedOffset = this.completedTasks.length;
-                                        this.completedTotal = d.total || this.completedTotal;
-                                        this.completedLastTotal = this.completedTotal;
-                                    }).catch(() => {});
-                            } else {
-                                this.completedOffset = this.completedTasks.length;
-                            }
-                            authenticatedFetch('/get_completed_count').then(r => r.json()).then(d => {
-                                this.completedTotal = d.total;
-                                this.completedLastTotal = this.completedTotal;
-                            }).catch(() => {});
+                            this.completedRequestId++;
+                            this.completedLoading = false;
+                            if (this.taskSearch) await this.fetchCompleted(true);
+                            else await this.pollCompletedCount(true);
                         } else {
                             this.showToast(data.message || WebI18n.t('Deletion failed'), 'error');
                         }
@@ -1772,7 +1780,7 @@
             </button>
 
             <!-- Completed -->
-            <button @click="activeTab = 'completed'; selectedTasks = []"
+            <button @click="showCompleted()"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
                     :class="activeTab === 'completed' ? 'text-green-600' : 'text-gray-400'">
                 <span class="relative">
