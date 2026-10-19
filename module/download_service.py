@@ -400,6 +400,9 @@ class DownloadService:
                 progress = value.get("progress", 0)
                 if not progress and value["total_size"] > 0:
                     progress = round(value["down_byte"] / value["total_size"] * 100, 1)
+                # Display rounding must never imply that an unfinished file is complete.
+                if not is_already_down:
+                    progress = min(progress, 99.9)
 
                 # Staleness check: if speed hasn't been updated in 3s (no Pyrogram callback), show 0
                 import time as _now
