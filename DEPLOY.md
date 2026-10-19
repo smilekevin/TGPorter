@@ -101,7 +101,7 @@ Mock mode does not connect to Telegram or save settings. To test Configuration a
 
 ### Web Configuration and Interactive Login (preferred)
 
-Use the header icons to switch between downloads and Configuration. **Sign out** ends your web login. See the [screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
+Use the header icons to switch between downloads and Configuration. Configuration dropdowns and single-line inputs use matching heights. **Sign out** ends your web login. See the [screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
 
 Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
 
@@ -157,7 +157,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `mcp_token` | MCP-only bearer token; printable ASCII without whitespace; required when MCP is enabled | `""` |
 | `mcp_read_only` | Expose only MCP query tools without restricting separate browser sessions | `false` |
 | `mcp_allowed_hosts` | Additional allowed Host values: domain/IP with optional port; localhost/loopback already allowed | `[]` |
-| `log_level` | Advanced dropdown: `TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARNING`, `ERROR`, `CRITICAL`; requires restart after saving | `"INFO"` |
+| `log_level` | Advanced dropdown immediately before Web debug logging: `TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARNING`, `ERROR`, `CRITICAL`; requires restart after saving | `"INFO"` |
 | `start_timeout` | Main Telegram session startup timeout in seconds; does not limit normal media transfers | `60` |
 | `max_concurrent_transmissions` | 0 calculates capacity automatically; nonzero overrides SDK transport capacity | `0` |
 | `upload_drive` | Optional cloud-upload configuration; nested fields are below | `{}` |

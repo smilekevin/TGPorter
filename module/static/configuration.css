@@ -18,6 +18,7 @@ label { display: block; margin-bottom: 7px; font-weight: 600; }
 label small { color: #16805c; font-size: 10px; margin-left: 8px; font-weight: 500; }
 input, textarea, select, button { font: inherit; }
 input:not([type=checkbox]), textarea, select { width: 100%; padding: 10px 12px; border: 1px solid #ced8e5; border-radius: 8px; color: #17243b; background: #fff; }
+#settings-form input:not([type=checkbox]), #settings-form select { height: calc(1.6em + 22px); }
 textarea { resize: vertical; font: 12px/1.65 ui-monospace, SFMono-Regular, monospace; }
 input:focus, textarea:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px solid #bdd4ff; outline-offset: 2px; }
 input[type=checkbox] { width: 18px; height: 18px; accent-color: #2563eb; }
