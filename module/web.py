@@ -3,7 +3,9 @@
 import datetime
 import hmac
 import logging
+import os
 import secrets
+import tempfile
 import threading
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -51,6 +53,31 @@ def run_web_server(app: Application, asgi_app=None):
                 access_log=False, proxy_headers=False)
 
 
+def _load_session_key(data_path):
+    """Reuse a private signing key so browser sessions survive service restarts."""
+    os.makedirs(data_path, exist_ok=True)
+    path = os.path.join(data_path, "web_session.key")
+    if not os.path.exists(path):
+        with tempfile.NamedTemporaryFile(dir=data_path, prefix=".web-session-", delete=False) as stream:
+            temporary = stream.name
+            try:
+                stream.write(secrets.token_bytes(32))
+                stream.flush()
+                os.fsync(stream.fileno())
+                # Publish only a complete key, without replacing another initializer's key.
+                try:
+                    os.link(temporary, path)
+                except FileExistsError:
+                    pass
+            finally:
+                os.unlink(temporary)
+    with open(path, "rb") as stream:
+        key = stream.read(33)
+    if len(key) != 32:
+        raise ValueError("Invalid Web session signing key")
+    return key
+
+
 def create_web_app(app: Application):
     """Build the production listener; MCP calls shared operations without HTTP."""
     from contextlib import asynccontextmanager
@@ -76,6 +103,8 @@ def create_web_app(app: Application):
         from module.mcp_server import create_http_app, create_server
         server = create_server(_download_service(), read_only=getattr(app, "mcp_read_only", False))
         mcp_app = create_http_app(server, app)
+
+    _flask_app.secret_key = _load_session_key(app.data_path)
 
     @asynccontextmanager
     async def lifespan(_):

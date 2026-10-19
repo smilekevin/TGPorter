@@ -28,6 +28,7 @@ class MCPSubmitDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
         self.app = SimpleNamespace(
+            data_path=str(self.path),
             loop=asyncio.get_running_loop(), max_download_task=2,
             web_login_secret="browser-secret", mcp_token="agent-secret", mcp_enabled=True,
             mcp_read_only=False, mcp_allowed_hosts=[],
@@ -50,6 +51,7 @@ class MCPSubmitDownloadTests(unittest.IsolatedAsyncioTestCase):
         for item in (
             patch.object(bot, "_bot", self.bot),
             patch.object(web, "_app", self.app),
+            patch.dict(web.get_flask_app().config),
             patch.object(task_store, "_TASKS_FILE", str(self.path / "tasks.json")),
             patch.object(task_store, "_COUNTER_FILE", str(self.path / "counter.json")),
             patch.object(download_stat, "_HISTORY_FILE", str(self.path / "history.json")),

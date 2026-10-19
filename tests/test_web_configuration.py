@@ -26,6 +26,9 @@ class WebConfigurationTests(unittest.TestCase):
         self.app.telegram_login = SimpleNamespace(client=None, ready=False,
             status=lambda: {"state": "logged_out", "busy": False}, submit=AsyncMock(return_value={"busy": True}))
         self.flask = web.get_flask_app()
+        flask_config = patch.dict(self.flask.config)
+        flask_config.start()
+        self.addCleanup(flask_config.stop)
         self.patch = patch.object(web, "_app", self.app)
         self.patch.start()
         web.create_web_app(self.app)
