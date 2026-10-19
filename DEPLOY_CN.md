@@ -123,6 +123,8 @@ Mock 不连接 Telegram，也不保存设置。需要测试 Configuration 和登
 
 通过 **Configuration** 管理 Telegram 登录、下载、网页访问和 MCP。设置保存到 `data/settings.json`，请勿在服务运行时手动编辑。已保存的密码和 Token 留空即可保留原值。Telegram 验证码和两步验证密码不会保存。
 
+仪表盘**已跳过**保留原因和当时的 Filter，重启后可查看。**下载**绕过下载 Filter、媒体类型及格式限制；**删除**仅移除记录。Bot 显示跳过原因，完整文件已存在时显示**已完成（文件已存在）**。
+
 ### config.yaml (可选)
 
 也可以在首次启动前复制 [config.yaml.example](./config.yaml.example) 为工作目录中的 `config.yaml`，按下方参数表填写 API 凭据、账号模式、下载设置及所需代理：
@@ -155,6 +157,7 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `media_types` | 下载的媒体类型列表 | `["audio", "document", "photo", "video", "voice", "animation"]` |
 | `file_formats` | audio/document/video 的扩展名列表，all 接受全部格式 | `{"audio": ["all"], "document": ["pdf", "epub"], "video": ["mp4"]}` |
 | `file_path_prefix` | 目录命名字段，空列表不添加目录字段 | `["chat_title", "media_datetime"]` |
+| `download_filters` | 默认下载表达式列表，按 OR 组合；最多 32 条，每条最多 4096 字符 | `[]` |
 | `file_name_prefix` | 文件命名字段，空列表使用消息 ID 回退 | `["file_name"]` |
 | `file_name_prefix_split` | 文件名各字段之间的分隔符 | `" - "` |
 | `hide_file_name` | 隐藏文件名（UI 显示 `****.mp4`） | `false` |
@@ -162,7 +165,7 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `drop_no_audio_video` | 已读取但目前不参与媒体过滤的兼容字段 | `false` |
 | `enable_download_txt` | 纯文本消息保存为 .txt | `false` |
 | `chat` | 可选的启动历史扫描配置列表，嵌套字段见下表；仅通过 MCP 提交单条任务时可省略 | `[]` |
-| `filter_advertisement_list` | 转发时跳过匹配内容的关键词列表 | `[]` |
+| `filter_advertisement_list` | Configuration → 下载中的广告关键词标签，命中任意一个（OR）即跳过转发 | `[]` |
 | `replace_advertisement_list` | 从转发说明文字中删除的文本列表 | `[]` |
 | `group_add_advertisement` | 按目标聊天 ID 映射的追加说明文字 | `{}` |
 | `forward_limit` | 转发调用的每 60 秒本地预算；不覆盖 Telegram 自身的 FLOOD_WAIT | `33` |
@@ -187,7 +190,7 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | --- | --- | --- |
 | `chat[].chat_id` | 扫描的聊天/频道 ID 或可解析的名称；每条扫描配置需要此字段 | — |
 | `chat[].last_read_message_id` | 扫描起点的已读消息 ID；运行数据中更靠后的检查点优先 | `0` |
-| `chat[].download_filter` | 此聊天的下载过滤表达式；空字符串不额外过滤 | `""` |
+| `chat[].download_filter` | 此聊天明确指定的下载表达式；空字符串继承 `download_filters` | `""` |
 | `chat[].upload_telegram_chat_id` | 下载后重新上传的 Telegram 目标；需有发送权限 | `null` |
 | `upload_drive.enable_upload_file` | 开启下载后的云盘上传 | `false` |
 | `upload_drive.rclone_path` | rclone 可执行文件路径；主镜像已内置到默认路径，手动安装需另行准备，启用前配置 remote | `./rclone/rclone`，Windows 带 `.exe` |
@@ -200,6 +203,14 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `proxy.port` | Telegram 代理端口，整数 | — |
 
 媒体类型、扩展名和命名字段通过勾选配置；可添加自定义扩展名，用箭头调整命名顺序。使用 Bot 命令时，请在**允许的用户**中添加自己的 Telegram 数字用户 ID。已登录的用户下载账号自动获准；Bot 模式下的 `me` 不能授权真人。频道通过 Bot 命令管理。
+
+#### 下载过滤规则
+
+在 **Configuration → 下载** 添加或移除下载表达式、广告关键词标签，最后点击**保存设置**。下载表达式添加时自动校验，支持的字段和示例可展开查看。
+
+下载 Filter 按 **OR** 匹配：任意一条为真即可，空列表不额外过滤；需要多个条件同时成立时，在单条规则内写 `and`。媒体类型和文件格式限制仍生效。广告关键词也是 **OR**：说明文字包含任意关键词即跳过转发，按普通文本匹配、区分大小写；点击标签 **×** 移除。
+
+默认规则无需重启，用于新下载任务；任务或频道明确指定的规则优先，已有任务保留原规则。`/add_filter`、`/add_ad`、`/remove_ad` 与页面共用设置，Bot 修改后刷新页面查看。有效性检查不访问 Telegram，也不测试真实消息。
 
 #### 设置生效
 

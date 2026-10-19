@@ -59,6 +59,103 @@ _PARSER = Lark(_GRAMMAR, parser="lalr", lexer="basic")
 _ARITHMETIC = {"+": operator.add, "-": operator.sub, "*": operator.mul, "/": operator.truediv}
 _COMPARISON = {">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le}
 
+MAX_FILTER_LENGTH = 4096
+MAX_DOWNLOAD_FILTERS = 32
+_TEXT_FIELDS = {"media_file_name", "file_name", "message_caption", "caption",
+                "media_type", "file_extension", "sender_name"}
+
+
+@v_args(inline=True)
+class _Validator(Transformer_NonRecursive):
+    """Check field types and literals without matching regexes against sample text."""
+
+    def number(self, value):
+        return int
+
+    def byte_size(self, value):
+        get_byte_from_str(str(value))
+        return int
+
+    def timestamp(self, value):
+        try:
+            datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            raise ValueError("Invalid filter date; use YYYY-MM-DD HH:MM:SS") from None
+        return datetime
+
+    def string(self, value):
+        return str
+
+    def regex_string(self, value):
+        try:
+            re.compile(str(value)[2:-1], re.MULTILINE)
+        except re.error:
+            raise ValueError("Invalid filter regular expression") from None
+        return ReString
+
+    def name(self, value):
+        name = str(value)
+        if name not in MetaData().data():
+            raise ValueError(f"Undefined name {name}")
+        return str if name in _TEXT_FIELDS else datetime if name == "message_date" else int
+
+    def negative(self, operation, value):
+        if value not in (int, float):
+            raise ValueError("Filter arithmetic requires numbers")
+        return value
+
+    def legacy_equal(self, name, right):
+        raise ValueError("Use == to compare filter values")
+
+    def binary(self, left, operation, right):
+        operation = str(operation)
+        if operation in ("and", "&&", "or", "||"):
+            if left is not bool or right is not bool:
+                raise ValueError("Filter logical operators require comparisons")
+            return bool
+        if (left is not right and {left, right} != {str, ReString}
+                and not (left is float and right is int)):
+            raise ValueError("Filter operands must have compatible types")
+        if operation in _ARITHMETIC:
+            if left not in (int, float) or right not in (int, float):
+                raise ValueError("Filter arithmetic requires numbers")
+            return float if operation == "/" else left
+        if operation in _COMPARISON and ReString in (left, right):
+            raise ValueError("Regular expressions require == or !=")
+        if left is ReString and right is ReString:
+            raise ValueError("Compare a regular expression with a text field")
+        return bool
+
+
+def validate_download_filter(expression: str) -> str:
+    """Validate one new editor rule without Telegram access or changing saved filters."""
+    if not isinstance(expression, str) or not expression.strip():
+        raise ValueError("Enter a filter expression")
+    if len(expression) > MAX_FILTER_LENGTH:
+        raise ValueError(f"Filter expression cannot exceed {MAX_FILTER_LENGTH} characters")
+    expression = expression.strip()
+    try:
+        tree = _PARSER.parse(expression)
+        result = _Validator().transform(tree)
+        # Constant zero divisors are invalid even in an eager boolean branch.
+        # Metadata-dependent arithmetic is checked when a message is processed.
+        for binary in tree.find_data("binary"):
+            right = binary.children[2]
+            if (str(binary.children[1]) == "/" and not list(right.find_data("name"))
+                    and _Evaluator({}).transform(right) == 0):
+                raise ValueError("Filter division by zero")
+    except UnexpectedInput as error:
+        raise ValueError(f"Invalid filter syntax at line {error.line}, column {error.column}") from None
+    except VisitError as error:
+        if isinstance(error.orig_exc, ZeroDivisionError):
+            raise ValueError("Filter division by zero") from None
+        raise ValueError(str(error.orig_exc)) from None
+    except ZeroDivisionError:
+        raise ValueError("Filter division by zero") from None
+    if result is not bool:
+        raise ValueError("Filter expression must return true or false")
+    return expression
+
 
 @v_args(inline=True)
 class _Evaluator(Transformer_NonRecursive):

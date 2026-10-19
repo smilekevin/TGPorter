@@ -23,6 +23,8 @@ FIELDS = {
     "save_path": ("./downloads", "Downloads", "Download directory"),
     "media_types": (["audio", "document", "photo", "video", "voice", "animation"], "Downloads", "Media types"),
     "file_formats": ({"audio": ["all"], "document": ["pdf", "epub"], "video": ["mp4"]}, "Downloads", "File formats"),
+    "download_filters": ([], "Downloads", "Download filters"),
+    "filter_advertisement_list": ([], "Downloads", "Advertisement keywords"),
     "file_path_prefix": (["chat_title", "media_datetime"], "Downloads", "Directory name fields"),
     "date_format": ("%Y_%m", "Downloads", "Media date format"),
     "file_name_prefix": (["file_name"], "Downloads", "File name fields"),
@@ -31,7 +33,6 @@ FIELDS = {
     "drop_no_audio_video": (False, "Downloads", "Skip videos without audio"),
     "enable_download_txt": (False, "Downloads", "Download message text"),
     "chat": ([], "Channels", "Channel scans"),
-    "filter_advertisement_list": ([], "Channels", "Advertisement filters"),
     "replace_advertisement_list": ([], "Channels", "Advertisement replacements"),
     "group_add_advertisement": ({}, "Channels", "Channel advertisements"),
     "forward_limit": (33, "Channels", "Forward limit"),
@@ -95,6 +96,11 @@ def validate_settings(values):
             raise ValueError(f"{key}: expected a list of strings")
     if not set(result["media_types"]) <= {"audio", "document", "photo", "video", "voice", "animation", "video_note", "sticker"}:
         raise ValueError("media_types: unsupported media type")
+    from module.filter import MAX_DOWNLOAD_FILTERS, validate_download_filter
+    if len(result["download_filters"]) > MAX_DOWNLOAD_FILTERS:
+        raise ValueError(f"Download filters cannot exceed {MAX_DOWNLOAD_FILTERS} rules")
+    result["download_filters"] = list(dict.fromkeys(
+        validate_download_filter(expression) for expression in result["download_filters"]))
     if not all(isinstance(k, str) and isinstance(v, list) and all(isinstance(x, str) for x in v)
                for k, v in result["file_formats"].items()):
         raise ValueError("file_formats: expected media types mapped to extension lists")

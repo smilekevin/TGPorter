@@ -134,6 +134,54 @@ class SettingsTests(unittest.TestCase):
         for secret in ("api-secret", "bot-secret", "mcp-secret", "web-secret", "proxy-secret"):
             self.assertNotIn(secret, content)
 
+    def test_download_defaults_combine_with_or_and_do_not_change_saved_task_rules(self):
+        from module.app import TaskNode
+        from utils.meta_data import MetaData
+        app = self.load()
+        self.assertEqual(app.resolve_download_filter(), "")
+        self.assertTrue(app.exec_filter(TaskNode(1, download_filter=""), MetaData()))
+        app.settings.save({"download_filters": ["media_file_size >= 100MB", "media_duration <= 600"]})
+        app.apply_live_settings()
+        node = TaskNode(1, download_filter=app.resolve_download_filter())
+        self.assertTrue(app.exec_filter(node, MetaData(media_file_size=150 * 1024**2, media_duration=300)))
+        self.assertTrue(app.exec_filter(node, MetaData(media_file_size=150 * 1024**2, media_duration=700)))
+        self.assertTrue(app.exec_filter(node, MetaData(media_file_size=50 * 1024**2, media_duration=300)))
+        self.assertFalse(app.exec_filter(node, MetaData(media_file_size=50 * 1024**2, media_duration=700)))
+        self.assertFalse(app.exec_filter(node, MetaData()))
+        self.assertEqual(app.resolve_download_filter("media_type == 'photo'"), "media_type == 'photo'")
+        app.settings.save({"download_filters": []})
+        app.apply_live_settings()
+        self.assertEqual(app.resolve_download_filter(), "")
+        self.assertIn("media_duration", node.download_filter)
+        self.assertEqual(self.load().download_filters, [])
+
+    def test_or_defaults_preserve_each_expression_grouping_and_explicit_and(self):
+        from module.app import TaskNode
+        from utils.meta_data import MetaData
+        app = self.load()
+        app.download_filters = ["media_file_size >= 100MB and media_duration <= 600", "media_type == 'photo'"]
+        node = TaskNode(1, download_filter=app.resolve_download_filter())
+        self.assertTrue(app.exec_filter(node, MetaData(media_type="photo")))
+        self.assertFalse(app.exec_filter(node, MetaData(media_type="video", media_file_size=150 * 1024**2, media_duration=700)))
+        self.assertTrue(app.exec_filter(node, MetaData(media_type="video", media_file_size=150 * 1024**2, media_duration=300)))
+
+    def test_invalid_download_rule_never_replaces_saved_settings(self):
+        app = self.load()
+        original = Path(app.settings.path).read_bytes()
+        for rules in (["unknown == 1"], [12], [""], ["id == 1"] * 33):
+            with self.subTest(rules=rules), self.assertRaises(ValueError):
+                app.settings.save({"download_filters": rules})
+            self.assertEqual(Path(app.settings.path).read_bytes(), original)
+        app.settings.save({"download_filters": [" id == 1 ", "id == 1"]})
+        self.assertEqual(app.settings.values["download_filters"], ["id == 1"])
+
+    def test_advertisement_keywords_use_or(self):
+        app = self.load()
+        app.filter_advertisement_list = ["first ad", "second ad"]
+        self.assertTrue(app.is_match_advertisement("contains second ad"))
+        self.assertTrue(app.is_match_advertisement("contains first ad"))
+        self.assertFalse(app.is_match_advertisement("normal caption"))
+
     def test_migrated_password_free_deployment_retains_public_mode(self):
         self.legacy.write_text('api_id: 123\napi_hash: old-secret\nweb_login_secret: ""\n')
         app = self.load()

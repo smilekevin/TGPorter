@@ -9,7 +9,7 @@
     <script src="{{ url_for('static', filename='web_i18n.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='configuration.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='navigation.css') }}">
-    <script id="configuration-data" type="application/json">{{ {'setup': setup_required, 'csrf': csrf_token, 'schema': schema}|tojson }}</script>
+    <script id="configuration-data" type="application/json">{{ {'setup': setup_required, 'csrf': csrf_token, 'schema': schema, 'filter_limits': filter_limits}|tojson }}</script>
     <script defer src="{{ url_for('static', filename='configuration.js') }}"></script>
 </head>
 <body>
@@ -50,6 +50,8 @@
                     {% if field.type == 'secret' %}<p class="help secret-status" data-secret="{{ field.key }}"></p>{% endif %}
                     {% if field.key == 'web_login_secret' %}<p class="help" data-i18n="{{ password_help }}">{{ password_help }}</p>{% endif %}
                     {% if field.key == 'mcp_allowed_hosts' %}<p class="help" data-i18n="The hostname used to request the MCP service must match.">The hostname used to request the MCP service must match.</p>{% endif %}
+                    {% if field.key == 'download_filters' %}{% include 'filter_help.html' %}{% endif %}
+                    {% if field.key == 'filter_advertisement_list' %}<p class="help" data-i18n="Skip forwarding when the caption contains any keyword (OR). Keywords are case-sensitive plain text. Save settings to apply additions and removals.">Skip forwarding when the caption contains any keyword (OR). Keywords are case-sensitive plain text. Save settings to apply additions and removals.</p>{% endif %}
                     {% if field.key == 'public_web' %}<p class="help" data-i18n="The download page does not require password login.">The download page does not require password login.</p>{% endif %}
                     {% if field.key == 'allowed_user_ids' %}<p class="help" data-i18n="Add your numeric Telegram user ID to use bot commands. A signed-in user account is automatically allowed. Legacy me entries grant no user access in bot download mode.">Add your numeric Telegram user ID to use bot commands. A signed-in user account is automatically allowed. Legacy me entries grant no user access in bot download mode.</p>{% endif %}
                 </div>

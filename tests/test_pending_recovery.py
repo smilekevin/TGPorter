@@ -24,7 +24,10 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
             is_running=True, application_name="test", api_id=1, api_hash="test",
             bot_token="test", session_file_path=self.temp.name, proxy=None,
             allowed_user_ids=[], chat_download_config={},
+            download_filters=[],
         )
+        from module.app import Application
+        self.app.resolve_download_filter = lambda expression=None: Application.resolve_download_filter(self.app, expression)
         self.bot.app = self.app
         self.client = SimpleNamespace(
             get_messages=AsyncMock(side_effect=lambda cid, mid: self.message(mid, cid)),

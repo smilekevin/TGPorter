@@ -270,13 +270,23 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(row["completed_time"])
                 if placeholder:
                     self.assertEqual(row["start_time"], 10)
-                self.assertEqual(self.node.download_status[61], DownloadStatus.SkipDownload)
+                self.assertEqual(self.node.download_status[61], DownloadStatus.SuccessDownload)
                 self.assertEqual(self.node.total_download_byte, 0)
                 download_stat.save_downloads.assert_called()
         self.assertEqual(output.read_bytes(), self.data)
         self.assertFalse(self.client.calls)
         self.client.download_media.assert_not_awaited()
         self.app.upload_file.assert_not_awaited()
+
+    async def test_manual_download_bypasses_expression_type_and_format_filters(self):
+        self.node.bypass_filters = True
+        self.node.download_filter = "media_file_size > 100GB"
+        self.app.media_types = ["photo"]
+        self.app.file_formats = {"video": ["mkv"]}
+        await downloader.download_task(self.client, self.message, self.node)
+        self.assertEqual((self.path / "saved.mp4").read_bytes(), self.data)
+        self.assertEqual(self.node.download_status[61], DownloadStatus.SuccessDownload)
+        self.client.download_media.assert_not_awaited()
 
     async def test_filtered_missing_media_and_cancelled_skips_are_not_completed(self):
         for reason in ("filter", "no-media", "cancel"):

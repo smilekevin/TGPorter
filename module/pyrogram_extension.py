@@ -1277,7 +1277,7 @@ async def _report_bot_status(
             # actual_total counts entries in _download_result, actual_failed counts
             # entries in failed list. These can overlap (a failed file is in both),
             # so don't add them — use the larger of the two, or node.total_task.
-            display_total = max(actual_total, actual_failed)
+            display_total = max(actual_total, actual_failed, node.total_download_task)
             display_success = actual_success
             display_failed = actual_failed
             display_skipped = node.skip_download_task  # Use the node counter rather than inferring skips from _download_result.
@@ -1320,16 +1320,16 @@ async def _report_bot_status(
                         f"└─ ❌ {_t('Failed')}: {display_failed}\n"
                     )
                 elif display_skipped > 0:
-                    # The file already exists; skip downloading.
+                    # The reason for skipping is appended below the summary.
                     new_msg_str += (
                         f"📥 {_t('Downloading')}\n"
                         f"└─ ⏩ {_t('Skipped')}: {display_skipped}\n"
                     )
                 elif display_success > 0:
-                    # The new download succeeded.
+                    # Existing complete files are successful without new traffic.
                     new_msg_str += (
                         f"📥 {_t('Downloading')}\n"
-                        f"└─ ✅ {_t('Success')}: {display_success}\n"
+                        f"└─ ✅ {_t('Completed (file already exists)') if node.existing_file_count else _t('Success')}: {display_success}\n"
                     )
             else:
                 new_msg_str += (
@@ -1339,6 +1339,11 @@ async def _report_bot_status(
                     f"├─ ❌ {_t('Failed')}: {display_failed}\n"
                     f"└─ ⏩ {_t('Skipped')}: {display_skipped}\n"
                 )
+        if immediate_reply:
+            for reason, count in node.skip_reasons.items():
+                new_msg_str += f"⏩ {_t(reason)}: {count}\n"
+            if node.existing_file_count and not (node.limit == 1 and not node.upload_telegram_chat_id):
+                new_msg_str += f"✅ {_t('Completed (file already exists)')}: {node.existing_file_count}\n"
         new_msg_str += (
             f"{node.forward_msg_detail_str}"
             f"{upload_msg_detail_str}"

@@ -8,7 +8,7 @@ import re
 import tempfile
 import unittest
 
-from module.filter import BaseFilter, Filter
+from module.filter import BaseFilter, Filter, validate_download_filter
 from utils.meta_data import MetaData, NoneObj
 
 
@@ -121,6 +121,30 @@ class FilterTests(unittest.TestCase):
         parser = BaseFilter()
         parser.names = {"android": 1, "origin": 2, "and_value": 3, "or_value": 4}
         self.assertTrue(parser.exec("android == 1 and origin == 2 && and_value < or_value"))
+
+    def test_editor_validates_types_names_dates_and_regex_without_sample_matching(self):
+        from unittest.mock import patch
+        for expression in ("media_file_size >= 100MB", "media_duration <= 600",
+                           "media_width >= 1920 and media_height >= 1080",
+                           "message_date >= 2026-01-01 00:00:00",
+                           "media_file_name == r'.*tutorial.*'", "topic_id == 77",
+                           "media_type == 'video' or media_type == 'photo'",
+                           "media_duration / 2 == media_width / 3", "media_duration / 60 <= 10"):
+            with self.subTest(expression=expression), patch("module.filter.re.fullmatch", side_effect=AssertionError):
+                self.assertEqual(validate_download_filter("  " + expression + "  "), expression)
+        # A valid expression remains valid when it does not match this message.
+        self.assertEqual(validate_download_filter("media_file_size > 1GB"), "media_file_size > 1GB")
+        self.assertFalse(self.filter.exec("media_file_size > 1GB"))
+
+    def test_editor_rejects_invalid_rules_without_changing_legacy_evaluation(self):
+        for expression in (None, [], "", "1", "media_file_size", "unknown == 1", "media_width == 'wide'",
+                           "media_file_name == r'['", "message_date >= 2026-02-30 00:00:00",
+                           "media_width >", "media_file_size > 1mb", "file_name = 'x'",
+                           "media_file_name > r'.*'", "media_duration and media_width > 0",
+                           "1 / 0 == 0", "1 / (2 - 2) == 0", "media_width > 0" * 300):
+            with self.subTest(expression=expression), self.assertRaises(ValueError):
+                validate_download_filter(expression)
+        self.assertTrue(self.filter.filter.exec("file_name = 'file_name'"))
 
     def test_long_expressions_and_concurrent_filter_instances(self):
         self.assertEqual(BaseFilter().exec(" + ".join(["1"] * 1500)), 1500)

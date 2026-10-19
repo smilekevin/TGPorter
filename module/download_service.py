@@ -272,6 +272,54 @@ class DownloadService:
                     count += 1
         return {'total': count}
 
+    def web_get_skipped_downloads(self, offset=0, limit=100, search=""):
+        from module.download_stat import get_skipped_downloads
+        entries = sorted(get_skipped_downloads(), key=lambda entry: entry["timestamp"], reverse=True)
+        search = str(search).casefold()
+        entries = [entry for entry in entries if not search or any(
+            search in str(entry.get(key, "")).casefold()
+            for key in ("task_id", "task_id_display", "file_name", "chat_title", "reason"))]
+        offset, limit = max(0, offset), max(1, min(limit, 200))
+        page = entries[offset:offset + limit]
+        if getattr(self.app, "hide_file_name", False):
+            page = [{**entry, "file_name": "****" + os.path.splitext(entry["file_name"])[1]} for entry in page]
+        return {"tasks": page, "total": len(entries)}
+
+    def web_delete_skipped(self, task_id):
+        from module.download_stat import remove_skipped_download
+        removed = remove_skipped_download(task_id)
+        return {"code": "1" if removed else "0", "message": "Skipped record deleted" if removed else "Task not found"}
+
+    def web_download_skipped(self, task_id):
+        from module.bot import _bot
+        from module.download_stat import get_skipped_downloads, remove_skipped_download
+        loop = getattr(self.app, "loop", None)
+        if not loop or not loop.is_running() or _bot.app is not self.app or not _bot.is_running:
+            return {"code": "0", "message": "Downloader is not ready; try again after Telegram startup."}
+
+        async def submit():
+            entry = next((entry for entry in get_skipped_downloads() if entry["task_id"] == task_id), None)
+            if entry is None:
+                return {"code": "0", "message": "Task not found"}
+            result = _bot.enqueue_skipped_download(entry)
+            if result["code"] == "1":
+                remove_skipped_download(task_id)
+            return result
+
+        operation = submit()
+        try:
+            future = asyncio.run_coroutine_threadsafe(operation, loop)
+        except RuntimeError:
+            operation.close()
+            return {"code": "0", "message": "Downloader is shutting down."}
+        try:
+            return future.result(timeout=5)
+        except FutureTimeout:
+            future.cancel()
+            return {"code": "0", "message": "Submission timed out; check pending tasks before retrying."}
+        except Exception:
+            return {"code": "0", "message": "Unable to queue download"}
+
     def get_download_speed(self):
         """Get download speed and the number of streams currently fetching data."""
         return {'download_speed': format_byte(get_total_download_speed()) + "/s",

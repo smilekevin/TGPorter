@@ -135,7 +135,7 @@
 | `/forward_to_comments <src> <dst> <start> <end>` | 转发媒体到评论区 | `/forward_to_comments https://t.me/c/A https://t.me/c/B 1 10` |
 | `/listen_forward <src> <dst> [filter]` | 实时监听并自动转发 | `/listen_forward https://t.me/c/A https://t.me/c/B` |
 | `/get_info <link>` | 获取群组/频道/消息信息 | `/get_info https://t.me/c/123/456` |
-| `/add_filter <filter>` | 设置下载过滤器 | `/add_filter message_date >= 2024-01-01 00:00:00` |
+| `/add_filter <filter>` | 添加默认下载过滤规则（OR），与配置页共享保存 | `/add_filter message_date >= 2024-01-01 00:00:00` |
 | `/add_ad <keyword>` | 添加广告关键词（转发时跳过） | `/add_ad 推广` |
 | `/remove_ad <keyword>` | 移除广告关键词 | `/remove_ad 推广` |
 | `/add_replace_ad <msg_link> <keyword>` | 添加替换规则（从 caption 删除） | `/add_replace_ad https://t.me/c/123/456 广告` |
@@ -156,6 +156,7 @@
 - `start_id = 1` → 从最早的消息开始
 - `end_id = 0` → 直到最新消息
 - `[filter]` 可选，由 Lark 解析，支持日期、文件名、正则、大小单位、括号和逻辑运算；例如 `media_file_size > 100MB and media_duration < 60`。日期应包含时间，例如 `2024-01-01 00:00:00`。非法字符会明确报错。
+- Configuration → 下载支持管理下载 Filter 和广告关键词。下载规则任意一条为真（OR）即可匹配；广告关键词命中任意一个（OR）即跳过转发。操作见[下载过滤规则](./DEPLOY_CN.md#下载过滤规则)。
 
 ---
 
@@ -169,6 +170,7 @@
 |------|------|------|
 | `/` | GET | WebUI 主页 |
 | `/api/configuration` | GET / POST | Configuration 设置读取/保存，凭据不回显，需要管理 Session 和 CSRF |
+| `/api/configuration/validate-filter` | POST | 校验 `{"expression": "media_file_size >= 100MB"}`，成功返回规范化 `expression`，无效返回 400 和 `error`；需要管理 Session 和 CSRF，不保存、不访问 Telegram |
 | `/api/setup` | POST | 一次性初始化码与 CSRF 创建管理密码 |
 | `/api/telegram` | POST | 在下载器事件循环提交异步登录、重连、取消与退出操作 |
 | `/submit_download` | POST | 提交单条 HTTPS `t.me` 消息链接（JSON: `{"url": "https://t.me/channel/123"}`）；返回持久化入队结果，非下载完成 |
@@ -176,6 +178,9 @@
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
 | `/get_pending_list` | GET | Pending 队列，支持 `offset` / `limit` 分页及 `search` 按任务 ID/文件名搜索 |
 | `/get_failed_downloads` | GET | 失败列表 |
+| `/get_skipped_downloads` | GET | 已跳过列表及原因，支持 `offset`、`limit`、`search` |
+| `/download_skipped` | POST | 按 `task_id` 入队下载，绕过下载 Filter、媒体类型与格式限制 |
+| `/delete_skipped` | POST | 按 `task_id` 删除跳过记录，保留本地文件 |
 | `/get_download_status` | GET | 总下载速度及当前下载流数（`active_streams`） |
 | `/get_bot_status` | GET | 缓存的 Bot 心跳状态（`status`）、延迟（`rtt_ms`）、最近检查/成功时间（Unix 秒）、连续失败次数、限流剩余秒数及探测间隔 |
 | `/get_download_state` | GET | 全局下载状态（downloading / paused） |
@@ -490,7 +495,7 @@ The “Join us” button in `/help` and `/start` messages opens the [Telegram gr
 | `/forward_to_comments <src> <dst> <start> <end>` | Forward to comments | `/forward_to_comments https://t.me/c/A https://t.me/c/B 1 10` |
 | `/listen_forward <src> <dst> [filter]` | Listen and auto-forward | `/listen_forward https://t.me/c/A https://t.me/c/B` |
 | `/get_info <link>` | Get chat/message info | `/get_info https://t.me/c/123/456` |
-| `/add_filter <filter>` | Set download filter | `/add_filter message_date >= 2024-01-01 00:00:00` |
+| `/add_filter <filter>` | Add a default download rule (OR), shared with Configuration | `/add_filter message_date >= 2024-01-01 00:00:00` |
 | `/add_ad <keyword>` | Add ad keyword (skip during forward) | `/add_ad 推广` |
 | `/remove_ad <keyword>` | Remove ad keyword | `/remove_ad 推广` |
 | `/add_replace_ad <msg_link> <keyword>` | Add replacement rule (remove from caption) | `/add_replace_ad https://t.me/c/123/456 广告` |
@@ -511,6 +516,7 @@ The “Join us” button in `/help` and `/start` messages opens the [Telegram gr
 - `start_id = 1` → from the earliest message
 - `end_id = 0` → up to the latest message
 - `[filter]` is optional and parsed by Lark. It supports dates, filenames, regexes, byte units, parentheses and logical operators, for example `media_file_size > 100MB and media_duration < 60`. Dates include a time, such as `2024-01-01 00:00:00`. Illegal characters are reported as errors.
+- Manage download filters and advertisement keywords in Configuration → Downloads. Any true download rule matches (OR); any advertisement keyword match skips forwarding (OR). See [download filters](./DEPLOY.md#download-filters).
 
 ---
 
@@ -524,6 +530,7 @@ The “Join us” button in `/help` and `/start` messages opens the [Telegram gr
 |----------|--------|-------------|
 | `/` | GET | WebUI page |
 | `/api/configuration` | GET / POST | Read/save settings without echoing credentials; requires management session and CSRF |
+| `/api/configuration/validate-filter` | POST | Validate `{"expression": "media_file_size >= 100MB"}`; return normalized `expression`, or 400 with `error`; requires management session and CSRF, without saving or Telegram access |
 | `/api/setup` | POST | Claim one-time setup with a code and CSRF; create the management password |
 | `/api/telegram` | POST | Submit async login/reconnect/cancel/logout on the downloader loop |
 | `/submit_download` | POST | Submit one HTTPS `t.me` post link (JSON: `{"url": "https://t.me/channel/123"}`); returns durable queue acceptance, not completion |
@@ -531,6 +538,9 @@ The “Join us” button in `/help` and `/start` messages opens the [Telegram gr
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
 | `/get_pending_list` | GET | Pending queue with `offset` / `limit` pagination and `search` by task ID/filename |
 | `/get_failed_downloads` | GET | Failed list |
+| `/get_skipped_downloads` | GET | Skipped records and reasons; supports `offset`, `limit`, `search` |
+| `/download_skipped` | POST | Queue `task_id` while bypassing download expressions, media types and formats |
+| `/delete_skipped` | POST | Delete the skipped record by `task_id`, preserving local files |
 | `/get_download_status` | GET | Total download speed and current stream count (`active_streams`) |
 | `/get_bot_status` | GET | Cached Bot heartbeat `status`, `rtt_ms`, last check/success times (Unix seconds), consecutive failures, remaining cooldown seconds and probe interval |
 | `/get_download_state` | GET | Global state (downloading / paused) |

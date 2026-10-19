@@ -350,6 +350,23 @@ def web_get_failed_downloads():
     return _service_response(_download_service().web_get_failed_downloads())
 
 
+@_flask_app.route("/get_skipped_downloads")
+def web_get_skipped_downloads():
+    return _service_response(_download_service().web_get_skipped_downloads(
+        offset=request.args.get("offset", 0, type=int), limit=request.args.get("limit", 100, type=int),
+        search=request.args.get("search", "")))
+
+
+@_flask_app.route("/delete_skipped", methods=["POST"])
+def web_delete_skipped():
+    return _service_response(_download_service().web_delete_skipped(request.args.get("task_id")))
+
+
+@_flask_app.route("/download_skipped", methods=["POST"])
+def web_download_skipped():
+    return _service_response(_download_service().web_download_skipped(request.args.get("task_id")))
+
+
 @_flask_app.route("/pause_task", methods=["POST"])
 def web_pause_task():
     return _service_response(_download_service().web_pause_task(task_id=request.args.get("task_id")))

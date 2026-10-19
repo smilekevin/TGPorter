@@ -81,7 +81,9 @@
                 chip.append(node('span', String(value)), remove); chips.append(chip);
             });
             host.append(chips);
-            addInput(host, key === 'allowed_user_ids' ? 'User ID or username' : 'Hostname or IP with optional port', async text => {
+            const placeholder = key === 'allowed_user_ids' ? 'User ID or username'
+                : key === 'filter_advertisement_list' ? 'Add advertisement keyword' : 'Hostname or IP with optional port';
+            addInput(host, placeholder, async text => {
                 let value = text;
                 if (key === 'mcp_allowed_hosts') {
                     value = (await request('/api/configuration/validate-host', {host: text})).host;
@@ -91,6 +93,59 @@
             });
         };
         draw(); editors.set(key, () => [...list]);
+    }
+    function filterEditor(values) {
+        const host = byId('setting-download_filters'), rules = [...values];
+        const list = node('ul', undefined, 'filter-rules'), input = node('textarea');
+        const actions = node('div', undefined, 'actions'), status = node('p', undefined, 'help filter-status');
+        const check = node('button', 'Check filter', 'secondary'), add = node('button', 'Add');
+        input.id = 'filter-expression'; input.rows = 3; input.maxLength = config.filter_limits.length;
+        input.placeholder = 'media_file_size >= 100MB and media_duration <= 600';
+        input.setAttribute('aria-label', t('Filter expression'));
+        input.setAttribute('aria-describedby', 'filter-validation');
+        input.spellcheck = false;
+        status.id = 'filter-validation'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+        for (const button of [check, add]) button.type = 'button';
+        const draw = () => {
+            list.replaceChildren();
+            rules.forEach((expression, index) => {
+                const row = node('li'), code = node('code'), remove = node('button', 'Remove', 'secondary');
+                code.textContent = expression; remove.type = 'button';
+                remove.setAttribute('aria-label', `${t('Remove')}: ${expression}`);
+                remove.addEventListener('click', () => { rules.splice(index, 1); changed('download_filters'); draw(); });
+                row.append(code, remove); list.append(row);
+            });
+        };
+        const validate = async append => {
+            const draft = input.value;
+            check.disabled = add.disabled = true;
+            try {
+                const {expression} = await request('/api/configuration/validate-filter', {expression: draft});
+                if (input.value !== draft || !input.isConnected) return;
+                if (append && !rules.includes(expression)) {
+                    if (rules.length >= config.filter_limits.count) throw new Error(`Download filters cannot exceed ${config.filter_limits.count} rules`);
+                    rules.push(expression); changed('download_filters'); draw();
+                }
+                status.textContent = t(append ? 'Filter added. Save settings to apply.' : 'Filter expression is valid');
+                status.classList.remove('error'); status.classList.add('success');
+                input.setAttribute('aria-invalid', 'false');
+                if (append) input.value = '';
+            } catch (error) {
+                if (input.value !== draft || !input.isConnected) return;
+                status.textContent = t(error.message); status.classList.remove('success'); status.classList.add('error');
+                input.setAttribute('aria-invalid', 'true'); input.focus();
+            } finally { check.disabled = add.disabled = false; }
+        };
+        input.addEventListener('input', () => { status.textContent = ''; input.removeAttribute('aria-invalid'); });
+        check.addEventListener('click', () => validate(false));
+        add.addEventListener('click', () => validate(true));
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !add.disabled) {
+                event.preventDefault(); validate(true);
+            }
+        });
+        actions.append(check, add); host.replaceChildren(list, input, actions, status); draw();
+        editors.set('download_filters', () => [...rules]);
     }
     const media = [['audio', 'Audio'], ['document', 'Documents'], ['photo', 'Photos'], ['video', 'Videos'],
         ['voice', 'Voice messages'], ['animation', 'Animations'], ['video_note', 'Video messages'], ['sticker', 'Stickers']];
@@ -265,6 +320,7 @@
             else if (field.key === 'media_types') choiceEditor(field.key, value, media);
             else if (naming[field.key]) choiceEditor(field.key, value, naming[field.key], true);
             else if (field.key === 'file_formats') formatEditor(value);
+            else if (field.key === 'download_filters') filterEditor(value);
             else if (field.key === 'upload_drive') uploadEditor(value);
             else if (field.type === 'list') listEditor(field.key, value);
             else if (field.type === 'secret') {
@@ -279,6 +335,10 @@
     }
     document.querySelectorAll('[data-setting]').forEach(input => input.addEventListener('input', () => changed(input.dataset.setting)));
     async function saveSettings(preserveCredentials = false) {
+        const draft = byId('filter-expression');
+        if (draft?.value.trim()) {
+            draft.focus(); throw new Error('Add or clear the draft filter before saving settings');
+        }
         if (!byId('settings-form').reportValidity()) throw new Error('Check the highlighted fields');
         const settings = {};
         for (const key of dirty) {
@@ -329,9 +389,9 @@
     }
     document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(timer); else schedule(0); });
     document.addEventListener('change', event => {
-        if (event.target.matches('[data-language-switch]') && loaded && !dirty.size) request('/api/configuration').then(renderSettings).catch(error => notice(error.message, true));
+        if (event.target.matches('[data-language-switch]') && loaded && !dirty.size && !byId('filter-expression')?.value.trim()) request('/api/configuration').then(renderSettings).catch(error => notice(error.message, true));
     });
-    window.addEventListener('beforeunload', event => { if (dirty.size) { event.preventDefault(); event.returnValue = ''; } });
+    window.addEventListener('beforeunload', event => { if (dirty.size || byId('filter-expression')?.value.trim()) { event.preventDefault(); event.returnValue = ''; } });
     byId('settings-form').querySelector('button[type="submit"]').disabled = true;
     request('/api/configuration').then(data => {
         renderSettings(data); byId('settings-form').querySelector('button[type="submit"]').disabled = false;
