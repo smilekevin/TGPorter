@@ -106,15 +106,18 @@
     <!-- Tab Navigation (Desktop Only) -->
     <div class="hidden sm:block bg-white border-b border-gray-100 shadow-sm">
         <div class="page-container">
-            <nav class="flex gap-0" role="tablist">
+            <nav class="flex gap-0 overflow-x-auto" role="tablist">
                 <button
                                     @click="activeTab = 'active'; selectedTasks = []"
-                                    class="px-4 py-3 text-sm font-medium transition-colors relative"
+                                    class="shrink-0 px-4 py-3 text-sm font-medium transition-colors relative"
                                     :class="activeTab === 'active' ? 'tab-active' : 'tab-inactive'"
                                     :aria-selected="activeTab === 'active'"
                                     role="tab"
                                 >
                                     <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                        </svg>
                                         <span data-i18n="Downloading" x-text="t('Downloading')">Downloading</span>
                                         <span x-show="activeTasks.length > 0"
                                               class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-blue-500 text-white min-w-[1.5rem] justify-center"
@@ -123,12 +126,15 @@
                                 </button>
                                 <button
                                     @click="activeTab = 'pending'; selectedTasks = []"
-                                    class="px-4 py-3 text-sm font-medium transition-colors relative"
+                                    class="shrink-0 px-4 py-3 text-sm font-medium transition-colors relative"
                                     :class="activeTab === 'pending' ? 'tab-active' : 'tab-inactive'"
                                     :aria-selected="activeTab === 'pending'"
                                     role="tab"
                                 >
                                     <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
                                         <span data-i18n="Pending" x-text="t('Pending')">Pending</span>
                                         <span x-show="pendingTotal > 0"
                                               class="pulse-badge inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-amber-500 text-white min-w-[1.5rem] justify-center"
@@ -137,36 +143,49 @@
                                 </button>
                                 <button
                                     @click="showCompleted()"
-                                    class="px-4 py-3 text-sm font-medium transition-colors relative"
+                                    class="shrink-0 px-4 py-3 text-sm font-medium transition-colors relative"
                                     :class="activeTab === 'completed' ? 'tab-active' : 'tab-inactive'"
                                     :aria-selected="activeTab === 'completed'"
                                     role="tab"
                                 >
                                     <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
                                         <span data-i18n="Completed" x-text="t('Completed')">Completed</span>
                                         <span x-show="completedTotal > 0"
                                               class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-green-500 text-white min-w-[1.5rem] justify-center"
                                               x-text="completedTotal"></span>
                                     </span>
                                 </button>
+                <button @click="activeTab = 'skipped'; selectedTasks = []; fetchSkipped()"
+                        class="shrink-0 px-4 py-3 text-sm font-medium transition-colors"
+                        :class="activeTab === 'skipped' ? 'tab-active' : 'tab-inactive'"
+                        :aria-selected="activeTab === 'skipped'" role="tab">
+                    <span class="flex items-center gap-2">
+                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5l10 7-10 7V5zm14 0v14"/>
+                        </svg>
+                        <span data-i18n="Skipped" x-text="t('Skipped')">Skipped</span>
+                    </span>
+                </button>
                                 <button
                                     @click="activeTab = 'failed'; selectedTasks = []"
-                                    class="px-4 py-3 text-sm font-medium transition-colors relative"
+                                    class="shrink-0 px-4 py-3 text-sm font-medium transition-colors relative"
                                     :class="activeTab === 'failed' ? 'tab-active' : 'tab-inactive'"
                                     :aria-selected="activeTab === 'failed'"
                                     role="tab"
                                 >
                                     <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+                                        </svg>
                                         <span data-i18n="Failed" x-text="t('Failed')">Failed</span>
                                         <span x-show="failedTasks.length > 0"
                                               class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-red-500 text-white min-w-[1.5rem] justify-center"
                                               x-text="failedTasks.length"></span>
                                     </span>
                                 </button>
-                <button @click="activeTab = 'skipped'; selectedTasks = []; fetchSkipped()"
-                        class="px-4 py-3 text-sm font-medium transition-colors"
-                        :class="activeTab === 'skipped' ? 'tab-active' : 'tab-inactive'"
-                        :aria-selected="activeTab === 'skipped'" role="tab" x-text="t('Skipped')"></button>
             </nav>
         </div>
     </div>
@@ -1799,10 +1818,19 @@
                 <span class="text-[10px] font-medium"><span data-i18n="Completed" x-text="t('Completed')">Completed</span></span>
             </button>
 
-            <!-- Failed -->
-            <button @click="activeTab = 'skipped'; selectedTasks = []; fetchSkipped()" class="flex flex-col items-center justify-center px-2 py-1 min-w-0" :class="activeTab === 'skipped' ? 'text-amber-600' : 'text-gray-400'">
-                <span aria-hidden="true">⏩</span><span class="text-[10px]" x-text="t('Skipped')"></span>
+            <!-- Skipped -->
+            <button @click="activeTab = 'skipped'; selectedTasks = []; fetchSkipped()"
+                    class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
+                    :class="activeTab === 'skipped' ? 'text-amber-600' : 'text-gray-400'">
+                <span class="relative">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5l10 7-10 7V5zm14 0v14"/>
+                    </svg>
+                </span>
+                <span class="text-[10px] font-medium"><span data-i18n="Skipped" x-text="t('Skipped')">Skipped</span></span>
             </button>
+
+            <!-- Failed -->
             <button @click="activeTab = 'failed'; selectedTasks = []"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"
                     :class="activeTab === 'failed' ? 'text-red-600' : 'text-gray-400'">

@@ -105,7 +105,7 @@ Use the header icons to switch between downloads and Configuration. Configuratio
 
 Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
 
-The dashboard **Skipped** tab keeps reasons and saved filters across restarts. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons, while verified existing files count as **Completed (file already exists)**.
+The dashboard **Skipped** tab keeps reasons and saved filters across restarts. Desktop tabs and mobile bottom navigation share the same order (Downloading, Pending, Completed, Skipped, Failed) and outline icons. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons, while verified existing files count as **Completed (file already exists)**.
 
 ### config.yaml (optional)
 
