@@ -41,14 +41,14 @@ docker pull ghcr.io/smilekevin/tgporter:latest
 docker run -d \
   --name tgporter \
   --restart unless-stopped \
-  -p 5000:5000 \
+  -p 5088:5088 \
   -v "/path/to/tgporter/data:/app/data" \
   -v "/path/to/downloads:/app/downloads" \
   ghcr.io/smilekevin/tgporter:latest
 docker logs tgporter
 ```
 
-Open `http://SERVER_IP:5000/configuration` and use the `First-time setup code` from the logs. Complete [web setup and login](#webui-login); no interactive terminal or pre-created data file is needed.
+Open `http://SERVER_IP:5088/configuration` and use the `First-time setup code` from the logs. Complete [web setup and login](#webui-login); no interactive terminal or pre-created data file is needed.
 
 ### Docker Compose Deployment
 
@@ -66,7 +66,7 @@ docker compose up -d
 docker compose logs tgporter
 ```
 
-The repository Compose file uses `/path/to/downloads:/app/downloads/` and `/path/to/tgporter/data:/app/data` as host-path placeholders, publishes `5000:5000`. The optional `config.yaml` mount is commented out; no YAML file is required. It has no default proxy or interactive terminal requirement. Open `/configuration` to initialize and log in.
+The repository Compose file uses `/path/to/downloads:/app/downloads/` and `/path/to/tgporter/data:/app/data` as host-path placeholders, publishes `5088:5088`. The optional `config.yaml` mount is commented out; no YAML file is required. It has no default proxy or interactive terminal requirement. Open `/configuration` to initialize and log in.
 
 The left side of each mount is the actual host path; the right side is the container path. In Configuration, use the container download path `/app/downloads`. Listener port changes also require matching Compose port mappings. Docker manages host mounts and port publication.
 
@@ -81,7 +81,7 @@ python -m pip install -r requirements.txt
 python media_downloader.py
 ```
 
-Open `http://localhost:5000/configuration`, claim setup using the code from startup logs, set the web password, then enter API credentials and log in to Telegram. Downloads default to the project's `downloads/` directory. Subsequent starts reuse settings and valid sessions.
+Open `http://localhost:5088/configuration`, claim setup using the code from startup logs, set the web password, then enter API credentials and log in to Telegram. Downloads default to the project's `downloads/` directory. Subsequent starts reuse settings and valid sessions.
 
 ### Local Dev Mode
 
@@ -154,7 +154,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `web_login_secret` | Management password created during setup; protects Configuration even in public mode | `""` |
 | `public_web` | Open dashboard/download APIs; Configuration still requires management authentication | `false` |
 | `web_host` | Shared WebUI/API/MCP bind address; normally keep `0.0.0.0` inside Docker | `"0.0.0.0"` |
-| `web_port` | Shared WebUI/API/MCP listener port | `5000` |
+| `web_port` | Shared WebUI/API/MCP listener port | `5088` |
 | `mcp_enabled` | Enable the same-port `/mcp` Streamable HTTP endpoint, always requiring a token | `false` |
 | `mcp_token` | MCP-only bearer token; printable ASCII without whitespace; required when MCP is enabled | `""` |
 | `mcp_read_only` | Expose only MCP query tools without restricting separate browser sessions | `false` |
@@ -282,7 +282,7 @@ python -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
 1. In **Configuration → Web and MCP**, enter **MCP Token**, enable **Enable MCP**, save and restart.
-2. For a domain, reverse proxy or remote IP, add the hostname used by the client under **MCP service hostname**, for example `nas.example.com` or `192.168.1.20:5000`. Localhost is already allowed. Use a hostname/IP with an optional port (1–65535), without a URL scheme, path, credentials or wildcard. Invalid entries show an error. This list does not change the listening address.
+2. For a domain, reverse proxy or remote IP, add the hostname used by the client under **MCP service hostname**, for example `nas.example.com` or `192.168.1.20:5088`. Localhost is already allowed. Use a hostname/IP with an optional port (1–65535), without a URL scheme, path, credentials or wildcard. Invalid entries show an error. This list does not change the listening address.
 
 ### Agent Client
 
@@ -290,7 +290,7 @@ python -c 'import secrets; print(secrets.token_urlsafe(32))'
 {
   "mcpServers": {
     "tgporter": {
-      "url": "http://127.0.0.1:5000/mcp",
+      "url": "http://127.0.0.1:5088/mcp",
       "headers": {"Authorization": "Bearer YOUR_MCP_TOKEN"}
     }
   }

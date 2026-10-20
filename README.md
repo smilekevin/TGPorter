@@ -117,7 +117,7 @@
 docker run -d \
   --name tgporter \
   --restart unless-stopped \
-  -p 5000:5000 \
+  -p 5088:5088 \
   -v "/path/to/tgporter/data:/app/data" \
   -v "/path/to/downloads:/app/downloads" \
   ghcr.io/smilekevin/tgporter:latest
@@ -214,7 +214,7 @@ flowchart TB
     subgraph Container["Docker 容器"]
         direction TB
         Bot["Bot 命令与媒体入口<br/>Kurigram"]
-        subgraph HTTP["统一 HTTP 服务<br/>默认端口 5000"]
+        subgraph HTTP["统一 HTTP 服务<br/>默认端口 5088"]
             API["页面 / Web API<br/>Flask"]
             MCP["MCP /mcp<br/>Streamable HTTP"]
         end
@@ -487,7 +487,7 @@ Deploy by one command (replace the host paths with your actual absolute paths):
 docker run -d \
   --name tgporter \
   --restart unless-stopped \
-  -p 5000:5000 \
+  -p 5088:5088 \
   -v "/path/to/tgporter/data:/app/data" \
   -v "/path/to/downloads:/app/downloads" \
   ghcr.io/smilekevin/tgporter:latest
@@ -584,7 +584,7 @@ flowchart TB
     subgraph Container["Docker Container"]
         direction TB
         Bot["Bot commands and media<br/>Kurigram"]
-        subgraph HTTP["Single HTTP service<br/>Default port: 5000"]
+        subgraph HTTP["Single HTTP service<br/>Default port: 5088"]
             API["Pages / Web API<br/>Flask"]
             MCP["MCP /mcp<br/>Streamable HTTP"]
         end

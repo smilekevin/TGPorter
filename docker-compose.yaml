@@ -4,7 +4,7 @@ services:
     container_name: tgporter
     network_mode: bridge
     ports:
-      - "5000:5000"
+      - "5088:5088"
     volumes:
       # Replace /path/to/downloads with your absolute host download directory.
       - "/path/to/downloads:/app/downloads/"

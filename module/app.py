@@ -438,7 +438,7 @@ class Application:
         self.caption_entities_dict: dict = {}
         self.max_concurrent_transmissions: int = 1
         self.web_host: str = "0.0.0.0"
-        self.web_port: int = 5000
+        self.web_port: int = 5088
         self.max_download_task: int = 5
         self.file_download_concurrency: int = 1
         self.download_part_size_mb: int = 64
