@@ -395,8 +395,6 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 
 [![TG Porter desktop dashboard with three active downloads at 3–4 MB/s and five completed tasks](./docs/images/webui-en.jpg)](./docs/images/webui-en.jpg)
 
-Sample data: 3 downloading, 2 pending, 5 completed, 0 failed and 1 skipped.
-
 **Configuration**
 
 [![TG Porter Configuration with shared navigation and sign-out, masked API credentials and account selection](./docs/images/configuration-en.jpg)](./docs/images/configuration-en.jpg)
