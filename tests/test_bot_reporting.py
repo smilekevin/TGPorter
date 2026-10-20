@@ -55,15 +55,17 @@ class BotReportingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("No download filter matched", message)
         self.assertIn("Skipped", message)
 
-    async def test_existing_file_is_completed_rather_than_skipped(self):
-        self.record["down_byte"] = self.record["total_size"]
-        self.node.stat(DownloadStatus.SuccessDownload)
-        self.node.existing_file_count = 1
+    async def test_existing_file_is_reported_as_skipped(self):
+        download_stat._download_result.clear()
+        self.node.stat(DownloadStatus.SkipDownload)
+        self.node.skip_reasons["already download,download skipped"] = 1
         self.assertTrue(await self.report(immediate=True))
         message = self.client.edit_message_text.call_args.args[2]
-        self.assertIn("Completed (file already exists)", message)
-        self.assertNotIn("Skipped", message)
-        self.assertEqual(self.node.skip_download_task, 0)
+        self.assertIn("already download,download skipped", message)
+        self.assertIn("Skipped", message)
+        self.assertNotIn("Success", message)
+        self.assertEqual(self.node.skip_download_task, 1)
+        self.assertEqual(self.node.success_download_task, 0)
 
     async def test_report_connection_errors_include_type_and_reach_reconnect_counter(self):
         for error in (TimeoutError(), ConnectionError("private error contents")):

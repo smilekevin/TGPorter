@@ -1326,10 +1326,9 @@ async def _report_bot_status(
                         f"└─ ⏩ {_t('Skipped')}: {display_skipped}\n"
                     )
                 elif display_success > 0:
-                    # Existing complete files are successful without new traffic.
                     new_msg_str += (
                         f"📥 {_t('Downloading')}\n"
-                        f"└─ ✅ {_t('Completed (file already exists)') if node.existing_file_count else _t('Success')}: {display_success}\n"
+                        f"└─ ✅ {_t('Success')}: {display_success}\n"
                     )
             else:
                 new_msg_str += (
@@ -1342,8 +1341,6 @@ async def _report_bot_status(
         if immediate_reply:
             for reason, count in node.skip_reasons.items():
                 new_msg_str += f"⏩ {_t(reason)}: {count}\n"
-            if node.existing_file_count and not (node.limit == 1 and not node.upload_telegram_chat_id):
-                new_msg_str += f"✅ {_t('Completed (file already exists)')}: {node.existing_file_count}\n"
         new_msg_str += (
             f"{node.forward_msg_detail_str}"
             f"{upload_msg_detail_str}"
