@@ -39,7 +39,7 @@ class DockerWorkflowTests(unittest.TestCase):
 
     def run_step(self, workflow, step_id, ref="refs/heads/main", event="push",
                  actor="smilekevin", head_repository=REPOSITORY, published="true",
-                 digest=DIGEST, tags=None):
+                 digest=DIGEST, tags=None, cwd=None):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             summary = Path(directory) / "summary"
@@ -47,6 +47,7 @@ class DockerWorkflowTests(unittest.TestCase):
                 **os.environ,
                 "IMAGE": self.workflows[workflow]["env"]["IMAGE"],
                 "SHA": SHA,
+                "APP_VERSION": "v1.2.3+aaaaaaa",
                 "GITHUB_REF": ref,
                 "GITHUB_EVENT_NAME": event,
                 "GITHUB_REPOSITORY": REPOSITORY,
@@ -62,7 +63,7 @@ class DockerWorkflowTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c",
                  self.steps[workflow][step_id]["run"]],
-                env=env, text=True, capture_output=True, timeout=10,
+                cwd=cwd, env=env, text=True, capture_output=True, timeout=10,
             )
             return (result, output.read_text() if output.exists() else "",
                     summary.read_text() if summary.exists() else "")
@@ -115,11 +116,52 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertEqual(self.steps["release"]["build"]["with"]["build-args"].strip(),
                          "APP_VERSION=${{ steps.tags.outputs.version }}")
         self.assertEqual(self.steps["ci"]["build"]["with"]["build-args"].strip(),
-                         "APP_VERSION=sha-${{ steps.version.outputs.sha }}")
+                         "APP_VERSION=${{ steps.version.outputs.version }}")
         runtime = (ROOT / "Dockerfile").read_text().split(" AS runtime\n", 1)[1]
         self.assertIn("ARG APP_VERSION=unknown\n", runtime)
         self.assertIn("ENV APP_VERSION=${APP_VERSION}\n", runtime)
         self.assertIn("LABEL org.opencontainers.image.version=${APP_VERSION}\n", runtime)
+
+    def test_ci_checks_out_full_history_and_tags_for_version_resolution(self):
+        checkout = self.workflows["ci"]["jobs"]["docker"]["steps"][0]
+        self.assertEqual(checkout["with"]["fetch-depth"], "0")
+        self.assertEqual(checkout["with"]["persist-credentials"], "false")
+
+    def test_ci_version_uses_nearest_reachable_tag_and_short_hash(self):
+        """Run the real workflow step against tagged and untagged Git history."""
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+
+            def git(*args):
+                return subprocess.check_output(
+                    ["git", "-c", "user.name=Version Test", "-c", "user.email=test@example.invalid",
+                     "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args],
+                    cwd=directory, stderr=subprocess.DEVNULL, text=True, timeout=10,
+                ).strip()
+
+            def check_version(base):
+                sha = git("rev-parse", "HEAD")
+                short_sha = git("rev-parse", "--short=7", "HEAD")
+                expected = f"{base}+{short_sha}" if base else f"sha-{short_sha}"
+                result, output, _ = self.run_step("ci", "version", cwd=directory)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, f"sha={sha}\nversion={expected}\n")
+                self.assertIn(f"Application version: {expected}", result.stdout)
+
+            git("init")
+            git("commit", "--allow-empty", "-m", "Initial source")
+            check_version(None)
+            git("tag", "v1.2.3")
+            check_version("v1.2.3")
+            git("commit", "--allow-empty", "-m", "Next source")
+            check_version("v1.2.3")
+            before_release = git("rev-parse", "HEAD")
+            git("commit", "--allow-empty", "-m", "New release")
+            git("tag", "-a", "v1.3.0", "-m", "Release")
+            check_version("v1.3.0")
+            git("checkout", "--detach", before_release)
+            git("commit", "--allow-empty", "-m", "Earlier branch")
+            check_version("v1.2.3")
 
     def test_ci_handles_pr_main_push_and_manual_runs(self):
         events = self.workflows["ci"]["on"]
@@ -189,6 +231,7 @@ class DockerWorkflowTests(unittest.TestCase):
         result, _, summary = self.run_step("ci", "summary")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("## CI image for verification", summary)
+        self.assertIn("Application version: v1.2.3+aaaaaaa", summary)
         self.assertIn(f"docker pull {IMAGE}@{DIGEST}", summary)
         self.assertIn(f"image: {IMAGE}@{DIGEST}", summary)
         self.assertIn(f"{IMAGE}:sha-{SHA}", summary)

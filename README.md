@@ -300,6 +300,8 @@ python -m unittest discover -s tests -v
 
 CI 自动运行测试并检查 amd64、arm64 镜像构建。
 
+CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afcd8`；镜像标签仍使用完整的 `sha-提交号`。[镜像更新说明](./DEPLOY_CN.md#docker-管理)。
+
 ### MangoIsIllegal 的原有改造（相比 tangyoha v2.2.6）
 
 <details>
@@ -667,6 +669,8 @@ python -m unittest discover -s tests -v
 ```
 
 CI runs the tests and checks amd64 and arm64 image builds.
+
+CI application versions show the nearest version tag plus a short commit hash, such as `v0.3.2+92afcd8`; image tags retain the full `sha-COMMIT_SHA`. See [image updates](./DEPLOY.md#docker-management).
 
 ### MangoIsIllegal's Original Changes (Compared with tangyoha v2.2.6)
 

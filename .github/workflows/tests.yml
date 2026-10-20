@@ -47,6 +47,7 @@ jobs:
       - name: Checkout tested source
         uses: actions/checkout@v5
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Decide whether this run can publish
@@ -61,13 +62,22 @@ jobs:
             echo 'publish=true' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Get source commit
+      - name: Get source commit and application version
         id: version
         shell: bash
         run: |
           SHA=$(git rev-parse HEAD)
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          BASE_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [[ -n "$BASE_VERSION" ]]; then
+            APP_VERSION="${BASE_VERSION}+${SHORT_SHA}"
+          else
+            APP_VERSION="sha-${SHORT_SHA}"
+          fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "Source SHA: $SHA"
+          echo "Application version: $APP_VERSION"
 
       - name: Select verification image tag
         id: tags
@@ -101,7 +111,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
-            APP_VERSION=sha-${{ steps.version.outputs.sha }}
+            APP_VERSION=${{ steps.version.outputs.version }}
           labels: |
             org.opencontainers.image.title=TG Porter
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -117,6 +127,7 @@ jobs:
           PUBLISHED: ${{ steps.publication.outputs.publish }}
           DIGEST: ${{ steps.build.outputs.digest }}
           SHA: ${{ steps.version.outputs.sha }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
           TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           if [[ "$PUBLISHED" == "true" && ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
@@ -126,6 +137,7 @@ jobs:
           {
             echo '## CI image for verification'
             echo "Source commit: ${SHA}"
+            echo "Application version: ${APP_VERSION}"
             echo
             if [[ "$PUBLISHED" == "true" ]]; then
               echo 'Package: [tgporter](https://github.com/users/smilekevin/packages/container/tgporter)'
