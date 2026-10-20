@@ -69,7 +69,9 @@ class PartialFile:
         flags = os.O_RDWR | getattr(os, "O_BINARY", 0)
         if initialize:
             flags |= os.O_CREAT
-        fd = os.open(self.path, flags, 0o600)
+        # New downloads default to 0644, subject to umask; resumed files retain
+        # their permissions, which atomic publication also preserves.
+        fd = os.open(self.path, flags, 0o644)
         try:
             if initialize:
                 if os.fstat(fd).st_size > self.size:
