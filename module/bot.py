@@ -2545,6 +2545,8 @@ async def _consume_one_pending():
     reserved = False
     queued = False
     msg = None
+    node = None
+    preparing_entry = None
     try:
         from module.task_store import get_pending_tasks, update_download_state, remove_task
         add_download_task = _bot.add_download_task
@@ -2616,9 +2618,33 @@ async def _consume_one_pending():
                 logger.warning("Pending task %s has no message_id", task_id)
             return
 
+        node = _bot.task_node.get(int(task_id)) if str(task_id).isdigit() else _bot.task_node.get(task_id)
+        if not node:
+            from module.app import TaskNode
+            # Preserve original task_id_display and source info from extra_data
+            # so recovered tasks keep their original display ID (e.g. 0626-784)
+            # instead of generating a new one (0628-1241)
+            node = TaskNode(
+                chat_id=cid,
+                from_user_id=from_user_id or cid,
+                reply_message_id=0,
+                limit=1,
+                bot=_bot.bot,
+                task_id=task_id,
+                task_id_display=extra.get("task_id_display", ""),
+                topic_id=extra.get("topic_id", 0),
+                download_filter=task_data.get("download_filter"),
+            )
+            node.bypass_filters = extra.get("bypass_filters") is True
+            node.source_chat_id = extra.get("source_chat_id", 0)
+            node.source_message_id = extra.get("source_message_id", 0)
+            node.source_chat_title = extra.get("source_chat_title", "")
         # Hold this reservation across every await until queue handoff succeeds.
         _bot._consuming.add(task_id)
         reserved = True
+        from module.download_stat import prepare_download, is_download_cancelled, remove_preparing_download
+        preparing_entry = prepare_download(int(msg_id), node, filename=extra.get("filename", ""),
+                                           reason="Fetching message")
         # Use cached message from direct_download if available (skip get_messages)
         cached_msg = _bot._cached_messages.pop(task_id, None)
         if cached_msg:
@@ -2732,6 +2758,9 @@ async def _consume_one_pending():
                     pass
                 remove_task(task_id)
                 return
+        if is_download_cancelled(int(msg_id), node):
+            remove_task(task_id)
+            return
         if not msg or msg.empty:
             logger.warning(f"Pending consumer: msg {msg_id} not found in chat {cid}, moving to failed")
             try:
@@ -2758,59 +2787,16 @@ async def _consume_one_pending():
             return
         # Clear consecutive timeout counts after get_messages succeeds.
         _pending_timeout_counts.pop(task_id, None)
-        node = _bot.task_node.get(int(task_id)) if str(task_id).isdigit() else _bot.task_node.get(task_id)
-        if not node:
-            from module.app import TaskNode
-            # Preserve original task_id_display and source info from extra_data
-            # so recovered tasks keep their original display ID (e.g. 0626-784)
-            # instead of generating a new one (0628-1241)
-            node = TaskNode(
-                chat_id=cid,
-                from_user_id=from_user_id or cid,
-                reply_message_id=0,
-                limit=1,
-                bot=_bot.bot,
-                task_id=task_id,
-                task_id_display=extra.get("task_id_display", ""),
-                topic_id=extra.get("topic_id", 0),
-                download_filter=task_data.get("download_filter"),
-            )
-            node.bypass_filters = extra.get("bypass_filters") is True
-            node.source_chat_id = extra.get("source_chat_id", 0)
-            node.source_message_id = extra.get("source_message_id", 0)
-            node.source_chat_title = extra.get("source_chat_title", "")
-            _bot.add_task_node(node)
+        _bot.add_task_node(node)
         owner = getattr(msg, "_client", None) or client
         node.client = _bot.bot if owner is _bot.bot else None
         # Mark as in-queue (in-memory, not persisted). Worker will remove on pickup.
         _bot._in_queue.add(task_id)
         node.is_running = True
 
-        # Create placeholder in _download_result so WebUI shows the task immediately.
-        # Pyrogram's update_download_status will overwrite total_size/file_name/down_byte
-        # when the actual download starts.
-        # Set total_size=1 (not 0) so web.py doesn't filter it out as a "placeholder"
-        # entry. WebUI shows a file-information placeholder until the real size arrives.
-        from module.download_stat import _download_result
-        if cid not in _download_result:
-            _download_result[cid] = {}
-        if int(msg_id) not in _download_result[cid]:
-            _download_result[cid][int(msg_id)] = {
-                "down_byte": 0,
-                "total_size": 1,  # Non-zero so web.py doesn't hide this entry
-                "progress": 0,
-                "file_name": 'Fetching file information...',
-                "start_time": time.time(),
-                "end_time": 0,
-                "download_speed": 0,
-                "each_second_total_download": 0,
-                "task_id": task_id,
-                "task_id_display": getattr(node, "task_id_display", str(task_id)),
-                "source_chat_title": getattr(msg.chat, "title", "") or extra.get("source_chat_title", ""),
-                "source_chat_id": cid,
-                "source_message_id": int(msg_id),
-            }
-            logger.info(f"Placeholder created in _download_result for task {task_id} (chat {cid} msg {msg_id})")
+        if preparing_entry.get("phase") == "preparing":
+            preparing_entry["preparation_reason"] = "Fetching file information..."
+            preparing_entry["source_chat_title"] = getattr(msg.chat, "title", "") or node.source_chat_title
 
         # Send notification BEFORE add_download_task to avoid race condition:
         # if we queue first, worker may finish a small file before send_message
@@ -2833,6 +2819,9 @@ async def _consume_one_pending():
             except Exception as e:
                 logger.warning(f"Pending consumer notification failed: {e}")
 
+        if is_download_cancelled(int(msg_id), node):
+            remove_task(task_id)
+            return
         queued = await add_download_task(msg, node)
         if not queued:
             logger.warning("Pending consumer: queue rejected task %s; will retry", task_id)
@@ -2844,6 +2833,10 @@ async def _consume_one_pending():
         logger.warning(f"Pending consumer error: {e}")
     finally:
         if reserved:
+            if not queued and preparing_entry is not None:
+                if is_download_cancelled(int(msg_id), node):
+                    remove_task(task_id)
+                remove_preparing_download(int(msg_id), node, preparing_entry)
             _bot._consuming.discard(task_id)
             if not queued and task_id in _bot._in_queue:
                 _bot._in_queue.discard(task_id)

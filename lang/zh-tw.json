@@ -597,6 +597,12 @@
     "Message account is unavailable": "訊息所屬帳號無法使用",
     "A download for this message is already queued": "此訊息已有下載任務",
     "Unable to queue download": "無法將下載加入佇列",
-    "Download": "下載"
+    "Download": "下載",
+    "Preparing": "準備中",
+    "Queued": "排隊中",
+    "Waiting for download slot": "等待可用下載名額",
+    "Establishing download connections": "正在建立下載連線",
+    "All downloads are paused": "所有下載已暫停",
+    "Waiting for Telegram cooldown: {seconds} seconds": "等待 Telegram 冷卻，剩餘 {seconds} 秒"
   }
 }
