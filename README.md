@@ -1,7 +1,7 @@
 <h1 align="center">TG Porter</h1>
 
 <p align="center">
-<strong>Telegram media download / forward / listen tool with task persistence, crash recovery, and modern WebUI</strong>
+<strong>TGPorter is an open-source, self-hosted Telegram media downloader with parallel downloads, Docker deployment, MCP integration, and AI agent skills.</strong>
 </p>
 
 <p align="center">
@@ -394,8 +394,6 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 **Desktop download dashboard**
 
 [![TG Porter desktop dashboard with three active downloads at 3–4 MB/s and five completed tasks](./docs/images/webui-en.jpg)](./docs/images/webui-en.jpg)
-
-Sample data: 3 downloading, 2 pending, 5 completed, 0 failed and 1 skipped.
 
 **Configuration**
 
