@@ -167,6 +167,9 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5l10 7-10 7V5zm14 0v14"/>
                         </svg>
                         <span data-i18n="Skipped" x-text="t('Skipped')">Skipped</span>
+                        <span x-show="skippedTotal > 0"
+                              class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md bg-amber-500 text-white min-w-[1.5rem] justify-center"
+                              x-text="skippedTotal"></span>
                     </span>
                 </button>
                                 <button
@@ -1035,7 +1038,7 @@
                 window.addEventListener('scroll', this.scrollListener, { passive: true });
                 await Promise.allSettled([
                     this.fetchVersion(), this.fetchActive(),
-                    this.fetchPending(true), this.fetchCompleted(true),
+                    this.fetchPending(true), this.fetchCompleted(true), this.fetchSkipped(),
                     this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchBotStatus(),
                 ]);
                 if (this.disposed) return;
@@ -1826,6 +1829,9 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5l10 7-10 7V5zm14 0v14"/>
                     </svg>
+                    <span x-show="skippedTotal > 0"
+                          class="absolute -top-1 -right-3 text-[10px] font-bold bg-amber-500 text-white rounded-full min-w-[16px] h-4 flex items-center justify-center px-1"
+                          x-text="skippedTotal"></span>
                 </span>
                 <span class="text-[10px] font-medium"><span data-i18n="Skipped" x-text="t('Skipped')">Skipped</span></span>
             </button>

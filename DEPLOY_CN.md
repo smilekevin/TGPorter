@@ -119,7 +119,7 @@ Mock 不连接 Telegram，也不保存设置。需要测试 Configuration 和登
 
 ### 网页配置与交互登录（首选）
 
-通过页头图标切换下载页和 Configuration；配置表单的下拉框与单行输入框等高。**退出**用于结束网页登录。[界面截图](./README.md#webui-preview)见 README。
+通过页头图标切换下载页和 Configuration；配置表单的下拉框与单行输入框等高。**退出**用于结束网页登录。[移动端与桌面端截图](./README.md#webui-preview)见 README。
 
 通过 **Configuration** 管理 Telegram 登录、下载、网页访问和 MCP。设置保存到 `data/settings.json`，请勿在服务运行时手动编辑。已保存的密码和 Token 留空即可保留原值。Telegram 验证码和两步验证密码不会保存。
 

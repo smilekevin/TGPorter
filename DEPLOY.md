@@ -101,7 +101,7 @@ Mock mode does not connect to Telegram or save settings. To test Configuration a
 
 ### Web Configuration and Interactive Login (preferred)
 
-Use the header icons to switch between downloads and Configuration. Configuration dropdowns and single-line inputs use matching heights. **Sign out** ends your web login. See the [screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
+Use the header icons to switch between downloads and Configuration. Configuration dropdowns and single-line inputs use matching heights. **Sign out** ends your web login. See the [mobile and desktop screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
 
 Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
 

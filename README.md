@@ -384,9 +384,15 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
 
 ## WebUI Preview
 
-**Download dashboard**
+**Mobile download dashboard**
 
-[![TG Porter download dashboard with shared navigation, sign-out, Bot status, active streams and download progress](./docs/images/webui-en.jpg)](./docs/images/webui-en.jpg)
+<a href="./docs/images/webui-mobile-en.jpg"><img src="./docs/images/webui-mobile-en.jpg" alt="TG Porter mobile dashboard with three active downloads at 3–4 MB/s and five completed tasks" width="360"></a>
+
+**Desktop download dashboard**
+
+[![TG Porter desktop dashboard with three active downloads at 3–4 MB/s and five completed tasks](./docs/images/webui-en.jpg)](./docs/images/webui-en.jpg)
+
+Sample data: 3 downloading, 2 pending, 5 completed, 0 failed and 1 skipped.
 
 **Configuration**
 
