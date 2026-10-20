@@ -178,6 +178,8 @@ def settings():
             from module.bot import _bot
             if "allowed_user_ids" in updates and _bot.app is app and _bot.bot is not None:
                 _bot.set_live_allowed_users(values["allowed_user_ids"])
+        if "language" in updates and _bot.app is app:
+            _bot.schedule_commands_refresh()
         # Reuse the live pool/transport update path on the owning loop.
         from module.pyrogram_extension import set_max_concurrent_transmissions
         if app.telegram_login and app.telegram_login.ready:

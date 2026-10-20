@@ -253,6 +253,44 @@ class WebConfigurationTests(unittest.TestCase):
         self.assertEqual(saved["max_download_task"], 6)
         self.assertEqual(json.loads(Path(self.app.app_data_file).read_text()), {"unrelated": "keep", "chat": []})
 
+    def test_language_save_returns_while_menu_refresh_is_waiting_for_telegram(self):
+        from module import bot, pyrogram_extension as extension
+        self.setup()
+        backend = bot.DownloadBot()
+        backend.app = self.app
+        started = threading.Event()
+        release = asyncio.Event()
+        loops = []
+
+        async def publish(commands):
+            loops.append(asyncio.get_running_loop())
+            started.set()
+            await release.wait()
+
+        backend.bot = SimpleNamespace(is_initialized=True, set_bot_commands=AsyncMock(side_effect=publish))
+
+        async def finish():
+            await backend._commands_refresh_task
+
+        with patch.object(bot, "_bot", backend), \
+                patch.object(extension, "_bot_flood_wait", {"until": 0}):
+            try:
+                response = self.save({"language": "fr"})
+                self.assertEqual(response.status_code, 200, response.json)
+                self.assertEqual(json.loads(Path(self.app.settings.path).read_text())["language"], "fr")
+                self.assertTrue(started.wait(timeout=2))
+                self.assertFalse(backend._commands_refresh_task.done())
+                self.assertEqual(loops, [self.app.loop])
+                self.assertEqual(backend.bot.set_bot_commands.await_args.args[0][0].description, "Aide")
+                # Browser language and unrelated settings do not change the Bot menu.
+                self.client.get("/configuration", headers={"Accept-Language": "ja"})
+                self.assertEqual(self.save({"max_download_task": 6}).status_code, 200)
+                self.assertEqual(backend.bot.set_bot_commands.await_count, 1)
+            finally:
+                self.app.loop.call_soon_threadsafe(release.set)
+                if backend._commands_refresh_task is not None:
+                    asyncio.run_coroutine_threadsafe(finish(), self.app.loop).result(timeout=2)
+
     def test_credentials_need_reconnect_but_only_listener_settings_need_restart(self):
         self.setup()
         self.app.telegram_login.client = SimpleNamespace()

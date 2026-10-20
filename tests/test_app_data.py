@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from module import bot, task_store
 from module.app import Application, DownloadStatus
@@ -199,8 +199,14 @@ class BotAdDataTests(unittest.IsolatedAsyncioTestCase):
 
                 client = SimpleNamespace(send_message=AsyncMock(side_effect=reply))
                 message = SimpleNamespace(text='/set_language fr', from_user=SimpleNamespace(id=7))
-                with patch.object(bot, '_bot', SimpleNamespace(app=app)):
+                def verify_saved():
+                    self.assertEqual(json.loads((data.parent / 'settings.json').read_text())['language'], 'fr')
+
+                backend = SimpleNamespace(app=app, schedule_commands_refresh=Mock(side_effect=verify_saved))
+
+                with patch.object(bot, '_bot', backend):
                     await bot.set_language(client, message)
+                backend.schedule_commands_refresh.assert_called_once_with()
                 client.send_message.assert_awaited_once()
                 restarted = Application(str(config), str(data))
                 restarted.load_config()

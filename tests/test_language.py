@@ -137,13 +137,27 @@ class BotLanguageTests(unittest.IsolatedAsyncioTestCase):
                 message = SimpleNamespace(text=f'/set_language {code}',
                                           from_user=SimpleNamespace(id=12))
                 try:
-                    with patch.object(bot, '_bot', SimpleNamespace(app=app)):
+                    backend = SimpleNamespace(app=app, schedule_commands_refresh=Mock())
+                    with patch.object(bot, '_bot', backend):
                         await bot.set_language(client, message)
                     native_name = lang.CATALOGS[lang.normalize_language(code)]['name']
                     self.assertIn(native_name, client.send_message.await_args.args[1])
                     app.save_app_data.assert_called_once_with(True)
+                    backend.schedule_commands_refresh.assert_called_once_with()
                 finally:
                     set_language(Language.EN)
+
+    async def test_failed_persistence_does_not_enqueue_menu_refresh_or_reply_success(self):
+        from unittest.mock import AsyncMock, Mock
+        self.addCleanup(set_language, Language.EN)
+        app = SimpleNamespace(set_language=set_language, save_app_data=Mock(side_effect=OSError("disk full")))
+        backend = SimpleNamespace(app=app, schedule_commands_refresh=Mock())
+        client = SimpleNamespace(send_message=AsyncMock())
+        message = SimpleNamespace(text='/set_language fr', from_user=SimpleNamespace(id=12))
+        with patch.object(bot, '_bot', backend), self.assertRaises(OSError):
+            await bot.set_language(client, message)
+        backend.schedule_commands_refresh.assert_not_called()
+        client.send_message.assert_not_awaited()
 
     async def test_retry_failures_persist_english_keys_for_later_locale_selection(self):
         from unittest.mock import AsyncMock, Mock

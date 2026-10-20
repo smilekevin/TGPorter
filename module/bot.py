@@ -56,6 +56,7 @@ from module.runtime_paths import BOT_CONFIG_FILE
 
 # pylint: disable = C0301, R0902
 
+_BOT_COMMANDS_TIMEOUT = 10
 _BOT_HEARTBEAT_INTERVAL = 60
 _BOT_HEARTBEAT_TIMEOUT = 10
 _BOT_HEARTBEAT_FAILURES = 3
@@ -207,6 +208,9 @@ class DownloadBot:
         self.task_id: int = 0
         self.reply_task = None
         self.heartbeat_task = None
+        self._commands_lock = asyncio.Lock()
+        self._commands_refresh_task = None
+        self._commands_queue = asyncio.Queue(maxsize=1)
         self._heartbeat_failures = 0
         self._bot_reconnect_after = 0.0
         self._last_message_at = None
@@ -945,26 +949,10 @@ class DownloadBot:
         self._listen_handler_ref = handler
         logger.info("Listen handler registered on user client for real-time monitoring")
 
-    async def start(
-        self,
-        app: Application,
-        client: pyrogram.Client,
-        add_download_task: Callable,
-        download_chat_task: Callable,
-    ):
-        """Start bot"""
-        self._publish_connection_status("connecting")
-        self.bot = pyrogram.Client(
-            app.application_name + "_bot",
-            api_hash=app.api_hash,
-            api_id=app.api_id,
-            bot_token=app.bot_token,
-            workdir=app.session_file_path,
-            proxy=app.proxy or None,
-        )
-
-        # Command list
-        commands = [
+    @staticmethod
+    def _build_commands():
+        """Build menu descriptions from the current Bot language at publication time."""
+        return [
             types.BotCommand("help", _t("Help")),
             types.BotCommand("query", _t("Query download tasks")),
             types.BotCommand(
@@ -995,6 +983,68 @@ class DownloadBot:
             types.BotCommand("set_language", _t("Set language")),
             types.BotCommand("stop", _t("Stop bot download or forward")),
         ]
+
+    def schedule_commands_refresh(self):
+        """Coalesce menu updates on the owning loop after language persistence completes."""
+        if not self.is_running or self.bot is None or not self.bot.is_initialized:
+            return
+        # One pending marker is enough: the consumer reads the latest saved language.
+        if self._commands_queue.empty():
+            self._commands_queue.put_nowait(None)
+        if self._commands_refresh_task is None or self._commands_refresh_task.done():
+            self._commands_refresh_task = self.app.loop.create_task(self._refresh_commands_loop())
+
+    async def _refresh_commands_loop(self):
+        """Publish the latest language again if a save arrives during a Telegram request."""
+        while self.is_running and not self._commands_queue.empty():
+            self._commands_queue.get_nowait()
+            try:
+                await self.refresh_commands()
+            finally:
+                self._commands_queue.task_done()
+
+    async def refresh_commands(self):
+        """Refresh the live menu on the downloader loop without failing a saved setting."""
+        from module.pyrogram_extension import _bot_flood_wait, _record_bot_flood_wait
+
+        if not self.is_running or self.bot is None or not self.bot.is_initialized:
+            return False
+        try:
+            # Bound Telegram latency without delaying the settings response.
+            # Build inside the lock so concurrent saves cannot publish an older language last.
+            async with asyncio.timeout(_BOT_COMMANDS_TIMEOUT):
+                async with self._commands_lock:
+                    if _bot_flood_wait["until"] > time.time():
+                        logger.warning("Bot command menu refresh deferred during FLOOD_WAIT")
+                        return False
+                    await self.bot.set_bot_commands(self._build_commands())
+        except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
+            _record_bot_flood_wait(error.value)
+            logger.warning("Bot command menu refresh deferred: FLOOD_WAIT {}s", error.value)
+            return False
+        except Exception as error:
+            logger.warning("Bot command menu refresh failed: error={}", type(error).__name__)
+            return False
+        logger.info("Bot command menu refreshed")
+        return True
+
+    async def start(
+        self,
+        app: Application,
+        client: pyrogram.Client,
+        add_download_task: Callable,
+        download_chat_task: Callable,
+    ):
+        """Start bot"""
+        self._publish_connection_status("connecting")
+        self.bot = pyrogram.Client(
+            app.application_name + "_bot",
+            api_hash=app.api_hash,
+            api_id=app.api_id,
+            bot_token=app.bot_token,
+            workdir=app.session_file_path,
+            proxy=app.proxy or None,
+        )
 
         self.app = app
         self.client = client
@@ -1063,7 +1113,8 @@ class DownloadBot:
 
         if getattr(app, "telegram_login", None):
             app.telegram_login.set_stage("Registering bot commands")
-        await self.bot.set_bot_commands(commands)
+        async with self._commands_lock:
+            await self.bot.set_bot_commands(self._build_commands())
 
         self._register_bot_handlers()
 
@@ -1356,7 +1407,8 @@ async def stop_download_bot():
     _bot.is_running = False
     _bot.stop_task("all", discard_partial=False)
     background_tasks = [
-        task for task in [_bot.reply_task, _bot.heartbeat_task, _bot._pending_consumer_task,
+        task for task in [_bot.reply_task, _bot.heartbeat_task, _bot._commands_refresh_task,
+                          _bot._pending_consumer_task,
                           *_bot._range_tasks.values()] if task is not None
     ]
     for task in background_tasks:
@@ -1364,6 +1416,10 @@ async def stop_download_bot():
     await asyncio.gather(*background_tasks, return_exceptions=True)
     _bot._pending_consumer_task = None
     _bot.heartbeat_task = None
+    _bot._commands_refresh_task = None
+    while not _bot._commands_queue.empty():
+        _bot._commands_queue.get_nowait()
+        _bot._commands_queue.task_done()
     if _bot.bot:
         if getattr(_bot.bot, "is_initialized", True):
             await _bot.bot.stop()
@@ -1489,6 +1545,7 @@ async def set_language(client: pyrogram.Client, message: pyrogram.types.Message)
         language = parse_language(language)
         _bot.app.set_language(language)
         _bot.app.save_app_data(True)
+        _bot.schedule_commands_refresh()
         await client.send_message(
             message.from_user.id, f"{_t('Language set to')} {CATALOGS[language.value]['name']}"
         )
