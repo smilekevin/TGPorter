@@ -403,6 +403,7 @@ Application logs are also in `data/log/tdl.log` (10 MB rotation, 30-day retentio
 - **Bot is disconnected:** check Telegram access, proxy settings and recent `Bot heartbeat failed` errors.
 - **Bot is connected but commands do not respond:** check **Allowed users** in Configuration. `authorized=False` in the logs means the sender lacks permission.
 - **Messages arrive but replies stall:** check `Bot handler started` / `Bot handler finished` and reconnect errors.
+- **Single-message links:** send the `https://t.me/...` post link directly to the Bot; link previews are supported for public and private channels. The download account must have access to the post.
 - **Status is unknown:** check the last check time, whether the service is still running and whether Telegram is reachable.
 
 MCP exposes the same Bot status; see the [tool reference](https://github.com/smilekevin/TGPorter/blob/main/docs/mcp.md#mcp-tool-reference). To verify real download integrity, follow the [parallel-download guide](https://github.com/smilekevin/TGPorter/blob/main/docs/parallel-download-testing.md).

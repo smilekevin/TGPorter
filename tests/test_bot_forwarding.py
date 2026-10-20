@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from module import bot, pyrogram_extension, task_store
 from module.app import Application
@@ -121,3 +121,76 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
         task = await self.download()
         self.user_client.get_messages.assert_not_awaited()
         self.assertEqual(task["extra_data"]["message_client"], "bot")
+
+    def registered_handlers(self):
+        self.telegram.me = types.User(id=999, is_bot=True, username="offline_bot")
+        self.telegram.add_handler = Mock()
+        self.backend.allowed_user_ids = [self.sender.id]
+        self.backend._register_bot_handlers()
+        return [call.args[0] for call in self.telegram.add_handler.call_args_list
+                if call.kwargs.get("group", 0) == 0]
+
+    async def first_handler(self, message):
+        # The SDK runs only the first matching handler in each group.
+        for handler in self.registered_handlers():
+            if await handler.check(self.telegram, message):
+                return handler
+        return None
+
+    async def test_post_links_with_and_without_previews_resolve_source_message(self):
+        for url in ("https://t.me/c/123/61", "https://t.me/offline_source/61",
+                    "https://t.me/c/123/50/61"):
+            for preview in (False, True):
+                with self.subTest(url=url, preview=preview):
+                    message = types.Message(
+                        id=289, date=self.date, text=url, from_user=self.sender,
+                        chat=self.inbox, client=self.telegram,
+                        media=enums.MessageMediaType.WEB_PAGE if preview else None,
+                        web_page=types.WebPage(id="offline-preview", url=url) if preview else None)
+                    handler = await self.first_handler(message)
+                    self.assertIsNotNone(handler)
+                    self.assertIs(handler.callback.__wrapped__, bot.download_from_link)
+                    self.user_client.get_chat = AsyncMock(return_value=self.source)
+                    self.user_client.get_messages.reset_mock()
+                    with patch.object(bot, "parse_link", AsyncMock(return_value=(-100123, 61, 0))) as parse, \
+                            patch.object(bot, "direct_download", AsyncMock()) as direct, \
+                            patch.object(bot, "set_chat_title"):
+                        await handler.callback(self.telegram, message)
+                    parse.assert_awaited_once_with(self.user_client, url)
+                    self.user_client.get_messages.assert_awaited_once_with(-100123, 61)
+                    direct.assert_awaited_once_with(self.backend, -100123, message, self.source_message)
+
+    async def test_link_preview_persists_channel_post_instead_of_bot_message(self):
+        url = "https://t.me/c/123/61"
+        message = types.Message(
+            id=289, date=self.date, text=url, from_user=self.sender, chat=self.inbox,
+            client=self.telegram, media=enums.MessageMediaType.WEB_PAGE,
+            web_page=types.WebPage(id="offline-preview", url=url))
+        handler = await self.first_handler(message)
+        self.user_client.get_chat = AsyncMock(return_value=self.source)
+        with patch.object(bot, "parse_link", AsyncMock(return_value=(-100123, 61, 0))), \
+                patch.object(bot, "set_chat_title"):
+            await handler.callback(self.telegram, message)
+        task, = task_store.get_running_tasks()
+        self.assertEqual(task["chat_id"], -100123)
+        self.assertEqual(task["extra_data"]["message_id"], 61)
+        self.assertEqual(task["extra_data"]["message_client"], "user")
+        self.assertIs(self.backend._cached_messages[task["task_id"]], self.source_message)
+
+    async def test_real_media_with_link_caption_keeps_media_handler(self):
+        for origin in (None, types.MessageOriginChannel(
+                date=self.date, chat=self.source, message_id=61)):
+            with self.subTest(forwarded=origin is not None):
+                message = self.message(origin=origin)
+                message.caption = "https://t.me/c/123/61"
+                handler = await self.first_handler(message)
+                self.assertIsNotNone(handler)
+                self.assertIs(handler.callback.__wrapped__, bot.download_forward_media)
+
+    async def test_unauthorized_preview_does_not_match_download_handlers(self):
+        url = "https://t.me/c/123/61"
+        message = types.Message(
+            id=289, text=url, from_user=types.User(id=999), chat=self.inbox,
+            media=enums.MessageMediaType.WEB_PAGE,
+            web_page=types.WebPage(id="offline-preview", url=url))
+        self.assertIsNone(await self.first_handler(message))
