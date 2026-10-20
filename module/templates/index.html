@@ -241,7 +241,7 @@
                 <option value="all" x-text="t('All statuses')"></option>
                 <option value="active" x-text="t('Downloading')"></option>
                 <option value="paused" x-text="t('Paused')"></option>
-                <option value="waiting" x-text="t('Waiting')"></option>
+                <option value="preparing" x-text="t('Preparing')"></option>
             </select>
         </label>
         </div>
@@ -333,8 +333,8 @@
                     <div class="checkbox-row card-hover rounded-xl p-4 border fade-in bg-white shadow-sm"
                          :class="{
                              'border-amber-200': task.status === 'paused',
-                             'border-gray-200': task.status === 'waiting',
-                             'border-gray-100': task.status !== 'paused' && task.status !== 'waiting'
+                             'border-gray-200': task.phase === 'preparing' && task.status !== 'paused',
+                             'border-gray-100': task.status !== 'paused' && task.phase !== 'preparing'
                          }"
                          :id="'card-' + task.task_id">
                         <div class="flex items-start gap-3">
@@ -350,14 +350,12 @@
                                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
                                           :class="{
                                               'bg-amber-100 text-amber-700': task.status === 'paused',
-                                              'bg-blue-100 text-blue-700': task.status === 'active' && task.phase !== 'fetching',
-                                              'bg-indigo-100 text-indigo-600': task.phase === 'fetching',
-                                              'bg-gray-100 text-gray-500': task.status === 'waiting'
+                                              'bg-blue-100 text-blue-700': task.status === 'active' && task.phase !== 'preparing',
+                                              'bg-indigo-100 text-indigo-600': task.phase === 'preparing' && task.status !== 'paused'
                                           }"
                                           x-text="{
                                               'paused': t('Paused'),
-                                              'waiting': t('Waiting'),
-                                              'active': task.phase === 'fetching' ? t('Fetching message') : t('Downloading')
+                                              'active': task.phase === 'preparing' ? t('Preparing') : t('Downloading')
                                           }[task.status] || task.status">
                                     </span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
@@ -370,24 +368,25 @@
                                         </span>
                                     </template>
                                 </div>
-                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.phase === 'fetching' ? t('Fetching file information...') : task.filename"></h4>
+                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
+                                <p x-show="task.wait_reason && task.phase !== 'preparing'" class="text-xs text-amber-600 mt-1"
+                                   x-text="t(task.wait_reason, {seconds: task.wait_seconds})"></p>
                                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-gray-500">
-                                    <template x-if="task.phase !== 'fetching'">
+                                    <template x-if="task.phase !== 'preparing'">
                                         <span>
                                             <span x-text="t(task.total_size)"></span>
                                             <span class="text-gray-300">|</span>
                                             <span class="font-mono font-medium"
                                                   :class="{
                                                       'text-amber-600': task.status === 'paused',
-                                                      'text-blue-600': task.status === 'active',
-                                                      'text-gray-400': task.status === 'waiting'
+                                                      'text-blue-600': task.status === 'active'
                                                   }"
                                                   x-text="task.download_speed"></span>
                                             <span class="text-gray-300">|</span>
                                             <span class="inline-block whitespace-nowrap" x-text="t('Active streams: {count}', {count: task.active_streams ?? 0})"></span>
                                         </span>
                                     </template>
-                                    <template x-if="task.eta && task.phase !== 'fetching'">
+                                    <template x-if="task.eta && task.phase !== 'preparing'">
                                         <span>
                                             <span class="text-gray-300">|</span>
                                             <span class="text-gray-400" x-text="t('Remaining ') + task.eta"></span>
@@ -398,7 +397,7 @@
 
                             <!-- Action Buttons -->
                             <div class="flex items-center gap-1.5 shrink-0">
-                                <template x-if="task.status === 'active' && task.phase !== 'fetching'">
+                                <template x-if="task.status === 'active'">
                                     <button
                                         @click="pauseTask(task.task_id)"
                                         class="btn-action p-2.5 sm:p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 border border-amber-200"
@@ -435,16 +434,16 @@
 
                         <!-- Progress Bar -->
                         <div class="mt-3 ml-7">
-                            <template x-if="task.phase === 'fetching'">
+                            <template x-if="task.phase === 'preparing'">
                                 <div class="flex items-center gap-2 text-xs text-indigo-500">
                                     <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                                     </svg>
-                                    <span><span data-i18n="Fetching file information..." x-text="t('Fetching file information...')">Fetching file information...</span></span>
+                                    <span x-text="task.status === 'paused' ? t('Paused') : t(task.wait_reason || 'Fetching file information...', {seconds: task.wait_seconds})"></span>
                                 </div>
                             </template>
-                            <template x-if="task.phase !== 'fetching'">
+                            <template x-if="task.phase !== 'preparing'">
                                 <div>
                                     <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                                         <span><span data-i18n="Progress" x-text="t('Progress')">Progress</span></span>
@@ -518,7 +517,7 @@
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                         </svg>
-                                        <span x-text="t(task.queue_label) || t('Waiting')"></span>
+                                        <span x-text="t(task.queue_label) || t('Queued')"></span>
                                     </span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
                                     <span class="text-xs text-gray-300">|</span>
@@ -531,6 +530,8 @@
                                     </template>
                                 </div>
                                 <h4 class="text-sm font-medium text-gray-900 line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
+                                <p x-show="task.wait_reason" class="text-xs text-amber-600 mt-1"
+                                   x-text="t(task.wait_reason, {seconds: task.wait_seconds})"></p>
                                 <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
                                     <span x-text="t(task.total_size)"></span>
                                     <span class="text-gray-300">|</span>
@@ -1012,7 +1013,10 @@
             },
             get filteredActiveTasks() {
                 return this.activeTasks.filter(task => this.matchesSearch(task) &&
-                    (this.activeStatusFilter === 'all' || task.status === this.activeStatusFilter));
+                    (this.activeStatusFilter === 'all' ||
+                     (this.activeStatusFilter === 'preparing' ? task.status === 'active' && task.phase === 'preparing' :
+                      this.activeStatusFilter === 'active' ? task.status === 'active' && task.phase !== 'preparing' :
+                      task.status === this.activeStatusFilter)));
             },
             get filteredFailedTasks() { return this.failedTasks.filter(task => this.matchesSearch(task)); },
             get visibleTaskCount() {
@@ -1277,7 +1281,8 @@
                         }
                     }
                     Object.values(newMap).forEach(t => this.activeTasks.push(t));
-                } catch(e) {}
+                    return true;
+                } catch(e) { return false; }
             },
 
             async fetchCompleted(reset = false) {
@@ -1380,6 +1385,9 @@
                     if (query !== this.taskSearch || requestId !== this.pendingRequestId) return;
                     const tasks = data.tasks || data || [];
                     const total = data.total ?? this.pendingTotal;
+                    // Keep queued rows until the receiving list has been read successfully.
+                    if (await this.fetchActive() === false) return;
+                    if (query !== this.taskSearch || requestId !== this.pendingRequestId) return;
                     // Merge existing task objects by task_id while preserving order.
                     const byId = {};
                     tasks.forEach(t => { byId[t.task_id] = t; });

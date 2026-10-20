@@ -49,7 +49,9 @@ def build_task_query(service, status="all", page=1):
     lines.extend(f"{_t(_STATUS_LABELS[kind])}: {len(tasks)}" for kind, tasks in groups.items())
     lines.append("")
     for kind, task in rows[(page - 1) * _PAGE_SIZE:page * _PAGE_SIZE]:
-        label = "Paused" if task.get("status") == "paused" else _STATUS_LABELS[kind]
+        label = ("Paused" if task.get("status") == "paused" else
+                 "Preparing" if kind == "active" and task.get("phase") == "preparing" else
+                 "Queued" if kind == "pending" else _STATUS_LABELS[kind])
         display_id = task.get("task_id_display") or task["task_id"]
         filename = task.get("filename") or _t("Message {id} (pending download)", id=task.get("id", "?"))
         lines.append(f"<b>{_t(label)}</b> · <code>{_text(display_id, 40)}</code> · {_text(filename)}")

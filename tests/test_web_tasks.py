@@ -102,6 +102,51 @@ class WebTaskTests(unittest.TestCase):
         self.assertEqual(completed['tasks'][0]['download_progress_raw'], 100)
         self.assertEqual(self.client.get('/get_completed_count').json['total'], 1)
 
+    def test_preparation_is_explicit_and_one_byte_files_are_downloads(self):
+        download_stat._download_result.clear()
+        node = TaskNode(chat_id=1, task_id='task-1', limit=1)
+        download_stat.prepare_download(2, node)
+        row = self.client.get('/get_download_list?already_down=false').json[0]
+        self.assertEqual((row['status'], row['phase'], row['total_size_bytes']),
+                         ('active', 'preparing', 0))
+        self.assertEqual(row['wait_reason'], 'Fetching file information...')
+        asyncio.run(download_stat.update_download_status(
+            0, 1, 2, str(self.file), 1, node, None, initial=True))
+        row = self.client.get('/get_download_list?already_down=false').json[0]
+        self.assertEqual(row['phase'], 'preparing')
+        self.assertEqual(row['wait_reason'], 'Establishing download connections')
+        with download_stat.track_download_stream(1, 2, 'task-1'):
+            row = self.client.get('/get_download_list?already_down=false').json[0]
+            self.assertEqual((row['phase'], row['wait_reason']), ('downloading', ''))
+        # No bytes and no live stream must not revert a started file to preparation.
+        row = self.client.get('/get_download_list?already_down=false').json[0]
+        self.assertEqual(row['phase'], 'downloading')
+        self.post('/pause_task?task_id=1_2')
+        self.assertEqual(self.client.get('/get_download_list?already_down=false').json[0]['status'], 'paused')
+        self.post('/resume_task?task_id=1_2')
+        asyncio.run(download_stat.update_download_status(1, 1, 2, str(self.file), 1, node, None))
+        self.assertEqual(self.client.get('/get_download_list?already_down=false').json, [])
+        self.assertEqual(self.client.get('/get_download_list?already_down=true').json['total'], 1)
+
+    def test_wait_reason_respects_pause_and_healthy_streams(self):
+        record = download_stat._download_result[1][2]
+        record.update(total_size=100, down_byte=5, download_speed=0, start_time=1, end_time=1,
+                      phase='downloading')
+        from module.download_service import DownloadService
+        with patch.object(DownloadService, 'get_flood_wait', return_value={'active': True, 'remaining': 35}):
+            row = self.client.get('/get_download_list?already_down=false').json[0]
+            self.assertEqual(row['wait_seconds'], 35)
+            self.assertEqual(row['wait_reason'], 'Waiting for Telegram cooldown: {seconds} seconds')
+            with download_stat.track_download_stream(1, 2, 'task-1'):
+                row = self.client.get('/get_download_list?already_down=false').json[0]
+                self.assertEqual(row['wait_reason'], '')
+            download_stat.set_download_state(download_stat.DownloadState.StopDownload)
+            row = self.client.get('/get_download_list?already_down=false').json[0]
+            self.assertEqual(row['wait_reason'], 'All downloads are paused')
+            self.post('/pause_task?task_id=1_2')
+            row = self.client.get('/get_download_list?already_down=false').json[0]
+            self.assertEqual((row['status'], row['wait_reason']), ('paused', ''))
+
     def test_submission_validates_json_and_link_without_touching_telegram(self):
         self.assertEqual(self.client.post('/submit_download', json={'url': 'https://t.me/a/1'}).status_code, 400)
         for payload in (None, [], 'text'):
@@ -259,6 +304,17 @@ global.fetch = async (url, options) => {
 ''' + script + '''
 (async () => {
     const ui = app();
+    ui.activeTasks = [
+        {task_id: 'a', filename: 'a', status: 'active', phase: 'preparing'},
+        {task_id: 'b', filename: 'b', status: 'active', phase: 'downloading'},
+        {task_id: 'c', filename: 'c', status: 'paused', phase: 'preparing'},
+    ];
+    for (const [filter, expected] of [['preparing', ['a']], ['active', ['b']], ['paused', ['c']]]) {
+        ui.activeStatusFilter = filter;
+        assert.deepEqual(ui.filteredActiveTasks.map(task => task.task_id), expected);
+    }
+    ui.activeTasks = [];
+    ui.activeStatusFilter = 'all';
     ui.showToast = () => {};
     ui.fetchPending = async () => {};
     ui.fetchActive = async () => {};

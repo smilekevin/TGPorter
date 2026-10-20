@@ -19,7 +19,7 @@ from module.bot import start_download_backend, start_download_bot, stop_download
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
 from module.download_stat import (record_skipped_download,
-                                  remove_skipped_download, track_download_stream)
+                                  remove_skipped_download, track_download_stream, prepare_download)
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.partial_file import DownloadStorageError
@@ -592,6 +592,7 @@ async def add_download_task(message: pyrogram.types.Message, node: TaskNode):
     if queue is None:
         logger.error(f"add_download_task: queue is None! msg {message.id} cannot be queued")
         return False
+    prepare_download(message.id, node)
     node.download_status[message.id] = DownloadStatus.Downloading
     await queue.put((message, node))
     node.total_task += 1
@@ -620,6 +621,7 @@ async def save_msg_to_file(app, chat_id: Union[int, str], message: pyrogram.type
 
 async def download_task(client: pyrogram.Client, message: pyrogram.types.Message, node: TaskNode):
     """Download and Forward media"""
+    prepare_download(message.id, node)
     matches_filter = True
     if node.download_filter and not node.bypass_filters:
         meta_data = MetaData()

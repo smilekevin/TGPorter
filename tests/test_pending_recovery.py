@@ -11,6 +11,7 @@ import media_downloader as downloader
 from module import bot, download_stat, task_store as store
 from module import web
 from module.app import TaskNode
+from module.download_service import DownloadService
 
 
 class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -160,6 +161,105 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(consumer.done())
         self.assertTrue(self.bot.reply_task.done())
         self.assertIsNone(self.bot._pending_consumer_task)
+
+    async def test_preparation_handoff_is_visible_and_rejection_returns_to_queue(self):
+        self.save()
+        self.app.web_login_secret = ''
+        with patch.object(web, '_app', self.app):
+            client = web.get_flask_app().test_client()
+            self.assertEqual(client.get('/get_pending_list').json['tasks'][0]['queue_label'], 'Queued')
+            entered, release = asyncio.Event(), asyncio.Event()
+
+            async def fetch(*args):
+                entered.set()
+                await release.wait()
+                return self.message()
+
+            self.client.get_messages.side_effect = fetch
+            self.bot.add_download_task = AsyncMock(return_value=False)
+            task = asyncio.create_task(bot._consume_one_pending())
+            await entered.wait()
+            try:
+                self.assertEqual(client.get('/get_pending_list').json['total'], 0)
+                row = client.get('/get_download_list?already_down=false').json[0]
+                self.assertEqual((row['status'], row['phase'], row['total_size_bytes']),
+                                 ('active', 'preparing', 0))
+                self.assertEqual(row['wait_reason'], 'Fetching message')
+                self.assertEqual(row['task_id_display'], '1014-1')
+            finally:
+                release.set()
+                await task
+            self.assertEqual(client.get('/get_download_list?already_down=false').json, [])
+            self.assertEqual(client.get('/get_pending_list').json['total'], 1)
+            self.bot.add_download_task = downloader.add_download_task
+            await bot._consume_one_pending()
+            self.assertEqual(client.get('/get_pending_list').json['total'], 0)
+            self.assertEqual(client.get('/get_download_list?already_down=false').json[0]['phase'], 'preparing')
+
+    async def test_deletion_during_preparation_does_not_enqueue_or_reappear(self):
+        self.save()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def fetch(*args):
+            entered.set()
+            await release.wait()
+            return self.message()
+
+        self.client.get_messages.side_effect = fetch
+        with patch.object(download_stat, '_cancelled_tasks', set()), patch.object(
+                download_stat, '_HISTORY_FILE', str(Path(self.temp.name) / 'history.json')):
+            task = asyncio.create_task(bot._consume_one_pending())
+            await entered.wait()
+            try:
+                self.assertEqual(DownloadService(self.app).web_delete_task('-10001_101')['code'], '1')
+            finally:
+                release.set()
+                await task
+            self.assertTrue(self.queue.empty())
+            self.assertFalse(store.get_running_tasks())
+            self.assertFalse(download_stat.get_download_result())
+            await bot._consume_one_pending()
+            self.assertEqual(self.client.get_messages.await_count, 1)
+
+    async def test_stale_pending_cancellation_also_stops_inflight_preparation(self):
+        self.save()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def fetch(*args):
+            entered.set()
+            await release.wait()
+            return self.message()
+
+        self.client.get_messages.side_effect = fetch
+        with patch.object(download_stat, '_cancelled_tasks', set()), patch.object(
+                download_stat, '_HISTORY_FILE', str(Path(self.temp.name) / 'history.json')):
+            task = asyncio.create_task(bot._consume_one_pending())
+            await entered.wait()
+            try:
+                self.assertEqual(DownloadService(self.app).web_remove_pending('1')['code'], '1')
+            finally:
+                release.set()
+                await task
+            self.assertTrue(self.queue.empty())
+            self.assertFalse(store.get_running_tasks())
+            self.assertFalse(download_stat.get_download_result())
+
+    async def test_fetch_cancellation_restores_pending_visibility(self):
+        self.save()
+        entered = asyncio.Event()
+
+        async def fetch(*args):
+            entered.set()
+            await asyncio.Event().wait()
+
+        self.client.get_messages.side_effect = fetch
+        task = asyncio.create_task(bot._consume_one_pending())
+        await entered.wait()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        self.assertFalse(download_stat.get_download_result())
+        self.assertEqual(DownloadService(self.app).web_get_pending_list()['total'], 1)
+        self.assertFalse(self.bot._consuming)
 
     async def test_overlap_does_not_fetch_or_queue_the_same_task_twice(self):
         self.save()

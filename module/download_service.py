@@ -427,18 +427,14 @@ class DownloadService:
 
         download_result = get_download_result()
         result = []
-        for chat_id, messages in download_result.items():
-            for idx, value in messages.items():
+        cooldown = self.get_flood_wait() if not already_down else {"active": False}
+        for chat_id, messages in list(download_result.items()):
+            for idx, value in list(messages.items()):
                 is_already_down = value["down_byte"] == value["total_size"] and value["total_size"] > 0
 
                 if already_down and not is_already_down:
                     continue
                 if not already_down:
-                    # Hide placeholder entries (total_size==0, down_byte==0) — these
-                    # are created by consumer for pending tasks but aren't actively
-                    # downloading yet. Only show tasks with real progress data.
-                    if value.get("total_size", 0) == 0 and value.get("down_byte", 0) == 0:
-                        continue
                     # Exclude completed history from active polling. Thousands of resident
                     # completed rows previously produced multi-megabyte responses every second.
                     # Completed history uses already_down=true pagination.
@@ -477,23 +473,27 @@ class DownloadService:
                 # Internal key for operations (stable across restarts)
                 task_id = f"{chat_id}_{idx}"
 
-                # Determine status: completed, paused, waiting, or active
+                # Keep category status compatible; phase describes the active execution stage.
                 if is_already_down:
                     status = "completed"
                 elif is_task_paused(task_id) or is_task_paused(value.get("task_id", "")):
                     status = "paused"
-                elif value.get("total_size", 0) == 0 and value.get("down_byte", 0) == 0:
-                    status = "waiting"
                 else:
                     status = "active"
 
-                # Distinguish fetching placeholders from downloads: total_size<=1 and
-                # down_byte==0 indicate a new consumer placeholder. Pyrogram's first callback
-                # replaces total_size with the real value.
-                if status == "active" and value.get("total_size", 0) <= 1 and value.get("down_byte", 0) == 0:
-                    phase = "fetching"
-                else:
-                    phase = "downloading"
+                # Missing phases belong to existing progress/history records, never size sentinels.
+                phase = value.get("phase", "downloading")
+                active_streams = 0 if is_already_down else get_active_download_streams(task_id)
+                wait_reason = ""
+                wait_seconds = 0
+                if not is_already_down and status != "paused":
+                    if get_download_state() == DownloadState.StopDownload:
+                        wait_reason = "All downloads are paused"
+                    elif cooldown["active"] and not active_streams:
+                        wait_reason = "Waiting for Telegram cooldown: {seconds} seconds"
+                        wait_seconds = cooldown["remaining"]
+                    elif phase == "preparing":
+                        wait_reason = value.get("preparation_reason", "Fetching file information...")
 
                 # Get chat title from cache
                 source_title = value.get("source_chat_title", "")
@@ -525,18 +525,20 @@ class DownloadService:
                     "chat": str(chat_id),
                     "chat_title": chat_title,
                     "id": str(idx),
-                    "filename": os.path.basename(value["file_name"]) if value.get("file_name") else f'Message {idx} (pending download)',
+                    "filename": os.path.basename(value["file_name"]) if value.get("file_name") else value.get('display_filename') or f'Message {idx} (pending download)',
                     "total_size": format_byte(value["total_size"]) if value["total_size"] > 0 else 'Unknown',
                     "total_size_bytes": value["total_size"],
                     "download_progress": str(progress),
                     "download_progress_raw": progress,
                     "download_speed": download_speed,
-                    "active_streams": 0 if is_already_down else get_active_download_streams(task_id),
+                    "active_streams": active_streams,
                     "eta": eta,
                     "save_path": value["file_name"].replace("\\", "/"),
                     "status": status,
                     "completion_reason": value.get("completion_reason", ""),
                     "phase": phase,
+                    "wait_reason": wait_reason,
+                    "wait_seconds": wait_seconds,
                     "start_time": start_time,
                     "end_time": end_time,
                     "created_at": created_at,
@@ -793,10 +795,11 @@ class DownloadService:
         """Get list of pending tasks (received but not started downloading)"""
         import time as _time
         pending = get_pending_tasks()
-        # Filter out tasks already in _download_result (consumer created placeholder).
+        # Preparation records remain visible in Active even before their first progress callback.
         # These will show up in the active download list — no need to duplicate in pending.
         from module.download_stat import get_download_result as _get_dr
         _dr = _get_dr()
+        cooldown = self.get_flood_wait()
 
         result = []
         for task in pending:
@@ -851,8 +854,15 @@ class DownloadService:
 
             task_id_display = task.get("extra_data", {}).get("task_id_display", str(task_id))
 
-            # Every pending task uses the Waiting label.
-            queue_label = 'Waiting'
+            queue_label = 'Queued'
+            wait_seconds = 0
+            if get_download_state() == DownloadState.StopDownload:
+                wait_reason = "All downloads are paused"
+            elif cooldown["active"]:
+                wait_reason = "Waiting for Telegram cooldown: {seconds} seconds"
+                wait_seconds = cooldown["remaining"]
+            else:
+                wait_reason = "Waiting for download slot"
 
             result.append({
                 "task_id": str(task_id),
@@ -867,6 +877,8 @@ class DownloadService:
                 "created_ts": created_at,
                 "wait_time": wait_time,
                 "queue_label": queue_label,
+                "wait_reason": wait_reason,
+                "wait_seconds": wait_seconds,
             })
 
         # Search the complete queue before pagination, including display IDs.
@@ -893,5 +905,7 @@ class DownloadService:
             task_id_int = int(task_id)
         except (ValueError, TypeError):
             task_id_int = task_id
+        # A stale Pending card may be cancelled after preparation has already begun.
+        delete_task(task_id_int)
         remove_task(task_id_int)
         return {"code": "1", "message": "removed"}

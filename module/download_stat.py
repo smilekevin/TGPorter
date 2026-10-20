@@ -65,12 +65,53 @@ _sync_lock = __import__('threading').RLock()  # History snapshots can nest insid
 _download_streams: dict = {}  # Runtime-only tokens; never restore stream counts from history.
 
 
+def prepare_download(message_id, node, *, filename="", reason="Fetching file information..."):
+    """Publish preparation explicitly before fetching metadata or opening connections."""
+    with _sync_lock:
+        messages = _download_result.setdefault(node.chat_id, {})
+        entry = messages.get(message_id)
+        if entry is None:
+            entry = {
+                "down_byte": 0, "total_size": 0, "progress": 0,
+                "file_name": "", "display_filename": filename, "start_time": time.time(), "end_time": 0,
+                "download_speed": 0, "each_second_total_download": 0,
+                "task_id": node.task_id, "task_id_display": node.task_id_display,
+                "source_chat_title": node.source_chat_title,
+                "source_chat_id": node.source_chat_id,
+                "source_message_id": node.source_message_id,
+                "phase": "preparing", "preparation_reason": reason,
+            }
+            messages[message_id] = entry
+        return entry
+
+
+def is_download_cancelled(message_id, node):
+    """Check generation-scoped cancellation during metadata fetch and queue handoff."""
+    with _sync_lock:
+        return node.is_stop_transmission or any(
+            key in _cancelled_tasks for key in _download_control_keys(message_id, node))
+
+
+def remove_preparing_download(message_id, node, entry):
+    """Roll back only this preparation after a rejected handoff or fetch retry."""
+    with _sync_lock:
+        messages = _download_result.get(node.chat_id, {})
+        if messages.get(message_id) is entry and entry.get("phase") == "preparing":
+            messages.pop(message_id)
+            if not messages:
+                _download_result.pop(node.chat_id, None)
+
+
 @contextmanager
 def track_download_stream(chat_id, message_id, task_id):
     """Count a stream while it fetches a range, including requests awaiting data."""
     token = object()
     with _sync_lock:
         _download_streams[token] = (f"{chat_id}_{message_id}", str(task_id))
+        entry = _download_result.get(chat_id, {}).get(message_id)
+        if entry is not None and str(entry.get("task_id")) == str(task_id):
+            entry["phase"] = "downloading"
+            entry.pop("preparation_reason", None)
     try:
         yield
     finally:
@@ -470,8 +511,8 @@ async def update_download_status(
 
             # Detect when a placeholder resolves to real data so Bot status refreshes
             # immediately.
-            _prev_total = _download_result[chat_id][message_id].get("total_size", 0)
-            _placeholder_resolved = _prev_total <= 1 and total_size > 1
+            _placeholder_resolved = (
+                _download_result[chat_id][message_id].get("phase") == "preparing" and not initial)
 
             if initial:
                 download_speed = 0
@@ -542,6 +583,14 @@ async def update_download_status(
             _placeholder_resolved = False
             if down_byte >= total_size and total_size > 0:
                 save_downloads()
+
+        entry = _download_result[chat_id][message_id]
+        if not initial:
+            entry["phase"] = "downloading"
+            entry.pop("preparation_reason", None)
+        elif entry.get("phase") != "downloading":
+            entry["phase"] = "preparing"
+            entry["preparation_reason"] = "Establishing download connections"
 
         # Detect silent throttling under the lock; send notifications after releasing it.
         _throttle_action = None  # None / "notify" / "clear"

@@ -66,6 +66,26 @@ assert.equal(ui.completedHasMore,false);
 assert.equal(calls.length,3,'completion must not wait for the ten-second timer');
 ''')
 
+    def test_pending_handoff_waits_for_successful_active_refresh(self):
+        self.run_script(r'''
+ui.pendingTasks=[{task_id:'pending'}];
+ui.pendingTotal=1;
+let readable=false;
+context.authenticatedFetch=async url=>{
+    if(url.includes('/get_pending_list'))return response({tasks:[],total:0});
+    assert.equal(url,'/get_download_list?already_down=false');
+    assert.equal(ui.pendingTasks.length,1,'do not remove a queued row before reading Active');
+    if(!readable)throw Error('offline');
+    return response([{task_id:'prepared',status:'active',phase:'preparing'}]);
+};
+await ui.pollPendingRefresh();
+assert.equal(ui.pendingTasks.length,1,'preserve the row when the receiving list is unavailable');
+readable=true;
+await ui.pollPendingRefresh();
+assert.equal(ui.pendingTasks.length,0);
+assert.equal(ui.activeTasks[0].phase,'preparing');
+''')
+
     def test_failed_list_fetch_does_not_acknowledge_count_and_retries(self):
         self.run_script(r'''
 for(const failure of ['network','http','json']){

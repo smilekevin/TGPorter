@@ -593,6 +593,12 @@
     "Message account is unavailable": "Message account is unavailable",
     "A download for this message is already queued": "A download for this message is already queued",
     "Unable to queue download": "Unable to queue download",
-    "Download": "Download"
+    "Download": "Download",
+    "Preparing": "Preparando",
+    "Queued": "En cola",
+    "Waiting for download slot": "Esperando un puesto de descarga",
+    "Establishing download connections": "Estableciendo conexiones de descarga",
+    "All downloads are paused": "Todas las descargas están pausadas",
+    "Waiting for Telegram cooldown: {seconds} seconds": "Esperando a Telegram: {seconds} segundos"
   }
 }

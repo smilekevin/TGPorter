@@ -288,6 +288,12 @@
     "Message account is unavailable": "Message account is unavailable",
     "A download for this message is already queued": "A download for this message is already queued",
     "Unable to queue download": "Unable to queue download",
-    "Download": "Download"
+    "Download": "Download",
+    "Preparing": "Підготовка",
+    "Queued": "У черзі",
+    "Waiting for download slot": "Очікування вільного місця для завантаження",
+    "Establishing download connections": "Встановлення з’єднань для завантаження",
+    "All downloads are paused": "Усі завантаження призупинено",
+    "Waiting for Telegram cooldown: {seconds} seconds": "Очікування Telegram: {seconds} секунд"
   }
 }
