@@ -1137,7 +1137,9 @@ class DownloadBot:
         add_handler(
             MessageHandler(
                 download_forward_media,
+                # The SDK also marks link previews as media; resolve their text URL.
                 filters=pyrogram.filters.media
+                & ~pyrogram.filters.web_page
                 & self._allowed_user_filter,
             )
         )

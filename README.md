@@ -139,7 +139,7 @@ docker run -d \
 
 ### 快捷操作（无需命令）
 
-- **发送 `t.me` 链接** → 下载单条消息
+- **发送 `t.me` 链接** → 下载单条消息，支持带链接预览的公开及私有频道链接
 - **转发媒体消息给 Bot** → 下载该媒体（优先从源频道下载）
 
 | 命令 | 说明 | 示例 |
@@ -507,7 +507,7 @@ For more details, please refer to the following deployment matrix:
 
 ### Shortcuts (no command needed)
 
-- **Send a `t.me` link** → downloads single message
+- **Send a `t.me` link** → downloads a single message from public or private channels, including links with previews
 - **Forward media to Bot** → downloads from source channel
 
 | Command | Description | Example |

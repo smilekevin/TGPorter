@@ -419,6 +419,7 @@ docker logs -f --since 5m --timestamps tgporter
 - **Bot 断开连接**：检查 Telegram 网络、代理和近期的 `Bot heartbeat failed` 错误。
 - **Bot 已连接但命令无响应**：检查 Configuration 的**允许的用户**。日志出现 `authorized=False` 表示发送者没有权限。
 - **收到消息但回复卡住**：查看 `Bot handler started` / `Bot handler finished` 及重连错误。
+- **单条消息链接**：将 `https://t.me/...` 消息链接直接发送给 Bot，支持带链接预览的公开及私有频道链接；下载账号必须有权访问原消息。
 - **状态未知**：检查最近检查时间、服务是否运行，以及 Telegram 是否可达。
 
 MCP 返回同样的 Bot 状态，见[工具参考](https://github.com/smilekevin/TGPorter/blob/main/docs/mcp.md#结果与错误)。需要验证实际下载完整性时，参照[并行下载测试指南](./docs/parallel-download-testing.md)。
