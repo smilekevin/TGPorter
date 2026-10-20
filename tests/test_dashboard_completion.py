@@ -203,11 +203,12 @@ context.window={addEventListener(){},removeEventListener(){}};
 context.startDashboardPolling=refresh=>{cycle=refresh;return ()=>{};};
 context.authenticatedFetch=async url=>{
     if(url==='/get_completed_count')return response({total:1});
+    assert.ok(url.startsWith('/get_download_list?already_down=true'), 'only completed-list requests count as refresh attempts');
     if(++listAttempts===1)throw Error('offline');
     return response({tasks:[completed('new')],total:1});
 };
 await ui.pollCompletedCount();
-for(const name of ['fetchVersion','fetchActive','fetchPending','fetchCompleted','fetchMaxWorkers',
+for(const name of ['fetchVersion','fetchActive','fetchPending','fetchCompleted','fetchSkipped',
     'fetchDownloadStatus','fetchFloodWait','fetchBotStatus'])ui[name]=async()=>{};
 await ui.init();
 now=1000;
