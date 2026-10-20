@@ -42,7 +42,6 @@ docker run -d \
   --name tgporter \
   --restart unless-stopped \
   -p 5000:5000 \
-  -e TZ=Asia/Shanghai \
   -v "/path/to/tgporter/data:/app/data" \
   -v "/path/to/downloads:/app/downloads" \
   ghcr.io/smilekevin/tgporter:latest
@@ -67,7 +66,7 @@ docker compose up -d
 docker compose logs tgporter
 ```
 
-The repository Compose file uses `/path/to/downloads:/app/downloads/` and `/path/to/tgporter/data:/app/data` as host-path placeholders, publishes `5000:5000`, and sets `TZ=Asia/Shanghai`. The optional `config.yaml` mount is commented out; no YAML file is required. It has no default proxy or interactive terminal requirement. Open `/configuration` to initialize and log in.
+The repository Compose file uses `/path/to/downloads:/app/downloads/` and `/path/to/tgporter/data:/app/data` as host-path placeholders, publishes `5000:5000`. The optional `config.yaml` mount is commented out; no YAML file is required. It has no default proxy or interactive terminal requirement. Open `/configuration` to initialize and log in.
 
 The left side of each mount is the actual host path; the right side is the container path. In Configuration, use the container download path `/app/downloads`. Listener port changes also require matching Compose port mappings. Docker manages host mounts and port publication.
 

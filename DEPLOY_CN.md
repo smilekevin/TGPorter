@@ -42,7 +42,6 @@ docker run -d \
   --name tgporter \
   --restart unless-stopped \
   -p 5000:5000 \
-  -e TZ=Asia/Shanghai \
   -v "/path/to/tgporter/data:/app/data" \
   -v "/path/to/downloads:/app/downloads" \
   ghcr.io/smilekevin/tgporter:latest
@@ -68,8 +67,6 @@ services:
     network_mode: bridge
     ports:
       - "5000:5000"
-    environment:
-      - TZ=Asia/Shanghai
     volumes:
       - "/path/to/downloads:/app/downloads/"
       - "/path/to/tgporter/data:/app/data"
