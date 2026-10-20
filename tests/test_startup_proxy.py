@@ -70,7 +70,8 @@ class BotStartupProxyTests(unittest.IsolatedAsyncioTestCase):
                 instance.recover_tasks = AsyncMock()
                 app = SimpleNamespace(application_name="offline", api_id=123, api_hash="offline",
                                       bot_token="123:offline", session_file_path=directory,
-                                      proxy=settings.get("proxy") or {})
+                                      proxy=settings.get("proxy") or {}, allowed_user_ids=[])
+                owner = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=123, is_bot=True)))
                 reached = []
 
                 async def start(client):
@@ -81,7 +82,7 @@ class BotStartupProxyTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     with patch.object(pyrogram.Client, "start", new=start):
                         with self.assertRaises(StartupReached):
-                            await instance.start(app, SimpleNamespace(), AsyncMock(), AsyncMock())
+                            await instance.start(app, owner, AsyncMock(), AsyncMock())
                     self.assertEqual(len(reached), 1)
                     self.assertEqual(list(Path(directory).iterdir()), [])
                 finally:

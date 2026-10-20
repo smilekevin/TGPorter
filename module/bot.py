@@ -1044,6 +1044,7 @@ class DownloadBot:
             bot_token=app.bot_token,
             workdir=app.session_file_path,
             proxy=app.proxy or None,
+            skip_updates=False,
         )
 
         self.app = app
@@ -1077,12 +1078,6 @@ class DownloadBot:
             await self.bot.storage.save()
             app.telegram_login.set_stage("Reconnecting command bot")
             await self.bot.disconnect()
-        if getattr(app, "telegram_login", None):
-            app.telegram_login.set_stage("Initializing command bot")
-        await self.bot.start()
-
-        self.bot_info = await self.bot.get_me()
-
         admin = await self.client.get_me()
         self._download_account = admin
         self.allowed_user_ids = []
@@ -1111,12 +1106,20 @@ class DownloadBot:
         self._allowed_user_filter.clear()
         self._allowed_user_filter.update(self.allowed_user_ids)
 
+        # Startup replays offline updates inside the SDK dispatcher. Resolve
+        # authorization and install handlers before it can consume those updates.
+        self._register_bot_handlers()
+        # SDK add_handler schedules registration on the loop instead of awaiting it.
+        await asyncio.sleep(0)
+        if getattr(app, "telegram_login", None):
+            app.telegram_login.set_stage("Initializing command bot")
+        await self.bot.start()
+        self.bot_info = await self.bot.get_me()
+
         if getattr(app, "telegram_login", None):
             app.telegram_login.set_stage("Registering bot commands")
         async with self._commands_lock:
             await self.bot.set_bot_commands(self._build_commands())
-
-        self._register_bot_handlers()
 
         if not getattr(admin, "is_bot", False):
             try:
@@ -1155,7 +1158,7 @@ class DownloadBot:
         """Register all bot MessageHandlers and CallbackQueryHandler.
 
         Called from start() and _reconnect_bot() — stop() clears handlers,
-        so they must be re-registered after every reconnect.
+        so they must be re-registered before startup replays offline updates.
         """
         self._allowed_user_filter.clear()
         self._allowed_user_filter.update(self.allowed_user_ids)
@@ -1328,13 +1331,15 @@ class DownloadBot:
             self.bot.is_connected = False
 
         try:
+            # stop() clears handlers; reinstall them before offline update replay.
+            self._register_bot_handlers()
+            await asyncio.sleep(0)
             logger.warning("Attempting bot reconnect: start()...")
             try:
                 await asyncio.wait_for(self.bot.start(), timeout=30)
             except asyncio.TimeoutError:
                 logger.error("bot.start() timed out after 30s, reconnect failed")
                 return False
-            self._register_bot_handlers()
             logger.success("Bot reconnected successfully — handlers re-registered")
             return True
         except Exception as e:
