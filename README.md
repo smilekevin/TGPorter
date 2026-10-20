@@ -1,7 +1,7 @@
 <h1 align="center">TG Porter</h1>
 
 <p align="center">
-<strong>Telegram media download / forward / listen tool with task persistence, crash recovery, and modern WebUI</strong>
+<strong>TGPorter is an open-source, self-hosted Telegram media downloader with parallel downloads, Docker deployment, MCP integration, and AI agent skills.</strong>
 </p>
 
 <p align="center">
