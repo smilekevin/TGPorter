@@ -3,6 +3,7 @@
 import asyncio
 import errno
 import os
+import stat
 import tempfile
 import threading
 import unittest
@@ -18,6 +19,38 @@ class PartialFileTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "file.temp"
+
+    @unittest.skipIf(os.name == "nt", "POSIX file permissions required")
+    async def test_new_file_permissions_respect_umask_and_survive_publication(self):
+        for mask, expected in ((0o000, 0o644), (0o022, 0o644), (0o077, 0o600)):
+            with self.subTest(umask=oct(mask)):
+                previous = os.umask(mask)
+                file = PartialFile(self.path, 4)
+                try:
+                    file.open(initialize=True)
+                    file.write_at(0, b"data")
+                    file.sync()
+                finally:
+                    file.close()
+                    os.umask(previous)
+                destination = self.path.with_suffix(".bin")
+                os.replace(self.path, destination)
+                self.assertEqual(stat.S_IMODE(destination.stat().st_mode), expected)
+                self.assertEqual(destination.read_bytes(), b"data")
+
+    @unittest.skipIf(os.name == "nt", "POSIX file permissions required")
+    async def test_reopening_existing_file_preserves_permissions(self):
+        self.path.write_bytes(b"data")
+        self.path.chmod(0o600)
+        file = PartialFile(self.path, 4)
+        for initialize in (True, False):
+            with self.subTest(initialize=initialize):
+                try:
+                    file.open(initialize=initialize)
+                    self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+                    self.assertEqual(self.path.read_bytes(), b"data")
+                finally:
+                    file.close()
 
     async def test_short_positioned_writes_preserve_offsets_and_retry_tail(self):
         calls = []
