@@ -46,12 +46,13 @@
 ### WebUI
 
 - **交互式配置页面** — 通过网页管理 Telegram 登录、下载、网页访问和 MCP，下拉框与单行输入框等高。[配置指南](./DEPLOY_CN.md#webui-登录)。
-- **响应式界面** — 浅色主题，适配桌面和手机
+- **响应式界面** — 浅色主题，适配桌面和手机；桌面标签与移动端底部导航使用一致的顺序和线框图标
 - **任务搜索** — 按任务 ID 或文件名查找任务
-- **四个标签页**：
+- **五个标签页**：
   - 📥 **进行中** — 实时进度、速度和 ETA
   - ⏳ **待执行** — 排队任务和等待时间
   - ✅ **已完成** — 下载历史，包含本地文件已完整存在而跳过的记录及原因；任务完成或切换标签时及时刷新，读取失败自动重试。过滤、格式不支持及取消不计入
+  - ⏭ **已跳过** — 查看跳过原因，可重新下载或删除记录
   - ❌ **失败** — 失败原因和重试入口
 - **批量操作** — 暂停、恢复、删除和重试
 - **实时数据** — 总下载速度、当前下载流数和每文件进度
@@ -322,7 +323,7 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
 | **下载历史** | 无 | `download_history.json`，完成/失败记录持久化 |
 | **任务 ID** | 纯递增整数 | `MMDD-序号` 格式，每日重置，持久化计数器 |
 | **Web UI** | layui 框架 | 纯原生 HTML/CSS/JS，浅色主题，响应式 |
-| **WebUI 功能** | 基础列表 | 4 标签页 + 暂停/恢复 + 删除 + 重试 + 搜索 + 无限滚动 |
+| **WebUI 功能** | 基础列表 | 5 标签页 + 暂停/恢复 + 删除 + 重试 + 搜索 + 无限滚动 |
 | **Pending 队列** | 无 | 重启任务统一入 pending，逐个消费，防 FLOOD_WAIT 风暴 |
 | **FLOOD_WAIT** | 阻塞 sleep | 非阻塞冷却时间戳，不卡死队列 |
 | **静默限速** | 不检测 | 速度 < 200 KB/s 持续 120 秒 → WebUI 横幅 + TG 通知（触发和解除各一次） |
@@ -406,12 +407,13 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
 ### WebUI
 
 - **Interactive configuration page** — manage Telegram login, downloads, web access and MCP in your browser, with matching dropdown and single-line input heights. [Setup guide](./DEPLOY.md#webui-login).
-- **Responsive interface** — light theme for desktop and mobile
+- **Responsive interface** — light theme for desktop and mobile, with matching tab order and outline icons in desktop tabs and mobile bottom navigation
 - **Task search** — find tasks by ID or filename
-- **Four tabs**:
+- **Five tabs**:
   - 📥 **Active** — live progress, speed and ETA
   - ⏳ **Pending** — queued tasks and wait time
   - ✅ **Completed** — download history, including existing-file skips and their reason; refreshes on completion or tab opening and retries failed reads. Filtered, unsupported and cancelled downloads are excluded
+  - ⏭ **Skipped** — skip reasons, with download and record deletion actions
   - ❌ **Failed** — failure reasons and retries
 - **Batch actions** — pause, resume, delete and retry
 - **Live statistics** — total speed, active streams and per-file progress
@@ -682,7 +684,7 @@ Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegr
 | **Download history** | None | `download_history.json`, completed/failed records |
 | **Task ID** | Incrementing int | `MMDD-N` format, daily reset, persistent counter |
 | **Web UI** | layui framework | Pure HTML/CSS/JS, light theme, responsive |
-| **WebUI features** | Basic list | 4 tabs + pause/resume + delete + retry + search + infinite scroll |
+| **WebUI features** | Basic list | 5 tabs + pause/resume + delete + retry + search + infinite scroll |
 | **Pending queue** | None | Restart tasks enter pending, consumed one by one, prevents FLOOD_WAIT storm |
 | **FLOOD_WAIT** | Blocking sleep | Non-blocking cooldown timestamp |
 | **Silent throttle** | Not detected | Speed < 200 KB/s for 120s → WebUI banner + TG notification (trigger & recovery) |
