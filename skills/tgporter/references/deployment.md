@@ -46,7 +46,7 @@ only when requested.
   proxy configuration before creating or replacing a deployment. The example
   proxies are environment-specific.
 - Reuse the main TG Porter image/service. MCP runs at `/mcp` on the existing
-  `web_port` (default 5000); it needs no additional container or listener.
+  `web_port` (default 5088); it needs no additional container or listener.
 - Replace Compose host-path placeholders with the user's chosen writable absolute download and configuration/data directories before starting. Reuse existing instance mounts for upgrades; keep container paths `/app/downloads` and `/app/data`. Configuration is managed
   in the web page and saved to `data/settings.json`. Before an upgrade, follow the guide's backup and session
   migration instructions; avoid concurrent processes using the same sessions.

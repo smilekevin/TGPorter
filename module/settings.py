@@ -40,7 +40,7 @@ FIELDS = {
     "web_login_secret": ("", "Web and MCP", "Web password"),
     "public_web": (False, "Web and MCP", "Public dashboard and Web API"),
     "web_host": ("0.0.0.0", "Web and MCP", "Listen address"),
-    "web_port": (5000, "Web and MCP", "Listen port"),
+    "web_port": (5088, "Web and MCP", "Listen port"),
     "mcp_enabled": (False, "Web and MCP", "Enable MCP"),
     "mcp_token": ("", "Web and MCP", "MCP Token"),
     "mcp_read_only": (False, "Web and MCP", "MCP read only"),

@@ -50,7 +50,7 @@ file_download_concurrency: 4
 # Fixed part size in MiB; the last part contains the remainder, and small files use one part.
 download_part_size_mb: 64
 web_host: 0.0.0.0
-web_port: 5000
+web_port: 5088
 # WebUI password; change before deployment. Set to "" to disable password login.
 web_login_secret: "Replace-with-your-password1"
 # Optional random token for /mcp only, independent of the WebUI password; Web APIs use sessions only.
@@ -59,7 +59,7 @@ mcp_token: ""
 mcp_enabled: false
 # Expose only MCP query tools; independent browser sessions are unaffected.
 mcp_read_only: false
-# Optional additional allowed hosts (domain or IP, with optional port), e.g. ["nas.example.com", "192.168.1.20:5000"].
+# Optional additional allowed hosts (domain or IP, with optional port), e.g. ["nas.example.com", "192.168.1.20:5088"].
 # Localhost / loopback are allowed by default; do not use full /mcp URLs or wildcards.
 mcp_allowed_hosts: []
 allowed_user_ids:

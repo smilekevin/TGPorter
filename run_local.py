@@ -3,7 +3,7 @@
 
 Does not import module/web.py or require Pyrogram.
 Run: python run_local.py
-Open: http://localhost:5000"""
+Open: http://localhost:5088"""
 
 import os, json
 
@@ -132,7 +132,7 @@ def resume_task():
     return jsonify(code="1", message="resumed")
 
 if __name__ == "__main__":
-    port = 5000
+    port = 5088
     print("=" * 50)
     print("  TG Porter - Dev Mode")
     print(f"  Browser: http://localhost:{port}")

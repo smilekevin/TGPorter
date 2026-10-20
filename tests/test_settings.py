@@ -31,6 +31,8 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(Path(app.settings.path).is_file())
         self.assertFalse(app.settings.setup_complete)
         self.assertFalse(app.use_user_account)
+        self.assertEqual(app.web_port, 5088)
+        self.assertEqual(app.settings.values["web_port"], 5088)
         self.assertEqual(app.allowed_user_ids, [])
         self.assertEqual(app.max_download_task, 5)
         self.assertEqual(app.file_download_concurrency, 4)

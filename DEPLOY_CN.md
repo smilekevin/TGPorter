@@ -41,14 +41,14 @@ docker pull ghcr.io/smilekevin/tgporter:latest
 docker run -d \
   --name tgporter \
   --restart unless-stopped \
-  -p 5000:5000 \
+  -p 5088:5088 \
   -v "/path/to/tgporter/data:/app/data" \
   -v "/path/to/downloads:/app/downloads" \
   ghcr.io/smilekevin/tgporter:latest
 docker logs tgporter
 ```
 
-打开 `http://服务器IP:5000/configuration`，从日志中找到 `First-time setup code`，按[首次设置与登录](#webui-登录)完成初始化。不需要交互终端，也不需要预建任何数据文件。
+打开 `http://服务器IP:5088/configuration`，从日志中找到 `First-time setup code`，按[首次设置与登录](#webui-登录)完成初始化。不需要交互终端，也不需要预建任何数据文件。
 
 ### Docker Compose 部署
 
@@ -66,7 +66,7 @@ services:
     container_name: tgporter
     network_mode: bridge
     ports:
-      - "5000:5000"
+      - "5088:5088"
     volumes:
       - "/path/to/downloads:/app/downloads/"
       - "/path/to/tgporter/data:/app/data"
@@ -84,7 +84,7 @@ docker compose up -d
 docker compose logs tgporter
 ```
 
-打开 `http://服务器IP:5000/configuration` 完成设置和 Telegram 登录。挂载冒号左侧是宿主机实际路径，右侧是容器内路径；网页中的下载路径填写容器内的 `/app/downloads`。更改容器监听端口时，要同步更改 Compose 端口映射；宿主机挂载和端口映射仍由 Docker 管理。
+打开 `http://服务器IP:5088/configuration` 完成设置和 Telegram 登录。挂载冒号左侧是宿主机实际路径，右侧是容器内路径；网页中的下载路径填写容器内的 `/app/downloads`。更改容器监听端口时，要同步更改 Compose 端口映射；宿主机挂载和端口映射仍由 Docker 管理。
 
 ### 手动安装
 
@@ -97,7 +97,7 @@ python -m pip install -r requirements.txt
 python media_downloader.py
 ```
 
-打开 `http://localhost:5000/configuration`，使用启动日志的初始化码设置管理密码，然后填写 API 凭据并登录 Telegram。下载路径默认是项目目录下的 `downloads/`。后续启动会复用保存的配置和有效 session。
+打开 `http://localhost:5088/configuration`，使用启动日志的初始化码设置管理密码，然后填写 API 凭据并登录 Telegram。下载路径默认是项目目录下的 `downloads/`。后续启动会复用保存的配置和有效 session。
 
 ### 本地开发模式
 
@@ -170,7 +170,7 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `web_login_secret` | 首次设置时创建的网页管理密码；公共模式也保护 Configuration | `""` |
 | `public_web` | 仅公开仪表盘和下载 API；配置页仍需管理密码 | `false` |
 | `web_host` | WebUI/API/MCP 共用的监听地址；Docker 内通常保持 `0.0.0.0` | `"0.0.0.0"` |
-| `web_port` | WebUI/API/MCP 共用的监听端口 | `5000` |
+| `web_port` | WebUI/API/MCP 共用的监听端口 | `5088` |
 | `mcp_enabled` | 开启同端口的 `/mcp` Streamable HTTP 入口，始终要求 Token | `false` |
 | `mcp_token` | 仅供 `/mcp` 使用的 Bearer Token；可打印 ASCII 字符串，不含空白，MCP 开启时不能为空 | `""` |
 | `mcp_read_only` | MCP 仅暴露查询工具，不影响独立的网页登录会话 | `false` |
@@ -298,7 +298,7 @@ python -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
 1. 在 **Configuration → 网页与 MCP** 填入 **MCP Token**，开启 MCP，保存并重启。
-2. 使用域名、反向代理或远程 IP 时，将客户端请求使用的主机名加入 **MCP服务主机名**，例如 `nas.example.com` 或 `192.168.1.20:5000`。默认已允许 localhost。填写主机名/IP 和可选端口（1–65535），不要包含协议、路径、凭据或通配符；格式错误会显示提示。此列表不会改变监听地址。
+2. 使用域名、反向代理或远程 IP 时，将客户端请求使用的主机名加入 **MCP服务主机名**，例如 `nas.example.com` 或 `192.168.1.20:5088`。默认已允许 localhost。填写主机名/IP 和可选端口（1–65535），不要包含协议、路径、凭据或通配符；格式错误会显示提示。此列表不会改变监听地址。
 
 ### Agent 客户端
 
@@ -306,7 +306,7 @@ python -c 'import secrets; print(secrets.token_urlsafe(32))'
 {
   "mcpServers": {
     "tgporter": {
-      "url": "http://127.0.0.1:5000/mcp",
+      "url": "http://127.0.0.1:5088/mcp",
       "headers": {"Authorization": "Bearer YOUR_MCP_TOKEN"}
     }
   }
