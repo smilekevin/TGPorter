@@ -59,6 +59,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(downloader, "_maybe_reconnect_client", AsyncMock(return_value=False)),
             patch.object(downloader, "_add_failed_download", Mock()),
             patch.object(download_stat, "_download_result", self.result),
+            patch.object(download_stat, "_skipped_downloads", {}),
             patch.object(download_stat, "_total_download_size", 0),
             patch.object(download_stat, "_download_streams", {}),
             patch.object(download_stat, "_download_lock", asyncio.Lock()),
@@ -241,15 +242,20 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.result[100][61]["progress"], 100.0)
         self.client.download_media.assert_not_called()
 
-    async def test_existing_file_stays_completed_without_new_traffic(self):
+    async def test_existing_file_is_skipped_without_new_traffic(self):
         output = self.path / "saved.mp4"
         output.write_bytes(self.data)
         self.node.task_id_display = "1019-1"
         self.node.source_chat_title = "Existing media"
-        for placeholder in (False, True):
+        for placeholder in (False, True, "restored"):
             with self.subTest(placeholder=placeholder):
                 self.result.clear()
-                if placeholder:
+                if placeholder == "restored":
+                    self.result["100"] = {"61": {
+                        "down_byte": len(self.data), "total_size": len(self.data),
+                        "file_name": str(output), "task_id": "1",
+                    }}
+                elif placeholder:
                     await download_stat.update_download_status(
                         0, 1, 61, str(output), 10, self.node, self.client, initial=True)
                 with patch.object(download_stat, "_total_download_size", 123):
@@ -257,20 +263,18 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(download_stat._total_download_size, 123)
                 service = DownloadService(self.app)
                 self.assertEqual(service.get_download_list(already_down="false"), [])
-                self.assertEqual(service.get_completed_count(), {"total": 1})
-                row = service.get_download_list(already_down="true")["tasks"][0]
-                self.assertEqual(row["status"], "completed")
-                self.assertEqual(row["completion_reason"], "already download,download skipped")
-                self.assertEqual(row["save_path"], str(output))
-                self.assertEqual(row["total_size_bytes"], len(self.data))
-                self.assertEqual(row["download_progress_raw"], 100)
-                self.assertEqual(row["download_speed"], "0.0b/s")
+                self.assertEqual(service.get_completed_count(), {"total": 0})
+                self.assertEqual(service.get_download_list(already_down="true")["tasks"], [])
+                rows = service.web_get_skipped_downloads()["tasks"]
+                self.assertEqual(len(rows), 1)
+                row = rows[0]
+                self.assertEqual(row["reason"], "already download,download skipped")
+                self.assertEqual(row["file_name"], output.name)
                 self.assertEqual(row["task_id_display"], "1019-1")
                 self.assertEqual(row["chat_title"], "Existing media")
-                self.assertTrue(row["completed_time"])
-                if placeholder:
-                    self.assertEqual(row["start_time"], 10)
-                self.assertEqual(self.node.download_status[61], DownloadStatus.SuccessDownload)
+                self.assertEqual(self.node.download_status[61], DownloadStatus.SkipDownload)
+                self.app.set_download_id.assert_called_with(self.node, 61, DownloadStatus.SkipDownload)
+                self.assertEqual(self.node.success_download_task, 0)
                 self.assertEqual(self.node.total_download_byte, 0)
                 download_stat.save_downloads.assert_called()
         self.assertEqual(output.read_bytes(), self.data)
@@ -305,7 +309,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(self.result)
                 self.assertEqual(DownloadService(self.app).get_completed_count(), {"total": 0})
 
-    async def test_complete_serial_file_found_after_transfer_error_is_recorded(self):
+    async def test_complete_serial_file_found_after_transfer_error_is_skipped(self):
         del self.app.file_download_concurrency
         for location in ("partial.mp4", "saved.mp4"):
             with self.subTest(location=location):
@@ -315,13 +319,15 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     raise parallel_download.DownloadWorkersExhausted("Transfer failed after writing")
                 with patch.object(self.client, "download_media", AsyncMock(side_effect=finish_then_raise)):
                     await downloader.download_task(self.client, self.message, self.node)
-                row = DownloadService(self.app).get_download_list(already_down="true")["tasks"][0]
-                self.assertEqual(row["completion_reason"], "already download,download skipped")
-                self.assertEqual(row["save_path"], str(self.path / "saved.mp4"))
+                service = DownloadService(self.app)
+                self.assertEqual(service.get_completed_count(), {"total": 0})
+                row = service.web_get_skipped_downloads()["tasks"][0]
+                self.assertEqual(row["reason"], "already download,download skipped")
+                self.assertEqual(row["file_name"], "saved.mp4")
                 self.assertEqual((self.path / "saved.mp4").read_bytes(), self.data)
                 (self.path / "saved.mp4").unlink()
 
-    async def test_existing_text_file_is_recorded_as_completed(self):
+    async def test_existing_text_file_is_recorded_as_skipped(self):
         self.message.video = None
         self.message.media = None
         self.message.text = "Saved message"
@@ -333,12 +339,17 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         output = self.path / "saved.txt"
         output.write_text(self.message.text)
         await downloader.download_task(self.client, self.message, self.node)
-        row = DownloadService(self.app).get_download_list(already_down="true")["tasks"][0]
-        self.assertEqual(row["save_path"], str(output))
-        self.assertEqual(row["completion_reason"], "already download,download skipped")
+        service = DownloadService(self.app)
+        self.assertEqual(service.get_completed_count(), {"total": 0})
+        row = service.web_get_skipped_downloads()["tasks"][0]
+        self.assertEqual(row["file_name"], output.name)
+        self.assertEqual(row["reason"], "already download,download skipped")
+        self.assertEqual(output.read_text(), self.message.text)
 
     async def test_new_progress_clears_previous_skip_reason(self):
-        download_stat.record_existing_download(61, "saved.mp4", 100, self.node)
+        await download_stat.update_download_status(
+            100, 100, 61, "saved.mp4", 10, self.node, self.client)
+        self.result[100][61]["completion_reason"] = "already download,download skipped"
         await download_stat.update_download_status(
             0, 100, 61, "saved.mp4", 10, self.node, self.client, initial=True)
         self.assertNotIn("completion_reason", self.result[100][61])

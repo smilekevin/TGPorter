@@ -152,7 +152,6 @@ class TaskNode:
         self.download_filter = download_filter
         self.bypass_filters = False
         self.skip_reasons = {}
-        self.existing_file_count = 0
         self.limit = limit
         self.start_offset_id = start_offset_id
         self.end_offset_id = end_offset_id

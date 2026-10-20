@@ -51,8 +51,8 @@
 - **五个标签页**：
   - 📥 **进行中** — 实时进度、速度和 ETA
   - ⏳ **待执行** — 排队任务和等待时间
-  - ✅ **已完成** — 下载历史，包含本地文件已完整存在而跳过的记录及原因；任务完成或切换标签时及时刷新，读取失败自动重试。过滤、格式不支持及取消不计入
-  - ⏭ **已跳过** — 查看跳过原因，可重新下载或删除记录
+  - ✅ **已完成** — 下载成功的历史记录；任务完成或切换标签时及时刷新，读取失败自动重试
+  - ⏭ **已跳过** — 查看重复文件、过滤等跳过原因，可重新下载或删除记录；重复文件不计入已完成
   - ❌ **失败** — 失败原因和重试入口
 - **批量操作** — 暂停、恢复、删除和重试
 - **实时数据** — 总下载速度、当前下载流数和每文件进度
@@ -412,8 +412,8 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
 - **Five tabs**:
   - 📥 **Active** — live progress, speed and ETA
   - ⏳ **Pending** — queued tasks and wait time
-  - ✅ **Completed** — download history, including existing-file skips and their reason; refreshes on completion or tab opening and retries failed reads. Filtered, unsupported and cancelled downloads are excluded
-  - ⏭ **Skipped** — skip reasons, with download and record deletion actions
+  - ✅ **Completed** — successful download history; refreshes on completion or tab opening and retries failed reads
+  - ⏭ **Skipped** — duplicate-file and filter skip reasons, with download and record deletion actions; duplicate files do not count as completed
   - ❌ **Failed** — failure reasons and retries
 - **Batch actions** — pause, resume, delete and retry
 - **Live statistics** — total speed, active streams and per-file progress

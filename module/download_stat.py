@@ -216,14 +216,20 @@ def delete_download_result_entry(chat_id, msg_id) -> bool:
     chat_id + message_id pair. Used when a file download fails, so it
     doesn't stay in the WebUI active download list forever.
     Returns True if entry was found and deleted."""
+    found = False
     with _sync_lock:
-        if chat_id in _download_result and msg_id in _download_result[chat_id]:
-            del _download_result[chat_id][msg_id]
-            if not _download_result[chat_id]:
-                del _download_result[chat_id]
+        # Restored history uses string keys; live callbacks use integer keys.
+        for chat_key in {chat_id, str(chat_id)}:
+            messages = _download_result.get(chat_key, {})
+            for message_key in {msg_id, str(msg_id)}:
+                if message_key in messages:
+                    del messages[message_key]
+                    found = True
+            if not messages:
+                _download_result.pop(chat_key, None)
+        if found:
             save_downloads()
-            return True
-    return False
+    return found
 
 
 def add_failed_download(chat_id, msg_id, task_id, file_name, error_message, total_size=0, source_link="", from_user_id="", temp_file_name=""):
@@ -251,9 +257,12 @@ def add_failed_download(chat_id, msg_id, task_id, file_name, error_message, tota
     save_downloads()  # Persist failures immediately.
 
 
-def record_skipped_download(message, node, reason):
+def record_skipped_download(message, node, reason, file_name=None):
     """Keep a durable message identity and rule snapshot for an explicit download later."""
     from module.bot import _bot
+    if node.is_stop_transmission or any(
+            key in _cancelled_tasks for key in _download_control_keys(message.id, node)):
+        return
     owner = getattr(message, "_client", None) or node.client
     media = next((getattr(message, kind, None) for kind in (
         "video", "document", "audio", "photo", "voice", "animation", "video_note", "sticker")
@@ -266,7 +275,7 @@ def record_skipped_download(message, node, reason):
     entry = {
         "task_id": f"{node.chat_id}_{message.id}", "task_id_display": node.task_id_display,
         "chat_id": node.chat_id, "msg_id": message.id,
-        "file_name": getattr(media, "file_name", "") or str(message.id),
+        "file_name": os.path.basename(file_name) if file_name else getattr(media, "file_name", "") or str(message.id),
         "chat_title": node.source_chat_title or getattr(message.chat, "title", "") or get_chat_title(node.chat_id),
         "source_chat_id": source_chat, "source_message_id": source_message,
         "reason": reason, "download_filter": node.download_filter or "",
@@ -275,6 +284,10 @@ def record_skipped_download(message, node, reason):
         "from_user_id": node.from_user_id or "", "topic_id": node.topic_id,
     }
     with _sync_lock:
+        # Deletion can arrive from a request thread while the entry is prepared.
+        if node.is_stop_transmission or any(
+                key in _cancelled_tasks for key in _download_control_keys(message.id, node)):
+            return
         _skipped_downloads[entry["task_id"]] = entry
     node.skip_reasons[reason] = node.skip_reasons.get(reason, 0) + 1
     save_downloads()
@@ -618,46 +631,6 @@ async def update_download_status(
         _total_download_speed = max(_total_download_speed, 0)
         _total_download_size = 0
         _last_download_time = cur_time
-
-
-def record_existing_download(message_id: int, file_name: str, total_size: int, node: TaskNode):
-    """Persist a verified existing file without counting its bytes as new traffic."""
-    cur_time = time.time()
-    with _sync_lock:
-        if node.is_stop_transmission or any(
-                key in _cancelled_tasks for key in _download_control_keys(message_id, node)):
-            return
-        messages = _download_result.setdefault(node.chat_id, {})
-        previous = messages.get(message_id, {})
-        # History restores JSON keys as strings; replace that row when a live
-        # task uses integer IDs so the UI keeps one record for this file.
-        for chat_key in {node.chat_id, str(node.chat_id)}:
-            existing = _download_result.get(chat_key, {})
-            for message_key in {message_id, str(message_id)}:
-                if chat_key == node.chat_id and message_key == message_id:
-                    continue
-                previous = existing.pop(message_key, None) or previous
-            if not existing and chat_key != node.chat_id:
-                _download_result.pop(chat_key, None)
-        messages[message_id] = {
-            "down_byte": total_size,
-            "total_size": total_size,
-            "progress": 100.0,
-            "file_name": file_name,
-            "temp_file_name": "",
-            "start_time": previous.get("start_time", cur_time),
-            "end_time": cur_time,
-            "download_speed": 0,
-            "each_second_total_download": 0,
-            "task_id": node.task_id,
-            "task_id_display": getattr(node, "task_id_display", ""),
-            "source_chat_title": getattr(node, "source_chat_title", ""),
-            "source_chat_id": getattr(node, "source_chat_id", 0),
-            "source_message_id": getattr(node, "source_message_id", 0),
-            "completion_reason": "already download,download skipped",
-        }
-        clear_task_heartbeat(f"{node.chat_id}_{message_id}")
-        save_downloads()
 
 
 _HISTORY_FILE = os.path.join(DATA_DIR, "download_history.json")

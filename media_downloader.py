@@ -18,7 +18,7 @@ from module.runtime_paths import APP_DATA_FILE
 from module.bot import start_download_backend, start_download_bot, stop_download_bot
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
-from module.download_stat import (record_existing_download, record_skipped_download,
+from module.download_stat import (record_skipped_download,
                                   remove_skipped_download, track_download_stream)
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
@@ -646,13 +646,11 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
     if matches_filter and app.enable_download_txt and message.text and not message.media:
         download_status, file_name = await save_msg_to_file(app, node.chat_id, message)
     file_size = os.path.getsize(file_name) if file_name else 0
-    existing_file = download_status is DownloadStatus.SkipDownload and file_name and file_size > 0
-    report_status = DownloadStatus.SuccessDownload if existing_file else download_status
-    if report_status is DownloadStatus.SuccessDownload:
+    if download_status is DownloadStatus.SuccessDownload:
         remove_skipped_download(f"{node.chat_id}_{message.id}")
     if not node.bot:
-        app.set_download_id(node, message.id, report_status)
-    node.download_status[message.id] = report_status
+        app.set_download_id(node, message.id, download_status)
+    node.download_status[message.id] = download_status
     # Record failed downloads to the failed list for webui display
     if download_status is DownloadStatus.FailedDownload:
         # Get task_id_display (format: MMDD-N)
@@ -693,18 +691,14 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
         from module.download_stat import delete_download_result_entry as _ddre
         _ddre(node.chat_id, message.id if message else message_id)
     elif download_status is DownloadStatus.SkipDownload:
-        if file_name and file_size > 0:
-            record_existing_download(message.id, file_name, file_size, node)
-            node.existing_file_count += 1
+        reason = "already download,download skipped" if file_name else error_message
+        if reason and not node.is_stop_transmission:
+            record_skipped_download(message, node, reason, file_name=file_name)
         else:
-            reason = error_message or "Download cancelled"
-            if error_message and not node.is_stop_transmission:
-                record_skipped_download(message, node, reason)
-            else:
-                node.skip_reasons[reason] = node.skip_reasons.get(reason, 0) + 1
-            # Filtered, unsupported and cancelled downloads have no completed file.
-            from module.download_stat import delete_download_result_entry as _ddre
-            _ddre(node.chat_id, message.id if message else message_id)
+            reason = reason or "Download cancelled"
+            node.skip_reasons[reason] = node.skip_reasons.get(reason, 0) + 1
+        from module.download_stat import delete_download_result_entry as _ddre
+        _ddre(node.chat_id, message.id if message else message_id)
     await upload_telegram_chat(
         client, node.upload_user if node.upload_user else client,
         app, node, message, download_status, file_name,
@@ -716,7 +710,7 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
         if await app.upload_file(file_name, update_cloud_upload_stat, (node, message.id, ui_file_name)):
             node.upload_success_count += 1
     await report_bot_download_status(
-        node.bot, node, report_status,
+        node.bot, node, download_status,
         0 if download_status is DownloadStatus.SkipDownload else file_size,
     )
     # Send final status with full stats immediately for single downloads

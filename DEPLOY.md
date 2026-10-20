@@ -105,7 +105,7 @@ Use the header icons to switch between downloads and Configuration. Configuratio
 
 Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
 
-The dashboard **Skipped** tab keeps reasons and saved filters across restarts. Desktop tabs and mobile bottom navigation share the same order (Downloading, Pending, Completed, Skipped, Failed) and outline icons. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons, while verified existing files count as **Completed (file already exists)**.
+The dashboard **Skipped** tab keeps reasons and saved filters across restarts. Desktop tabs and mobile bottom navigation share the same order (Downloading, Pending, Completed, Skipped, Failed) and outline icons. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons; verified existing files count as **Skipped**, without increasing successful downloads.
 
 ### config.yaml (optional)
 
@@ -216,7 +216,7 @@ When deleting a task, select file deletion only if you also want to remove local
 
 Bot/log language is set in Configuration; the header selector controls browser language. Supported codes: `en`, `zh-cn`, `zh-tw`, `ja`, `es`, `fr`, `ru`, `uk`; `zh` means Simplified Chinese. See the [language guide](https://github.com/smilekevin/TGPorter/blob/main/docs/languages.md) to add a translation.
 
-The Completed tab also retains files skipped because a complete local file already exists, with the skip reason, file path and size. These records survive restarts and count toward completed downloads in the Web API, Bot queries and MCP. Filtered, unsupported and cancelled downloads are excluded.
+Downloads skipped because a complete local file already exists appear in the Skipped tab with their filename and reason, and survive restarts. These duplicate downloads do not count toward completed downloads in the Web API, Bot queries or MCP. Deleting a skipped record preserves the local file. Filtered, unsupported and cancelled downloads are also excluded from completed downloads.
 
 ## WebUI Login
 
