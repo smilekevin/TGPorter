@@ -94,7 +94,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.app.get_file_save_path = Mock(return_value=str(self.path / "downloads"))
         self.app.get_file_name = lambda message_id, name, caption: f"{message_id} - {name}"
         self.app.get_caption_name = Mock(return_value=None)
-        self.message.chat.title = "XXX全球优质集合地 ｜XXX🐝"
+        self.message.chat.title = "摄影交流频道 ｜测试🐝"
         self.message.date = datetime(2026, 10, 16, 11, 2, 57)
         self.message.video.mime_type = "video/quicktime"
         self.message.video.file_name = "飞，一.mov"

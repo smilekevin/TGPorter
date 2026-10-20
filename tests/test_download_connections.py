@@ -237,7 +237,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assert_closed()
 
     async def test_unicode_directory_and_filename_complete_part_download(self):
-        path = self.path.parent / "XXX全球优质集合地 ｜XXX🐝" / "飞，一.mov"
+        path = self.path.parent / "摄影交流频道 ｜测试🐝" / "飞，一.mov"
         await self.download(path)
         self.assertEqual(path.read_bytes(), self.data)
         self.assertFalse(parts_path(str(path)).exists())
