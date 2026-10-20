@@ -356,7 +356,7 @@ docker compose ps
 
 只有 GitHub Release 更新 `latest`，普通 CI 发布 `sha-完整提交号` 镜像。需要固定版本时，在 Compose 中使用版本或 SHA 标签；镜像地址和 digest 见 Release notes。
 
-镜像已包含应用版本，请勿在 Compose 中覆盖 `APP_VERSION`。
+镜像已包含应用版本。Release 构建显示发布标签；CI 构建显示当前提交可追溯的最近版本标签加短提交号，例如 `v0.3.2+92afcd8`。没有可追溯标签时显示 `sha-92afcd8`。即使 CI 构建恰好位于标签提交上，也保留短提交号以区分 Release 构建。CI 镜像标签仍使用完整提交号。请勿在 Compose 中覆盖 `APP_VERSION`。
 
 ## 旧镜像迁移与本地构建
 

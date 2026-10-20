@@ -338,7 +338,7 @@ docker compose ps
 
 Only GitHub Releases update `latest`. Ordinary CI publishes `sha-FULL_COMMIT_SHA` images. To keep a fixed version, use its version or SHA tag in Compose; image references and digests are listed in the Release notes.
 
-The image includes its application version. Do not override `APP_VERSION` in Compose.
+The image includes its application version. Release builds display the release tag; CI builds display the nearest version tag reachable from the built commit plus its short hash, such as `v0.3.2+92afcd8`. Without a reachable tag, CI displays `sha-92afcd8`. CI builds on a tagged commit also include the hash to distinguish them from Release builds. Published CI image tags still use the full commit SHA. Do not override `APP_VERSION` in Compose.
 
 ## Image Migration and Local Builds
 
