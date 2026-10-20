@@ -42,7 +42,6 @@ docker run -d \
   --name tgporter \
   --restart unless-stopped \
   -p 5000:5000 \
-  -e TZ=Asia/Shanghai \
   -v "/path/to/tgporter/data:/app/data" \
   -v "/path/to/downloads:/app/downloads" \
   ghcr.io/smilekevin/tgporter:latest
@@ -67,7 +66,7 @@ docker compose up -d
 docker compose logs tgporter
 ```
 
-The repository Compose file uses `/path/to/downloads:/app/downloads/` and `/path/to/tgporter/data:/app/data` as host-path placeholders, publishes `5000:5000`, and sets `TZ=Asia/Shanghai`. The optional `config.yaml` mount is commented out; no YAML file is required. It has no default proxy or interactive terminal requirement. Open `/configuration` to initialize and log in.
+The repository Compose file uses `/path/to/downloads:/app/downloads/` and `/path/to/tgporter/data:/app/data` as host-path placeholders, publishes `5000:5000`. The optional `config.yaml` mount is commented out; no YAML file is required. It has no default proxy or interactive terminal requirement. Open `/configuration` to initialize and log in.
 
 The left side of each mount is the actual host path; the right side is the container path. In Configuration, use the container download path `/app/downloads`. Listener port changes also require matching Compose port mappings. Docker manages host mounts and port publication.
 
@@ -101,7 +100,7 @@ Mock mode does not connect to Telegram or save settings. To test Configuration a
 
 ### Web Configuration and Interactive Login (preferred)
 
-Use the header icons to switch between downloads and Configuration. Configuration dropdowns and single-line inputs use matching heights. **Sign out** ends your web login. See the [screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
+Use the header icons to switch between downloads and Configuration. Configuration dropdowns and single-line inputs use matching heights. **Sign out** ends your web login. See the [mobile and desktop screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
 
 Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
 

@@ -106,7 +106,7 @@ vm.runInContext(SOURCE, context);
 (async () => {
     const app = context.app();
     const names = ['fetchVersion', 'fetchActive', 'fetchPending',
-        'fetchCompleted', 'fetchDownloadStatus', 'fetchFloodWait', 'fetchBotStatus'];
+        'fetchCompleted', 'fetchSkipped', 'fetchDownloadStatus', 'fetchFloodWait', 'fetchBotStatus'];
     let calls = 0;
     let releases = [];
     names.forEach(name => app[name] = () => {

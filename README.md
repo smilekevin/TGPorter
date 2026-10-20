@@ -111,9 +111,19 @@
 
 ## 快速开始
 
-推荐使用镜像 `ghcr.io/smilekevin/tgporter:latest` 部署。启动后打开 `/configuration`，按页面提示设置管理密码并登录 Telegram。
+一条命令部署（请替换为宿主机的实际绝对路径）：
 
-首选[网页配置](./DEPLOY_CN.md#webui-登录)，也支持可选的 [config.yaml 导入](./DEPLOY_CN.md#configyaml-可选)和[命令行登录](./DEPLOY_CN.md#命令行登录)。
+```bash
+docker run -d \
+  --name tgporter \
+  --restart unless-stopped \
+  -p 5000:5000 \
+  -v "/path/to/tgporter/data:/app/data" \
+  -v "/path/to/downloads:/app/downloads" \
+  ghcr.io/smilekevin/tgporter:latest
+```
+
+更多部署方式和配置步骤请参考下表：
 
 | 运行方式 | 说明 | 操作指南 |
 |----------|------|----------|
@@ -127,7 +137,10 @@
 
 ## Bot 命令
 
-`/help` 和 `/start` 帮助消息中的 “Join us” 按钮指向 [Telegram 群组](https://t.me/tg_porter)。
+### 快捷操作（无需命令）
+
+- **发送 `t.me` 链接** → 下载单条消息
+- **转发媒体消息给 Bot** → 下载该媒体（优先从源频道下载）
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
@@ -146,18 +159,6 @@
 | `/query [all\|active\|pending\|completed\|failed] [page]` | 查询所有、下载中（含暂停）、Pending、已完成或失败任务；支持分类、翻页和刷新按钮 | `/query pending`、`/query completed 2` |
 | `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
 | `/help` `/start` | 显示帮助 | — |
-
-### 快捷操作（无需命令）
-
-- **发送 `t.me` 链接** → 下载单条消息
-- **转发媒体消息给 Bot** → 下载该媒体（优先从源频道下载）
-
-### 消息 ID 说明
-
-- `start_id = 1` → 从最早的消息开始
-- `end_id = 0` → 直到最新消息
-- `[filter]` 可选，由 Lark 解析，支持日期、文件名、正则、大小单位、括号和逻辑运算；例如 `media_file_size > 100MB and media_duration < 60`。日期应包含时间，例如 `2024-01-01 00:00:00`。非法字符会明确报错。
-- Configuration → 下载支持管理下载 Filter 和广告关键词。下载规则任意一条为真（OR）即可匹配；广告关键词命中任意一个（OR）即跳过转发。操作见[下载过滤规则](./DEPLOY_CN.md#下载过滤规则)。
 
 ---
 
@@ -384,9 +385,15 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
 
 ## WebUI Preview
 
-**Download dashboard**
+**Mobile download dashboard**
 
-[![TG Porter download dashboard with shared navigation, sign-out, Bot status, active streams and download progress](./docs/images/webui-en.jpg)](./docs/images/webui-en.jpg)
+<a href="./docs/images/webui-mobile-en.jpg"><img src="./docs/images/webui-mobile-en.jpg" alt="TG Porter mobile dashboard with three active downloads at 3–4 MB/s and five completed tasks" width="360"></a>
+
+**Desktop download dashboard**
+
+[![TG Porter desktop dashboard with three active downloads at 3–4 MB/s and five completed tasks](./docs/images/webui-en.jpg)](./docs/images/webui-en.jpg)
+
+Sample data: 3 downloading, 2 pending, 5 completed, 0 failed and 1 skipped.
 
 **Configuration**
 
@@ -472,9 +479,19 @@ CI 自动运行测试并检查 amd64、arm64 镜像构建。
 
 ## Quick Start
 
-Deploy with `ghcr.io/smilekevin/tgporter:latest`, then open `/configuration` to set a management password and sign in to Telegram.
+Deploy by one command (replace the host paths with your actual absolute paths):
 
-[Web configuration](./DEPLOY.md#webui-login) is preferred; optional [config.yaml import](./DEPLOY.md#configyaml-optional) and [command-line login](./DEPLOY.md#command-line-login) are also available.
+```bash
+docker run -d \
+  --name tgporter \
+  --restart unless-stopped \
+  -p 5000:5000 \
+  -v "/path/to/tgporter/data:/app/data" \
+  -v "/path/to/downloads:/app/downloads" \
+  ghcr.io/smilekevin/tgporter:latest
+```
+
+For more details, please refer to the following deployment matrix:
 
 | Method | Use case | Guide |
 |--------|----------|-------|
@@ -488,7 +505,10 @@ Deploy with `ghcr.io/smilekevin/tgporter:latest`, then open `/configuration` to 
 
 ## Bot Commands
 
-The “Join us” button in `/help` and `/start` messages opens the [Telegram group](https://t.me/tg_porter).
+### Shortcuts (no command needed)
+
+- **Send a `t.me` link** → downloads single message
+- **Forward media to Bot** → downloads from source channel
 
 | Command | Description | Example |
 |---------|-------------|---------|
@@ -507,18 +527,6 @@ The “Join us” button in `/help` and `/start` messages opens the [Telegram gr
 | `/query [all\|active\|pending\|completed\|failed] [page]` | Query all, active (including paused), pending, completed or failed tasks; category, paging and refresh buttons | `/query pending`, `/query completed 2` |
 | `/stop` | Stop download/forward/listen (interactive) | `/stop` |
 | `/help` `/start` | Show help | — |
-
-### Shortcuts (no command needed)
-
-- **Send a `t.me` link** → downloads single message
-- **Forward media to Bot** → downloads from source channel
-
-### Message IDs
-
-- `start_id = 1` → from the earliest message
-- `end_id = 0` → up to the latest message
-- `[filter]` is optional and parsed by Lark. It supports dates, filenames, regexes, byte units, parentheses and logical operators, for example `media_file_size > 100MB and media_duration < 60`. Dates include a time, such as `2024-01-01 00:00:00`. Illegal characters are reported as errors.
-- Manage download filters and advertisement keywords in Configuration → Downloads. Any true download rule matches (OR); any advertisement keyword match skips forwarding (OR). See [download filters](./DEPLOY.md#download-filters).
 
 ---
 
