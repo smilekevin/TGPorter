@@ -33,6 +33,7 @@ from module.download_stat import (
 )
 from module.filter import Filter
 from module.bot_query import query_tasks, query_tasks_callback
+from module.bot_message_store import BotMessageStore
 from module.task_store import save_task, complete_task, get_running_tasks, update_task_progress, get_pending_tasks, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
 from lang import CATALOGS
@@ -215,6 +216,8 @@ class DownloadBot:
         self._bot_reconnect_after = 0.0
         self._last_message_at = None
         self._active_handlers = {}
+        self._message_store = None
+        self._message_inflight = {}
         self._connection_status = {
             "status": "connecting", "last_checked_at": None,
             "last_success_at": None, "rtt_ms": None, "failures": 0,
@@ -397,10 +400,21 @@ class DownloadBot:
         logger.info("Bot message received: message_id={} kind={} authorized={} message_age_s={}",
                     message.id, kind, allowed, age)
 
-    def _logged_bot_handler(self, callback):
+    def _logged_bot_handler(self, callback, *, deduplicate=False):
         """Trace handler completion independently of the Telegram receive path."""
         @wraps(callback)
         async def logged(client, update):
+            key = None
+            if deduplicate:
+                key = (client.me.id, update.chat.id, update.id)
+                # Await the first delivery: if it fails, a waiting delivery may retry.
+                # Shielding keeps a cancelled waiter from cancelling the first handler.
+                while key in self._message_inflight:
+                    await asyncio.shield(self._message_inflight[key])
+                if self._message_store.contains(key):
+                    logger.info("Bot duplicate message skipped: bot_id={} chat_id={} message_id={}", *key)
+                    return
+                self._message_inflight[key] = asyncio.get_running_loop().create_future()
             task = asyncio.current_task()
             started = time.monotonic()
             message = getattr(update, "message", None) or update
@@ -409,7 +423,10 @@ class DownloadBot:
             logger.info("Bot handler started: handler={} message_id={}", callback.__name__, message_id)
             outcome = "completed"
             try:
-                return await callback(client, update)
+                result = await callback(client, update)
+                if key is not None and result is not False:
+                    self._message_store.mark(key)
+                return result
             except (pyrogram.StopPropagation, pyrogram.ContinuePropagation):
                 raise
             except asyncio.CancelledError:
@@ -421,6 +438,8 @@ class DownloadBot:
                                callback.__name__, message_id, type(error).__name__)
                 raise
             finally:
+                if key is not None:
+                    self._message_inflight.pop(key).set_result(None)
                 self._active_handlers.pop(task, None)
                 logger.info("Bot handler finished: handler={} message_id={} outcome={} elapsed_s={:.1f}",
                             callback.__name__, message_id, outcome, time.monotonic() - started)
@@ -1037,6 +1056,9 @@ class DownloadBot:
     ):
         """Start bot"""
         self._publish_connection_status("connecting")
+        self._message_store = BotMessageStore(
+            os.path.join(os.path.dirname(self.config_path), "bot_processed_messages.json")
+        )
         self.bot = pyrogram.Client(
             app.application_name + "_bot",
             api_hash=app.api_hash,
@@ -1163,7 +1185,9 @@ class DownloadBot:
         self._allowed_user_filter.clear()
         self._allowed_user_filter.update(self.allowed_user_ids)
         def add_handler(handler):
-            handler.callback = self._logged_bot_handler(handler.callback)
+            handler.callback = self._logged_bot_handler(
+                handler.callback, deduplicate=isinstance(handler, MessageHandler)
+            )
             self.bot.add_handler(handler)
 
         self.bot.add_handler(MessageHandler(self._observe_bot_message), group=-1)
@@ -2017,7 +2041,7 @@ async def direct_download(
             message.from_user.id, last_reply_message.id,
             _t("Task could not be persisted; submission was not accepted."),
         )
-        return
+        return False
 
     download_bot.add_task_node(node)
     # Cache the message so consumer can skip get_messages.
@@ -2063,13 +2087,12 @@ async def download_forward_media(
                     args=(source_chat_id, source_message_id),
                 )
                 if source_msg and source_msg.media:
-                    await direct_download(
+                    return await direct_download(
                         _bot, source_chat_id, message, source_msg, client,
                         source_chat_id=source_chat_id,
                         source_message_id=source_message_id,
                         source_chat_title=source_chat_title,
                     )
-                    return
                 # Source message deleted or no media — try link-based fetch
                 # The forwarded message's file reference may be stale. Construct
                 # a link and use parse_link → get_messages to get a fresh copy.
@@ -2099,24 +2122,21 @@ async def download_forward_media(
                                 f"Forward: link-based fetch succeeded for "
                                 f"{link_chat_id}/{link_msg_id}"
                             )
-                            await direct_download(
+                            return await direct_download(
                                 _bot, link_chat_id, message, download_message, client,
                                 source_chat_id=source_chat_id,
                                 source_message_id=source_message_id,
                                 source_chat_title=source_chat_title,
                             )
-                            return
                 except Exception as e:
                     logger.warning(f"Forward: link-based fetch failed: {e}")
 
             # All fallbacks failed — fall through to direct download with the
             # original forwarded message (last resort)
-            await direct_download(_bot, message.from_user.id, message, message, client)
-            return
+            return await direct_download(_bot, message.from_user.id, message, message, client)
 
         # Direct upload or forward from user (no source channel info)
-        await direct_download(_bot, message.from_user.id, message, message, client)
-        return
+        return await direct_download(_bot, message.from_user.id, message, message, client)
 
     await client.send_message(
         message.from_user.id,
@@ -2164,7 +2184,7 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
                 _bot.client.get_messages, args=(chat_id, message_id)
             )
             if download_message:
-                await direct_download(_bot, entity.id, message, download_message)
+                return await direct_download(_bot, entity.id, message, download_message)
             else:
                 await client.send_message(
                     message.from_user.id,

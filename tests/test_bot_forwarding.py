@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from module import bot, pyrogram_extension, task_store
 from module.app import Application
+from module.bot_message_store import BotMessageStore
 from module.telegram import pyrogram
 from pyrogram import enums, raw, types
 
@@ -18,6 +19,7 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.backend = bot.DownloadBot()
+        self.backend._message_store = BotMessageStore(Path(self.temp.name) / "bot_processed_messages.json")
         self.backend.app = SimpleNamespace(download_filters=[])
         self.backend.app.resolve_download_filter = lambda expression=None: Application.resolve_download_filter(self.backend.app, expression)
         self.sender = types.User(id=100)
@@ -139,12 +141,14 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
         return None
 
     async def test_post_links_with_and_without_previews_resolve_source_message(self):
+        message_id = 289
         for url in ("https://t.me/c/123/61", "https://t.me/offline_source/61",
                     "https://t.me/c/123/50/61"):
             for preview in (False, True):
                 with self.subTest(url=url, preview=preview):
+                    message_id += 1
                     message = types.Message(
-                        id=289, date=self.date, text=url, from_user=self.sender,
+                        id=message_id, date=self.date, text=url, from_user=self.sender,
                         chat=self.inbox, client=self.telegram,
                         media=enums.MessageMediaType.WEB_PAGE if preview else None,
                         web_page=types.WebPage(id="offline-preview", url=url) if preview else None)
