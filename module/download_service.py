@@ -891,6 +891,7 @@ class DownloadService:
                 "task_id": str(task_id),
                 "task_id_display": task_id_display,
                 "chat": str(task.get("chat_id", "")),
+                "id": str(_mid) if _mid is not None else "",
                 "chat_title": chat_title,
                 "filename": filename,
                 "total_size": total_size,

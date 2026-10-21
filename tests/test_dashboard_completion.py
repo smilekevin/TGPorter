@@ -43,6 +43,142 @@ await ui.fetchActive();
 assert.deepEqual([...ui.activeTasks.map(task=>task.task_id)],['active','paused']);
 ''')
 
+    def test_active_arrival_removes_matching_pending_and_preserves_batch_tasks(self):
+        self.run_script(r'''
+ui.activeTab = 'pending';
+ui.pendingTasks = [
+    {task_id:'queue-1',chat:'-1001',id:'7',task_id_display:'1021-1'},
+    {task_id:'batch',chat:'-1001',id:'',task_id_display:'1021-1'},
+    {task_id:'other-chat',chat:'-1002',id:'7',task_id_display:'1021-1'},
+];
+ui.pendingOffset = ui.pendingTotal = 3;
+ui.selectedTasks = ['queue-1','other-chat'];
+context.authenticatedFetch = async () => response([
+    {task_id:'-1001_7',chat:'-1001',id:'7',status:'active',task_id_display:'1021-1'},
+]);
+await ui.fetchActive();
+assert.deepEqual([...ui.pendingTasks.map(task => task.task_id)], ['batch','other-chat']);
+assert.deepEqual([...ui.selectedTasks], ['other-chat']);
+assert.equal(ui.pendingTotal, 2);
+assert.equal(ui.pendingOffset, 2);
+assert.equal(ui.activeTasks.length, 1);
+''')
+
+    def test_completion_removes_matching_rows_from_other_lists(self):
+        self.run_script(r'''
+for (const tab of ['pending','active','failed','skipped']) {
+    ui[tab + 'Tasks'] = [{task_id:'same'}, {task_id:tab + '-other'}];
+    ui[tab + 'Total'] = ui[tab + 'Offset'] = 2;
+}
+context.authenticatedFetch = async () => response({tasks:[completed('same')],total:1});
+await ui.fetchCompleted();
+for (const tab of ['pending','active','failed','skipped']) {
+    assert.deepEqual([...ui[tab + 'Tasks'].map(task => task.task_id)], [tab + '-other']);
+    assert.equal(ui[tab + 'Total'], 1);
+}
+assert.equal(ui.pendingOffset, 1);
+assert.equal(ui.skippedOffset, 1);
+assert.equal(ui.completedTasks[0].task_id, 'same');
+''')
+
+    def test_old_pending_response_cannot_restore_a_task_after_active_arrives(self):
+        self.run_script(r'''
+let finishPending;
+context.authenticatedFetch = async url => url.includes('/get_pending_list') ?
+    new Promise(resolve => {finishPending = resolve;}) :
+    response([{task_id:'1_7',chat:'1',id:'7',status:'active'}]);
+const pending = ui.fetchPending(true);
+await ui.fetchActive();
+finishPending(response({tasks:[{task_id:'queue-1',chat:'1',id:'7'}],total:1}));
+await pending;
+assert.equal(ui.pendingTasks.length, 0);
+assert.equal(ui.pendingTotal, 0);
+assert.equal(ui.pendingOffset, 0);
+assert.equal(ui.activeTasks[0].task_id, '1_7');
+''')
+
+    def test_old_active_response_cannot_restore_a_completed_task(self):
+        self.run_script(r'''
+let finishActive;
+context.authenticatedFetch = async url => url.includes('already_down=false') ?
+    new Promise(resolve => {finishActive = resolve;}) :
+    response({tasks:[completed('same')],total:1});
+const active = ui.fetchActive();
+await ui.fetchCompleted();
+finishActive(response([{task_id:'same',status:'active'}]));
+await active;
+assert.equal(ui.activeTasks.length, 0);
+assert.equal(ui.completedTasks[0].task_id, 'same');
+''')
+
+    def test_old_completed_response_cannot_undo_retry_and_is_not_acknowledged(self):
+        self.run_script(r'''
+let finishCompleted;
+context.authenticatedFetch = async url => {
+    if (url === '/get_completed_count') return response({total:1});
+    if (url.includes('already_down=true')) return new Promise(resolve => {finishCompleted = resolve;});
+    return response([{task_id:'same',status:'active'}]);
+};
+const completion = ui.pollCompletedCount(true);
+while (!finishCompleted) await new Promise(done => setImmediate(done));
+await ui.fetchActive();
+finishCompleted(response({tasks:[completed('same')],total:1}));
+await completion;
+assert.equal(ui.completedTasks.length, 0);
+assert.equal(ui.completedLastTotal, 0);
+assert.equal(ui.completedRefreshPending, true);
+assert.equal(ui.activeTasks[0].task_id, 'same');
+''')
+
+    def test_fresh_pause_resume_and_retry_can_move_tasks_back_to_pending(self):
+        self.run_script(r'''
+let activeRows = [{task_id:'1_7',chat:'1',id:'7',status:'active'}];
+context.authenticatedFetch = async url => url.includes('/get_pending_list') ?
+    response({tasks:[{task_id:'queue-1',chat:'1',id:'7',status:'paused'}],total:1}) :
+    response(activeRows);
+await ui.fetchActive();
+await ui.fetchPending(true);
+assert.equal(ui.activeTasks.length, 0);
+assert.equal(ui.pendingTasks[0].status, 'paused');
+await ui.fetchActive();
+assert.equal(ui.pendingTasks.length, 0);
+assert.equal(ui.activeTasks.length, 1);
+// Real completed rows carry the same chat/message identity as active rows.
+context.authenticatedFetch = async () => response({tasks:[{...completed('1_7'),chat:'1',id:'7'}],total:1});
+await ui.fetchCompleted();
+assert.equal(ui.activeTasks.length, 0);
+context.authenticatedFetch = async () => response({tasks:[{task_id:'retry-1',chat:'1',id:'7'}],total:1});
+await ui.fetchPending(true);
+assert.equal(ui.completedTasks.length, 0);
+assert.equal(ui.completedTotal, 0);
+assert.equal(ui.pendingTasks[0].task_id, 'retry-1');
+''')
+
+    def test_handoff_during_pagination_retries_from_adjusted_offset(self):
+        self.run_script(r'''
+ui.pendingLimit = 2;
+ui.pendingTasks = [{task_id:'one'},{task_id:'two'}];
+ui.pendingOffset = 2;
+ui.pendingTotal = 4;
+let finishPage;
+context.authenticatedFetch = async url => url.includes('/get_pending_list') ?
+    new Promise(resolve => {finishPage = resolve;}) : response([{task_id:'one',status:'active'}]);
+const page = ui.loadMorePending();
+await ui.fetchActive();
+assert.equal(ui.pendingOffset, 1);
+finishPage(response({tasks:[{task_id:'four'}],total:3}));
+await page;
+assert.equal(ui.pendingOffset, 1, 'discard a page whose offset shifted during the handoff');
+context.authenticatedFetch = async url => {
+    assert.ok(url.includes('offset=1&limit=2'));
+    return response({tasks:[{task_id:'three'},{task_id:'four'}],total:3});
+};
+await ui.loadMorePending();
+assert.deepEqual([...ui.pendingTasks.map(task => task.task_id)], ['two','three','four']);
+assert.equal(ui.pendingOffset, 3);
+assert.equal(ui.pendingHasMore, false);
+''')
+
     def test_completion_is_loaded_before_removing_active_row_and_preserves_pages(self):
         self.run_script(r'''
 ui.activeTasks=[{task_id:'new',status:'active',download_progress_raw:90}];

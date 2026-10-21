@@ -70,15 +70,16 @@ MOCK_FAILED = [
 ]
 
 MOCK_ACTIVE.extend([
-    dict(MOCK_ACTIVE[0], task_id="active_002", filename="Mountain_Trail_4K.mp4",
+    dict(MOCK_ACTIVE[0], task_id="active_002", id="10473", filename="Mountain_Trail_4K.mp4",
          download_progress="24.5", download_progress_raw=24.5, download_speed="3.2 MB/s"),
-    dict(MOCK_ACTIVE[0], task_id="active_003", filename="Workshop_Recording.mp4",
+    dict(MOCK_ACTIVE[0], task_id="active_003", id="10474", filename="Workshop_Recording.mp4",
          download_progress="0", download_progress_raw=0, download_speed="0 B/s",
          phase="preparing", wait_reason="Establishing download connections", active_streams=0),
 ])
 MOCK_PENDING = [
     {"task_id": f"pending_{index:03d}", "task_id_display": f"1021-{index + 3}",
      "filename": filename, "chat_title": "Media archive", "chat": "Media archive",
+     "id": str(index),
      "total_size": size, "source_type": "Channel post", "url": f"https://t.me/example/{index}",
      "created_at": "10-21 10:30:00", "created_ts": time.time() - 600 + index,
      "wait_time": "10m", "queue_label": "Paused" if paused else "Queued",

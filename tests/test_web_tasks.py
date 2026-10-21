@@ -527,3 +527,19 @@ assert.equal(ui.navigationCollapsed, true);
         queued = self.client.get('/get_pending_list?status=pending').json
         self.assertEqual(queued['total'], 1)
         self.assertEqual(queued['tasks'][0]['queue_label'], 'Queued')
+
+    def test_pending_exposes_message_identity_without_changing_queue_operation_id(self):
+        tasks = [
+            {'task_id': 'queue-1', 'chat_id': 1, 'extra_data': {'message_id': 2}},
+            {'task_id': 'batch', 'chat_id': 1, 'extra_data': {}},
+        ]
+        with patch('module.download_service.get_pending_tasks', return_value=tasks), \
+                patch.object(download_stat, 'get_download_result', return_value={}):
+            pending = self.client.get('/get_pending_list').json['tasks']
+        self.assertEqual(pending[0]['task_id'], 'queue-1')
+        self.assertEqual(pending[0]['id'], '2')
+        self.assertEqual(pending[1]['id'], '')
+        download_stat._download_result[1][2].update(
+            down_byte=1, download_speed=0, start_time=0, end_time=0)
+        active = self.client.get('/get_download_list?already_down=false').json[0]
+        self.assertEqual((pending[0]['chat'], pending[0]['id']), (active['chat'], active['id']))

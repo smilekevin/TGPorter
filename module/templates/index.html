@@ -529,6 +529,8 @@
             listPageSize: 100,
             taskListsLoaded: {},
             taskListsForeground: {},
+            taskListRevision: 0,
+            taskLocations: {},
             activeVisibleLimit: 100,
             failedVisibleLimit: 100,
             activeLoading: false,
@@ -829,6 +831,52 @@
                 this[tab + 'HasMore'] = true;
             },
 
+            taskIdentity(task) {
+                // Queue IDs identify submissions; chat/message IDs identify their individual files.
+                const chat = task.chat ?? task.chat_id;
+                const message = task.id ?? task.msg_id;
+                return chat != null && chat !== '' && message != null && message !== '' ?
+                    `message:${chat}:${message}` : `task:${task.task_id}`;
+            },
+
+            reconcileTaskLists(tab, incoming, revision) {
+                const accepted = [];
+                const rejected = new Set();
+                const identities = new Set();
+                const nextRevision = ++this.taskListRevision;
+                for (const task of incoming) {
+                    const identity = this.taskIdentity(task);
+                    const location = this.taskLocations[identity];
+                    // A response already in flight cannot undo a handoff observed in another list.
+                    if (location && location.tab !== tab && location.revision > revision) {
+                        rejected.add(identity);
+                        continue;
+                    }
+                    accepted.push(task);
+                    identities.add(identity);
+                    this.taskLocations[identity] = {tab, revision: nextRevision};
+                }
+                for (const other of ['active', 'pending', 'completed', 'failed', 'skipped']) {
+                    if (other === tab) continue;
+                    const key = other + 'Tasks';
+                    const remaining = this[key].filter(task => !identities.has(this.taskIdentity(task)));
+                    const removed = this[key].length - remaining.length;
+                    if (!removed) continue;
+                    this[key] = remaining;
+                    if (other === this.activeTab && !this.batchBusy) {
+                        const ids = new Set(remaining.map(task => task.task_id));
+                        this.selectedTasks = this.selectedTasks.filter(id => ids.has(id));
+                    }
+                    this[other + 'Total'] = Math.max(0, (this[other + 'Total'] || 0) - removed);
+                    if (!this.taskListSource(other).snapshot) {
+                        // The backend removes handed-off rows too; keep the next page aligned.
+                        this[other + 'Offset'] = Math.max(0, this[other + 'Offset'] - removed);
+                        this[other + 'HasMore'] = this[other + 'Offset'] < this[other + 'Total'];
+                    }
+                }
+                return {tasks: accepted, rejected: rejected.size};
+            },
+
             async loadTaskList(tab, {mode = 'append', reset = false, supersede = false, beforeCommit = null} = {}) {
                 const source = this.taskListSource(tab);
                 if (reset) this.resetTaskList(tab);
@@ -850,6 +898,7 @@
                 }
                 if (append && !this[moreKey]) return false;
                 const requestId = ++this[generation];
+                const revision = this.taskListRevision;
                 const query = this.taskSearch;
                 const status = source.status;
                 const current = () => !this.disposed && requestId === this[generation] &&
@@ -882,9 +931,14 @@
                         rows.push(...tasks);
                         if (source.snapshot || !tasks.length || start + rows.length >= total) break;
                     } while (rows.length < target);
-                    const incoming = source.accepts ? rows.filter(source.accepts) : rows;
+                    let incoming = source.accepts ? rows.filter(source.accepts) : rows;
                     if (beforeCommit && await beforeCommit(incoming) === false) return false;
                     if (!current()) return false;
+                    // A handoff may have shifted this page while its request was in flight.
+                    if (append && this[offsetKey] !== start) return false;
+                    const reconciled = this.reconcileTaskLists(tab, incoming, revision);
+                    incoming = reconciled.tasks;
+                    total = Math.max(0, total - reconciled.rejected);
                     let previous = append ? this[rowsKey] : [];
                     if (mode === 'head') {
                         // Retain older pages only if the fresh head joins them, avoiding gaps after bursts.
@@ -901,22 +955,26 @@
                         return old ? Object.assign(old, task) : task;
                     });
                     this[totalKey] = total;
-                    this[offsetKey] = mode === 'head' ? this[rowsKey].length : start + rows.length;
+                    this[offsetKey] = mode === 'head' ? this[rowsKey].length : start + rows.length - reconciled.rejected;
                     this[moreKey] = rows.length > 0 && this[offsetKey] < total;
-                    if (tab === 'completed' && !query && (!append || start === 0)) this.completedLastTotal = total;
+                    if (tab === 'completed') {
+                        if (reconciled.rejected) this.completedRefreshPending = true;
+                        else if (!query && (!append || start === 0)) this.completedLastTotal = total;
+                    }
                     if (tab === this.activeTab && !this.batchBusy) {
                         const ids = new Set(this.visibleTasks.map(task => task.task_id));
                         this.selectedTasks = this.selectedTasks.filter(id => ids.has(id));
                     }
                     this.taskListsLoaded[tab] = true;
                     loaded = true;
-                    return true;
+                    // Retry a completion snapshot that overlapped a handoff instead of acknowledging it.
+                    return reconciled.rejected === 0;
                 } catch (error) {
                     if (current() && tab === 'skipped') this.showToast(this.t('Network error'), 'error');
                     return false;
                 } finally {
                     if (requestId === this[generation]) this[loading] = false;
-                    if (loaded) this.queueScrollCheck();
+                    if (loaded || (append && this[offsetKey] !== start)) this.queueScrollCheck();
                 }
             },
 
