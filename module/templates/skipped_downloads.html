@@ -2,7 +2,7 @@
     <p x-show="skippedTotal === 0" class="text-center py-16 text-gray-500" x-text="t('No skipped downloads')"></p>
     <template x-for="task in skippedTasks" :key="task.task_id">
         <article class="checkbox-row card-hover bg-white rounded-xl p-4 border border-amber-100 shadow-sm">
-            <div class="flex gap-3 items-start flex-wrap">
+            <div class="flex gap-3 items-start">
                 <input type="checkbox" :checked="selectedTasks.includes(task.task_id)" @change="toggleSelect(task.task_id)" :disabled="batchBusy || skippedBusy.includes(task.task_id)" :aria-label="task.file_name" class="w-4 h-4 rounded mt-1">
                 <div class="flex-1 min-w-0">
                     <div class="text-xs text-gray-500" x-text="task.chat_title + ' · ' + (task.task_id_display || task.task_id)"></div>
@@ -12,9 +12,21 @@
                     <template x-if="task.source_link"><a class="block text-sm text-blue-600 break-all" :href="task.source_link" target="_blank" rel="noopener noreferrer" x-text="task.source_link"></a></template>
                     <details x-show="task.reason === 'No download filter matched' && task.download_filter" class="text-xs mt-2"><summary class="cursor-pointer" x-text="t('Filter expression')"></summary><pre class="whitespace-pre-wrap break-all" x-text="task.download_filter"></pre></details>
                 </div>
-                <div class="flex gap-2">
-                    <button @click="skippedAction(task.task_id, 'download')" :disabled="batchBusy || skippedBusy.includes(task.task_id)" class="px-3 py-2 rounded-lg border border-blue-200 text-blue-600" x-text="t('Download')"></button>
-                    <button @click="skippedAction(task.task_id, 'delete')" :disabled="batchBusy || skippedBusy.includes(task.task_id)" class="px-3 py-2 rounded-lg border border-gray-200 text-gray-600" x-text="t('Delete')"></button>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <button type="button" @click="skippedAction(task.task_id, 'download')" :disabled="batchBusy || skippedBusy.includes(task.task_id)"
+                            class="btn-action p-2.5 sm:p-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                            :title="t('Download')" :aria-label="t('Download')">
+                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                    </button>
+                    <button type="button" @click="skippedAction(task.task_id, 'delete')" :disabled="batchBusy || skippedBusy.includes(task.task_id)"
+                            class="btn-action p-2.5 sm:p-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
+                            :title="t('Delete')" :aria-label="t('Delete')">
+                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </article>
