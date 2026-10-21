@@ -145,6 +145,7 @@
     "Select downloading": "Seleccionar descargas activas",
     "Select paused": "Seleccionar pausadas",
     "Showing {count} of {total} tasks": "Mostrando {count} de {total} tareas",
+    "All": "Todos",
     "All statuses": "Todos los estados",
     "Task status": "Estado de tarea",
     "Select tasks with the same status": "Selecciona tareas con el mismo estado",

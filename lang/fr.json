@@ -145,6 +145,7 @@
     "Select downloading": "Sélectionner les téléchargements en cours",
     "Select paused": "Sélectionner les tâches en pause",
     "Showing {count} of {total} tasks": "{count} tâches affichées sur {total}",
+    "All": "Tous",
     "All statuses": "Tous les états",
     "Task status": "État de la tâche",
     "Select tasks with the same status": "Sélectionnez des tâches ayant le même état",

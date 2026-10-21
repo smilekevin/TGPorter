@@ -313,6 +313,15 @@ global.fetch = async (url, options) => {
         ui.activeStatusFilter = filter;
         assert.deepEqual(ui.filteredActiveTasks.map(task => task.task_id), expected);
     }
+    ui.$refs = {statusFilter: {open: true}, statusFilterButton: {focus() {}}};
+    ui.selectedTasks = ['a'];
+    ui.chooseActiveStatus('paused');
+    assert.equal(ui.activeStatusFilterLabel, 'Paused');
+    assert.deepEqual(ui.filteredActiveTasks.map(task => task.task_id), ['c']);
+    assert.deepEqual(ui.selectedTasks, []);
+    assert.equal(ui.$refs.statusFilter.open, false);
+    ui.chooseActiveStatus('all');
+    assert.equal(ui.activeStatusFilterLabel, 'All');
     ui.activeTasks = [];
     ui.activeStatusFilter = 'all';
     ui.showToast = () => {};
@@ -363,5 +372,94 @@ global.fetch = async (url, options) => {
     assert.equal(ui.downloadUrl, 'https://t.me/channel_name/456');
     assert.equal(ui.submitting, false);
 })().catch(e => { console.error(e); process.exitCode = 1; });
+'''], text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js required')
+    def test_mobile_search_pull_preserves_native_scrolling_and_active_queries(self):
+        html = self.client.get('/').get_data(as_text=True)
+        script = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)[-1]
+        result = subprocess.run(['node', '-e', '''
+const assert = require('node:assert/strict');
+global.WebI18n = {language: 'en', t: text => text};
+let compact = true, focused = 0, prevented = 0;
+global.window = {scrollY: 0, matchMedia: () => ({matches: compact})};
+global.document = {getElementById: () => ({focus: () => focused++})};
+''' + script + '''
+const ui = app();
+ui.$nextTick = callback => callback();
+const touch = (x, y, control = false) => ({
+    touches: [{clientX: x, clientY: y}], target: {closest: () => control},
+    cancelable: true, preventDefault: () => prevented++,
+});
+// Upward scrolling, horizontal gestures, controls, and a scrolled page stay native.
+for (const [start, end, scroll, desktop] of [
+    [touch(100, 100), touch(100, 20), 0, false],
+    [touch(100, 100), touch(180, 155), 0, false],
+    [touch(100, 100, true), touch(100, 170), 0, false],
+    [touch(100, 100), touch(100, 170), 30, false],
+    [touch(100, 100), touch(100, 170), 0, true],
+]) {
+    window.scrollY = scroll;
+    compact = !desktop;
+    ui.startSearchPull(start);
+    ui.moveSearchPull(end);
+    assert.equal(ui.taskSearchExpanded, false);
+    assert.equal(prevented, 0);
+}
+compact = true;
+window.scrollY = 0;
+ui.startSearchPull(touch(100, 100));
+ui.moveSearchPull(touch(100, 125));
+assert.equal(ui.taskSearchExpanded, false);
+ui.moveSearchPull(touch(100, 160));
+assert.equal(ui.taskSearchExpanded, true);
+assert.equal(focused, 0, 'Pulling must not open the software keyboard');
+assert.equal(prevented, 2);
+ui.toggleTaskSearch();
+assert.equal(ui.taskSearchExpanded, false);
+ui.toggleTaskSearch();
+assert.equal(ui.taskSearchExpanded, true);
+assert.equal(focused, 1);
+ui.taskSearch = 'video';
+ui.toggleTaskSearch();
+assert.equal(ui.taskSearchExpanded, true, 'An active filter must stay visible');
+assert.equal(ui.taskSearch, 'video');
+'''], text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js required')
+    def test_navigation_falls_back_on_overflow_and_restores_when_space_returns(self):
+        html = self.client.get('/').get_data(as_text=True)
+        script = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)[-1]
+        result = subprocess.run(['node', '-e', '''
+const assert = require('node:assert/strict');
+global.WebI18n = {language: 'en', t: text => text};
+let portrait = false;
+global.window = {matchMedia: () => ({matches: portrait})};
+''' + script + '''
+const ui = app();
+const tabs = {clientWidth: 600, scrollWidth: 500};
+ui.$refs = {downloadTabs: tabs};
+ui.updateNavigationLayout();
+assert.equal(ui.navigationCollapsed, false);
+// A longer translation or count must trigger bottom navigation.
+tabs.scrollWidth = 650;
+ui.updateNavigationLayout();
+assert.equal(ui.navigationCollapsed, true);
+// More space restores the same top navigation without clearing selection.
+ui.selectedTasks = ['active_001'];
+tabs.clientWidth = 700;
+ui.updateNavigationLayout();
+assert.equal(ui.navigationCollapsed, false);
+assert.deepEqual(ui.selectedTasks, ['active_001']);
+portrait = true;
+ui.updateNavigationLayout();
+assert.equal(ui.navigationCollapsed, true);
+// Late resize notifications cannot mutate an unmounted component.
+ui.disposed = true;
+portrait = false;
+ui.updateNavigationLayout();
+assert.equal(ui.navigationCollapsed, true);
 '''], text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)

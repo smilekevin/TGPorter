@@ -145,6 +145,7 @@
     "Select downloading": "ダウンロード中を選択",
     "Select paused": "一時停止中を選択",
     "Showing {count} of {total} tasks": "全 {total} 件中 {count} 件を表示",
+    "All": "すべて",
     "All statuses": "すべての状態",
     "Task status": "タスクの状態",
     "Select tasks with the same status": "同じ状態のタスクを選択してください",
