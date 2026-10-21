@@ -123,7 +123,7 @@ def save_task(task_id, chat_id, url, start_offset_id, end_offset_id,
             for t in tasks:
                 if (str(t.get("chat_id")) == str(chat_id)
                         and str((t.get("extra_data") or {}).get("message_id")) == str(new_mid)
-                        and t.get("download_state") in ("pending", "downloading")):
+                        and t.get("download_state") in ("pending", "downloading", "paused")):
                     logger.warning(
                         f"save_task skipped: chat {chat_id} msg {new_mid} already "
                         f"exists ({(t.get('extra_data') or {}).get('task_id_display')})"
@@ -184,8 +184,8 @@ def get_running_tasks() -> list:
         return [t for t in tasks if t.get("status") == "running"]
 
 
-def get_pending_tasks() -> list:
-    """Get all tasks with download_state='pending' (not yet started downloading).
+def get_pending_tasks(*, include_paused=False) -> list:
+    """Get runnable pending tasks, optionally including durable paused holds.
 
     'queued' state has been removed — consumer uses _in_queue set (in-memory)
     to track tasks already in asyncio Queue. Only 'pending' tasks need consuming.
@@ -193,7 +193,8 @@ def get_pending_tasks() -> list:
     with _lock:
         tasks = _load_all()
         return [t for t in tasks if t.get("status") == "running"
-                and t.get("download_state", "pending") == "pending"]
+                and t.get("download_state", "pending") in
+                    (("pending", "paused") if include_paused else ("pending",))]
 
 
 def get_downloading_tasks() -> list:
@@ -205,11 +206,13 @@ def get_downloading_tasks() -> list:
 
 
 def update_download_state(task_id, state: str):
-    """Update the download_state of a task ('pending' or 'downloading')."""
+    """Update scheduling state without overriding an explicit durable pause."""
     with _lock:
         tasks = _load_all()
         for task in tasks:
             if task.get("task_id") == task_id:
+                if task.get("download_state") == "paused" and state != "paused":
+                    return False
                 task["download_state"] = state
                 break
         _save_all(tasks)
@@ -221,3 +224,46 @@ def remove_task(task_id):
         tasks = _load_all()
         tasks = [t for t in tasks if t.get("task_id") != task_id]
         _save_all(tasks)
+
+
+def set_task_paused(task_id, paused, snapshot=None):
+    """Atomically hold a pending task or detach one file from its scan owner.
+
+    File holds use the public chat/message identity, so completing the original
+    range cannot remove them. Only an explicit resume makes them consumable.
+    """
+    with _lock:
+        tasks = _load_all()
+        task = next((item for item in tasks if str(item['task_id']) == str(task_id)), None)
+        if snapshot is not None:
+            key = snapshot['task_id']
+            task = next((item for item in tasks if str(item['task_id']) == key), None)
+            if task is None:
+                owner = snapshot.get('owner_task_id')
+                original = next((item for item in tasks if str(item['task_id']) == str(owner)), None)
+                if original is not None:
+                    snapshot = dict(snapshot, created_at=original.get('created_at', snapshot['created_at']),
+                                    url=original.get('url', ''))
+                # Replace a single-post owner, but keep a range/listener intact.
+                tasks = [item for item in tasks if not (
+                    str(item['task_id']) == str(owner)
+                    and str((item.get('extra_data') or {}).get('message_id')) ==
+                        str(snapshot['extra_data']['message_id']))]
+                task = dict(snapshot)
+                task.pop('owner_task_id', None)
+                tasks.append(task)
+        if task is None or (not paused and task.get('download_state') != 'paused'):
+            return None
+        if snapshot is not None:
+            task['extra_data'] = dict(snapshot['extra_data'])
+        task['download_state'] = 'paused' if paused else 'pending'
+        task['updated_at'] = time.time()
+        return dict(task) if _save_all(tasks) else None
+
+
+def is_file_paused(chat_id, message_id):
+    """Do not re-enqueue held files while a history scan is being replayed."""
+    key = f'{chat_id}_{message_id}'
+    with _lock:
+        return any(str(task['task_id']) == key and task.get('download_state') == 'paused'
+                   for task in _load_all())

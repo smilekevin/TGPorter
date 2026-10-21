@@ -163,12 +163,12 @@ def create_server(service, *, read_only: bool = False) -> MCPServer:
 
     @server.tool(annotations=WRITE)
     async def pause_task(task_id: TaskId) -> dict[str, Any]:
-        """Pause an individual active task, preserving its resumable download data."""
+        """Persist a hold on an active or queued task, free its slot and move it to Pending."""
         return await execute(service.web_pause_task, task_id)
 
     @server.tool(annotations=WRITE)
     async def resume_task(task_id: TaskId) -> dict[str, Any]:
-        """Resume an individual paused task. Returns an error if that task is not paused."""
+        """Queue a held task for normal scheduling. Does not start it immediately."""
         return await execute(service.web_resume_task, task_id)
 
     @server.tool(annotations=WRITE)

@@ -236,7 +236,7 @@ Upgrading from a version with an in-memory signing key requires signing in once 
 
 The dashboard separates Active and Completed using task status; unfinished files display at most 99.9%. When a task leaves Active or you open Completed, the dashboard refreshes the latest completed records. Failed reads retry on subsequent polls without a page reload. Search and pagination retain the current filter, and history loads on demand.
 
-**Task stages:** Pending tasks show **Queued**; after scheduling, the Downloading tab shows **Preparing**, then **Downloading**, or **Paused** after a manual pause. Queue capacity and Telegram cooldowns appear as separate reasons; zero speed does not move a download back to the queue.
+**Task stages:** Pending tasks show **Queued**; after scheduling, the Downloading tab shows **Preparing**, then **Downloading**. Pausing stops the file’s writers and connections, preserves its v3 checkpoint, frees the file slot and moves it to Pending as **Paused**. The hold is saved in `data/bot_tasks.json` and survives restarts. Use Pending’s selection shortcuts, status filter and Resume button to return held tasks to the regular queue; resume does not bypass occupied slots or Telegram cooldowns. Queue capacity and Telegram cooldowns appear as separate reasons; zero speed alone does not move a download back to the queue.
 
 ### Command-line Login
 

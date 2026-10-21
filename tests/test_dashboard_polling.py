@@ -291,7 +291,8 @@ vm.runInContext(SOURCE, context);
         self.assertNotIn('toggleGlobalPause', page)
         self.assertNotIn('get_download_state', page)
         self.assertIn("selectActiveStatus('active')", page)
-        self.assertIn("selectActiveStatus('paused')", page)
+        self.assertNotIn("selectActiveStatus('paused')", page)
+        self.assertIn("selectPendingStatus('paused')", page)
         self.assertEqual(page.count('id="task-search"'), 1)
         script = re.sub(r'{{.*?}}', "''", re.findall(r'<script>(.*?)</script>', page, re.S)[-1])
         self.run_script(r'''
@@ -388,7 +389,9 @@ context.authenticatedFetch = async (url, options) => {
     app.t = value => value;
     app.showToast = () => {};
     app.fetchActive = async () => {};
-    app.activeTasks = [{task_id:'ok', status:'active'}, {task_id:'paused', status:'paused'}];
+    app.fetchPending = async () => {};
+    app.activeTab = 'pending';
+    app.pendingTasks = [{task_id:'ok', status:'pending'}, {task_id:'paused', status:'paused'}];
     app.selectedTasks = ['ok', 'paused'];
     assert.equal(app.canPauseSelected, false);
     assert.equal(app.canResumeSelected, false);
@@ -396,33 +399,15 @@ context.authenticatedFetch = async (url, options) => {
     await app.batchSetPaused(true);
     await app.batchSetPaused(false);
     assert.equal(calls.length, 0, 'mixed selections must not send mutations');
-    app.activeStatusFilter = 'paused';
-    app.selectedTasks = [];
-    app.toggleSelectAll('active');
+    app.selectPendingStatus('paused');
     assert.deepEqual([...app.selectedTasks], ['paused']);
     assert.equal(app.canResumeSelected, true);
     assert.equal(app.canPauseSelected, false);
-    app.activeStatusFilter = 'active';
-    app.selectedTasks = [];
-    app.toggleSelectAll('active');
+    app.selectPendingStatus('pending');
     assert.deepEqual([...app.selectedTasks], ['ok']);
     assert.equal(app.canPauseSelected, true);
     assert.equal(app.canResumeSelected, false);
-    app.activeStatusFilter = 'all';
-    app.selectActiveStatus('paused');
-    assert.deepEqual([...app.selectedTasks], ['paused']);
-    app.selectActiveStatus('active');
-    assert.deepEqual([...app.selectedTasks], ['ok']);
-    app.taskSearch = 'paused';
-    app.selectActiveStatus('active');
-    assert.equal(app.selectedTasks.length, 0, 'shortcuts must respect the current search');
-    app.selectActiveStatus('paused');
-    assert.deepEqual([...app.selectedTasks], ['paused']);
-    app.taskSearch = '';
-    app.activeStatusFilter = 'paused';
-    app.selectActiveStatus('active');
-    assert.equal(app.selectedTasks.length, 0, 'shortcuts must respect the current status filter');
-    app.activeStatusFilter = 'all';
+    app.activeTab = 'active';
     app.activeTasks = [{task_id:'ok', status:'active'}, {task_id:'failed', status:'active'}];
     app.selectedTasks = ['ok', 'failed'];
     await app.batchSetPaused(true);
@@ -430,7 +415,8 @@ context.authenticatedFetch = async (url, options) => {
     assert.deepEqual([...app.selectedTasks], ['failed']);
     assert.equal(app.batchBusy, false);
     calls.length = 0;
-    app.activeTasks[0].status = 'paused';
+    app.activeTab = 'pending';
+    app.pendingTasks = [{task_id:'ok', status:'paused'}];
     app.selectedTasks = ['ok'];
     await app.batchSetPaused(false);
     assert.deepEqual(calls, ['/resume_task?task_id=ok']);

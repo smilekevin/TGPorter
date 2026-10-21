@@ -600,6 +600,8 @@
     "Waiting for download slot": "En attente d’une place de téléchargement",
     "Establishing download connections": "Établissement des connexions de téléchargement",
     "All downloads are paused": "Tous les téléchargements sont en pause",
-    "Waiting for Telegram cooldown: {seconds} seconds": "Délai Telegram : {seconds} secondes"
+    "Waiting for Telegram cooldown: {seconds} seconds": "Délai Telegram : {seconds} secondes",
+    "Select queued": "Sélectionner en attente",
+    "Paused; resume manually": "En pause ; reprendre manuellement"
   }
 }

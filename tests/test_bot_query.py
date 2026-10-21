@@ -35,7 +35,7 @@ class BotQueryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(download_stat, "_failed_downloads", self.failed),
             patch.object(download_stat, "_paused_tasks", set()),
             patch.object(download_stat, "_chat_titles", {}),
-            patch.object(download_service, "get_pending_tasks", side_effect=lambda: self.pending),
+            patch.object(download_service, "get_pending_tasks", side_effect=lambda **kwargs: self.pending),
         ):
             item.start()
             self.addCleanup(item.stop)

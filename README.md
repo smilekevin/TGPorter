@@ -54,7 +54,7 @@
   - ✅ **已完成** — 下载成功的历史记录；任务完成或切换标签时及时刷新，读取失败自动重试
   - ⏭ **已跳过** — 查看重复文件、过滤等跳过原因，可重新下载或删除记录；重复文件不计入已完成
   - ❌ **失败** — 失败原因和重试入口
-- **批量操作** — 暂停、恢复、删除和重试
+- **批量操作** — 暂停后释放下载名额并移至待下载，重启后保持暂停；在待下载中筛选和恢复，恢复后重新排队；支持删除和重试
 - **实时数据** — 总下载速度、当前下载流数和每文件进度
 - **密码登录** — 支持可选的“记住登录 7 天”，服务重启后仍有效
 - **网页提交** — 通过 `t.me` 消息链接添加下载任务
@@ -157,7 +157,7 @@ docker run -d \
 | `/remove_replace_ad <msg_link> <keyword>` | 移除替换规则 | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | 设置群组追加广告（空文本删除） | `/set_ad https://t.me/c/123 关注我` |
 | `/set_language <lang>` | 设置语言（en/zh-cn/zh-tw/ja/es/fr/ru/uk，兼容 zh/ua） | `/set_language zh-cn` |
-| `/query [all\|active\|pending\|completed\|failed] [page]` | 查询所有、下载中（含暂停）、Pending、已完成或失败任务；支持分类、翻页和刷新按钮 | `/query pending`、`/query completed 2` |
+| `/query [all\|active\|pending\|completed\|failed] [page]` | 查询所有、下载中、待下载（含暂停）、已完成或失败任务；支持分类、翻页和刷新按钮 | `/query pending`、`/query completed 2` |
 | `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
 | `/help` `/start` | 显示帮助 | — |
 
@@ -181,7 +181,7 @@ docker run -d \
 | `/submit_download` | POST | 提交单条 HTTPS `t.me` 消息链接（JSON: `{"url": "https://t.me/channel/123"}`）；返回持久化入队结果，非下载完成 |
 | `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中），每个文件含当前下载流数 `active_streams` |
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
-| `/get_pending_list` | GET | Pending 队列，支持 `offset` / `limit` 分页及 `search` 按任务 ID/文件名搜索 |
+| `/get_pending_list` | GET | 待下载队列（含暂停），支持 `offset` / `limit` 分页、`search` 搜索及 `status=all/pending/paused` 筛选 |
 | `/get_failed_downloads` | GET | 失败列表 |
 | `/get_skipped_downloads` | GET | 已跳过列表及原因，支持 `offset`、`limit`、`search` |
 | `/download_skipped` | POST | 按 `task_id` 入队下载，绕过下载 Filter、媒体类型与格式限制 |
@@ -196,8 +196,8 @@ docker run -d \
 | `/set_max_workers` | POST | 设置同时下载的文件数（`n=1`–`6`），立即保存到 `data/settings.json`，重启后保留 |
 | `/check_file_exists` | POST | 检查本地文件或活动/失败任务断点，分别返回 `output_exists`、`cache_exists` 和 `cache_paths`；删除确认只提示缓存存在 |
 | `/set_download_state` | POST | 全局暂停/恢复（`state=pause` / `state=continue`） |
-| `/pause_task` | POST | 暂停单个任务 |
-| `/resume_task` | POST | 恢复单个任务 |
+| `/pause_task` | POST | 持久化暂停单个任务，停止写入后释放下载名额并移至待下载 |
+| `/resume_task` | POST | 将暂停任务重新排队，等待空闲下载名额 |
 | `/delete_task` | POST | 删除任务（`task_id`，可选 `delete_file=true` 删除文件与临时数据） |
 | `/batch_delete` | POST | 批量删除（JSON: `{"task_ids": [...], "delete_file": false}`） |
 | `/retry_task` | POST | 重试失败任务 |
@@ -425,7 +425,7 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
   - ✅ **Completed** — successful download history; refreshes on completion or tab opening and retries failed reads
   - ⏭ **Skipped** — duplicate-file and filter skip reasons, with download and record deletion actions; duplicate files do not count as completed
   - ❌ **Failed** — failure reasons and retries
-- **Batch actions** — pause, resume, delete and retry
+- **Batch actions** — pausing frees the file slot and moves the task to Pending, retaining its hold across restarts; filter and resume held tasks in Pending to queue them again; delete and retry are also supported
 - **Live statistics** — total speed, active streams and per-file progress
 - **Password login** — optional seven-day remember-me setting that survives service restarts
 - **Web submissions** — add downloads using `t.me` post links
@@ -528,7 +528,7 @@ For more details, please refer to the following deployment matrix:
 | `/remove_replace_ad <msg_link> <keyword>` | Remove replacement rule | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | Set group append ad (empty to delete) | `/set_ad https://t.me/c/123 关注我` |
 | `/set_language <lang>` | Set language (en/zh-cn/zh-tw/ja/es/fr/ru/uk; zh/ua remain compatible) | `/set_language zh-cn` |
-| `/query [all\|active\|pending\|completed\|failed] [page]` | Query all, active (including paused), pending, completed or failed tasks; category, paging and refresh buttons | `/query pending`, `/query completed 2` |
+| `/query [all\|active\|pending\|completed\|failed] [page]` | Query all, active, pending (including paused), completed or failed tasks; category, paging and refresh buttons | `/query pending`, `/query completed 2` |
 | `/stop` | Stop download/forward/listen (interactive) | `/stop` |
 | `/help` `/start` | Show help | — |
 
@@ -552,7 +552,7 @@ For a single post link or forwarded media, the Bot registers a new task only aft
 | `/submit_download` | POST | Submit one HTTPS `t.me` post link (JSON: `{"url": "https://t.me/channel/123"}`); returns durable queue acceptance, not completion |
 | `/get_download_list` | GET | Download list (`already_down=true` completed, `false` active), with per-file `active_streams` |
 | `/get_download_list?offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
-| `/get_pending_list` | GET | Pending queue with `offset` / `limit` pagination and `search` by task ID/filename |
+| `/get_pending_list` | GET | Pending queue including held tasks; `offset` / `limit` pagination, `search` by ID/filename and `status=all/pending/paused` filtering |
 | `/get_failed_downloads` | GET | Failed list |
 | `/get_skipped_downloads` | GET | Skipped records and reasons; supports `offset`, `limit`, `search` |
 | `/download_skipped` | POST | Queue `task_id` while bypassing download expressions, media types and formats |
@@ -567,8 +567,8 @@ For a single post link or forwarded media, the Bot registers a new task only aft
 | `/set_max_workers` | POST | Set simultaneous file downloads (`n=1`–`6`); save immediately to `data/settings.json` for restarts |
 | `/check_file_exists` | POST | Check local output or active/failed-task partial data; return `output_exists`, `cache_exists`, and `cache_paths` separately; deletion confirmation only indicates cache presence |
 | `/set_download_state` | POST | Global pause/resume (`state=pause` / `state=continue`) |
-| `/pause_task` | POST | Pause a task |
-| `/resume_task` | POST | Resume a task |
+| `/pause_task` | POST | Persist a task hold, stop writers, release its slot and move it to Pending |
+| `/resume_task` | POST | Queue a held task for the next available download slot |
 | `/delete_task` | POST | Delete a task (`task_id`; optional `delete_file=true` removes files and partial data) |
 | `/batch_delete` | POST | Batch delete (JSON: `{"task_ids": [...], "delete_file": false}`) |
 | `/retry_task` | POST | Retry a failed task |

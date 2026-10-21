@@ -592,21 +592,41 @@ class DownloadService:
             })
         return result
 
-    def web_pause_task(self, task_id=None):
-        """Pause a specific download task"""
+    def _set_task_paused(self, task_id, paused):
         if not task_id:
             return {"code": "0", "message": "Task ID required"}
-        pause_task(task_id)
-        return {"code": "1", "message": "paused"}
+        from module import download_control
+        loop = getattr(self.app, 'loop', None)
+        if loop is None or not loop.is_running() or loop.is_closed():
+            record = (download_control.persist_pause(task_id) if paused else
+                      download_control.task_store.set_task_paused(task_id, False))
+            if record:
+                (pause_task if paused else resume_task)(str(record['task_id']))
+                if paused and (record.get('extra_data') or {}).get('message_id') is not None:
+                    from module.download_stat import delete_download_result_entry
+                    delete_download_result_entry(record['chat_id'], record['extra_data']['message_id'])
+            return {"code": "1" if record else "0",
+                    "message": ('paused' if paused else 'resumed') if record else 'Task not found'}
+        operation = download_control.set_paused(task_id, paused)
+        try:
+            future = asyncio.run_coroutine_threadsafe(operation, loop)
+        except RuntimeError:
+            operation.close()
+            return {"code": "0", "message": "Downloader is shutting down."}
+        try:
+            return future.result(timeout=30)
+        except FutureTimeout:
+            # Cleanup owns the writers until it finishes; timing out a request
+            # must not interrupt that cleanup or make the task runnable.
+            return {"code": "0", "message": "Task pause change is still being applied; refresh the task list."}
+
+    def web_pause_task(self, task_id=None):
+        """Persist a hold and free the file slot after all writers stop."""
+        return self._set_task_paused(task_id, True)
 
     def web_resume_task(self, task_id=None):
-        """Resume a specific download task"""
-        if not task_id:
-            return {"code": "0", "message": "Task ID required"}
-        success = resume_task(task_id)
-        if success:
-            return {"code": "1", "message": "resumed"}
-        return {"code": "0", "message": "Task not paused"}
+        """Return a held task to the regular pending queue."""
+        return self._set_task_paused(task_id, False)
 
     def _task_files(self, task_id):
         """Find exact recorded paths; failed rows are no longer in active results."""
@@ -791,10 +811,10 @@ class DownloadService:
             "errors": errors,
         }
 
-    def web_get_pending_list(self, offset=0, limit=100, search=""):
+    def web_get_pending_list(self, offset=0, limit=100, search="", status="all"):
         """Get list of pending tasks (received but not started downloading)"""
         import time as _time
-        pending = get_pending_tasks()
+        pending = get_pending_tasks(include_paused=True)
         # Preparation records remain visible in Active even before their first progress callback.
         # These will show up in the active download list — no need to duplicate in pending.
         from module.download_stat import get_download_result as _get_dr
@@ -807,7 +827,7 @@ class DownloadService:
             # they are about to appear in Active.
             _cid = task.get("chat_id")
             _mid = task.get("extra_data", {}).get("message_id")
-            if _cid is not None and _mid is not None:
+            if task.get("download_state") != "paused" and _cid is not None and _mid is not None:
                 try:
                     _cid_int = int(_cid)
                     _mid_int = int(_mid)
@@ -854,9 +874,12 @@ class DownloadService:
 
             task_id_display = task.get("extra_data", {}).get("task_id_display", str(task_id))
 
-            queue_label = 'Queued'
+            paused = task.get('download_state') == 'paused'
+            queue_label = 'Paused' if paused else 'Queued'
             wait_seconds = 0
-            if get_download_state() == DownloadState.StopDownload:
+            if paused:
+                wait_reason = "Paused; resume manually"
+            elif get_download_state() == DownloadState.StopDownload:
                 wait_reason = "All downloads are paused"
             elif cooldown["active"]:
                 wait_reason = "Waiting for Telegram cooldown: {seconds} seconds"
@@ -877,6 +900,7 @@ class DownloadService:
                 "created_ts": created_at,
                 "wait_time": wait_time,
                 "queue_label": queue_label,
+                "status": "paused" if paused else "pending",
                 "wait_reason": wait_reason,
                 "wait_seconds": wait_seconds,
             })
@@ -886,6 +910,9 @@ class DownloadService:
         if query:
             result = [task for task in result if query in
                       f"{task['task_id']} {task['task_id_display']} {task['filename']}".lower()]
+
+        if status in ('paused', 'pending'):
+            result = [task for task in result if task['status'] == status]
 
         # Sort by created_at ascending (earliest first)
         result.sort(key=lambda x: x.get("created_ts", 0))
@@ -908,4 +935,5 @@ class DownloadService:
         # A stale Pending card may be cancelled after preparation has already begun.
         delete_task(task_id_int)
         remove_task(task_id_int)
+        resume_task(str(task_id_int))
         return {"code": "1", "message": "removed"}

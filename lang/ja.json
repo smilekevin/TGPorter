@@ -600,6 +600,8 @@
     "Waiting for download slot": "ダウンロード枠の空きを待機中",
     "Establishing download connections": "ダウンロード接続を確立中",
     "All downloads are paused": "すべてのダウンロードが一時停止中",
-    "Waiting for Telegram cooldown: {seconds} seconds": "Telegram の待機時間: 残り {seconds} 秒"
+    "Waiting for Telegram cooldown: {seconds} seconds": "Telegram の待機時間: 残り {seconds} 秒",
+    "Select queued": "待機中を選択",
+    "Paused; resume manually": "一時停止中：手動で再開してください"
   }
 }

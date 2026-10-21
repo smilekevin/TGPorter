@@ -592,8 +592,12 @@ async def add_download_task(message: pyrogram.types.Message, node: TaskNode):
     if queue is None:
         logger.error(f"add_download_task: queue is None! msg {message.id} cannot be queued")
         return False
+    from module import download_control
+    if download_control.task_store.is_file_paused(node.chat_id, message.id):
+        return False
     prepare_download(message.id, node)
     node.download_status[message.id] = DownloadStatus.Downloading
+    download_control.remember_queued(queue, message, node)
     await queue.put((message, node))
     node.total_task += 1
     logger.info(f"add_download_task: put msg {message.id} into queue (size now {queue.qsize()}), task {getattr(node, 'task_id_display', node.task_id)}")
@@ -1344,12 +1348,14 @@ async def worker(client: pyrogram.client.Client):
         _TASK_HEARTBEAT_TIMEOUT, get_task_heartbeat_age, clear_task_heartbeat,
     )
     from module.bot import _bot
+    from module import download_control
     global _live_workers
     with _worker_pool_lock:
         _live_workers += 1
     try:
         while app.is_running:
             counted_active = False
+            attempt = None
             message = None
             node = None
             try:
@@ -1364,6 +1370,10 @@ async def worker(client: pyrogram.client.Client):
                     return
                 message = item[0]
                 node: TaskNode = item[1]
+                download_control.forget_queued(node, message.id)
+                if download_control.task_store.is_file_paused(node.chat_id, message.id):
+                    download_control.detach_file(node, message.id)
+                    continue
                 _bot._active_downloads += 1
                 counted_active = True
                 logger.info(f"Worker picked up message {message.id} from chat {node.chat_id} for task {node.task_id_display} (active={_bot._active_downloads})")
@@ -1382,6 +1392,7 @@ async def worker(client: pyrogram.client.Client):
                 dl_task = asyncio.create_task(
                     download_task(target_client, message, node)
                 )
+                attempt = download_control.register_attempt(asyncio.current_task(), node, message.id)
                 dl_task_start = time.time()
                 # Silent throttling and dead TCP both lack heartbeats. Warn after 300 seconds,
                 # at most once per five minutes; cancel only after 30 minutes without progress
@@ -1392,7 +1403,7 @@ async def worker(client: pyrogram.client.Client):
                 watchdog_triggered = False
                 try:
                     while not dl_task.done():
-                        await asyncio.sleep(30)
+                        await asyncio.wait({dl_task}, timeout=30)
                         if dl_task.done():
                             break
                         age = get_task_heartbeat_age(composite_key)
@@ -1428,6 +1439,11 @@ async def worker(client: pyrogram.client.Client):
                     _watchdog_retry_count.pop(node.task_id, None)
                 except asyncio.CancelledError:
                     # Awaiting a cancelled dl_task raises CancelledError.
+                    if attempt.paused:
+                        asyncio.current_task().uncancel()
+                        dl_task.cancel()
+                        await asyncio.gather(dl_task, return_exceptions=True)
+                        continue
                     if watchdog_triggered:
                         logger.warning(
                             f"Worker: task {node.task_id_display} cancelled by zombie watchdog"
@@ -1535,6 +1551,10 @@ async def worker(client: pyrogram.client.Client):
                 # guard's in_queue term.
                 if counted_active:
                     _bot._active_downloads -= 1
+                if attempt is not None:
+                    if attempt.paused:
+                        download_control.detach_file(node, message.id)
+                    download_control.release_attempt(attempt)
     finally:
         with _worker_pool_lock:
             _live_workers -= 1
