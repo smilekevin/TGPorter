@@ -30,7 +30,7 @@ button:hover { filter: brightness(.96); }
 button:disabled { opacity: .5; cursor: wait; }
 .secondary { color: #43546e; border-color: #dce3ed; background: white; }
 .danger { color: #b63838; border-color: #f2d1d1; background: #fffafa; }
-.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.actions { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
 #telegram-form { max-width: 470px; }
 #telegram-form label { margin-top: 12px; }
 .account-summary { display: flex; align-items: center; gap: 12px; margin: 8px 0 10px 48px; }
@@ -55,8 +55,9 @@ label small { color: #99701f; }
 .login-panel { padding: 18px; background: #f7f9fd; border: 1px solid #e2e9f4; border-radius: 10px; }
 #telegram-card input { max-width: 450px; }
 .login-panel .account-summary { margin: 16px 0 0; flex-wrap: wrap; }
-#telegram-test-row { display: flex; align-items: center; gap: 10px; flex: 1; }
-#telegram-connection { color: #65748b; overflow-wrap: anywhere; flex: 1; min-width: 180px; }
+/* Reserve room for the test result before wrapping the group below account actions. */
+#telegram-test-row { display: flex; align-items: center; gap: 10px; flex: 1 1 280px; }
+#telegram-connection { color: #65748b; overflow-wrap: anywhere; flex: 1 1 180px; min-width: 180px; }
 #telegram-connection.success { color: #13704f; }
 #telegram-connection.error { color: #b63838; }
 .account-options { margin-top: 22px; }
@@ -111,7 +112,7 @@ nav { flex-shrink: 0; }
     .help, .clear-secret, .badge, .save-bar span { font-size: 11px; }
     .choice, legend { font-size: 12px; }
     button { padding: 8px 12px; }
-    .actions > button, .add-row > button, .save-bar button, #setup-form > button { min-height: 38px; }
+    .actions button, .add-row > button, .save-bar button, #setup-form > button { min-height: 38px; }
     .actions { gap: 8px; margin-top: 12px; }
     .login-panel { padding: 12px; }
     .account-options { margin-top: 16px; }
