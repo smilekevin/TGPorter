@@ -1,5 +1,4 @@
 <section x-show="activeTab === 'skipped'" class="space-y-3" aria-label="Skipped downloads">
-    <p class="text-sm text-gray-500" x-text="t('Download ignores filters. Delete removes only the skipped record.')"></p>
     <p x-show="skippedTotal === 0" class="text-center py-16 text-gray-500" x-text="t('No skipped downloads')"></p>
     <template x-for="task in skippedTasks" :key="task.task_id">
         <article class="checkbox-row card-hover bg-white rounded-xl p-4 border border-amber-100 shadow-sm">
