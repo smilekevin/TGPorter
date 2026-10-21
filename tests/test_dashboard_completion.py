@@ -232,7 +232,7 @@ for(const name of ['fetchVersion','fetchActive','fetchPending','fetchCompleted',
     'fetchDownloadStatus','fetchFloodWait','fetchBotStatus'])ui[name]=async()=>{};
 ui.$nextTick=()=>{};
 await ui.init();
-now=1000;
+now=3000;
 await cycle();
 assert.equal(listAttempts,2,'pending refresh must not wait for the ten-second fallback');
 assert.equal(ui.completedTasks[0].task_id,'new');

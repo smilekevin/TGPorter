@@ -34,7 +34,7 @@ const document = {
 };
 const context = {
     document,
-    setTimeout: callback => { timers.set(++serial, callback); return serial; },
+    setTimeout: (callback, delay) => { assert.equal(delay, 3000); timers.set(++serial, callback); return serial; },
     clearTimeout: id => timers.delete(id),
 };
 vm.createContext(context);
