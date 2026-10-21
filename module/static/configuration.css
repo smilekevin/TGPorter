@@ -93,3 +93,42 @@ nav { flex-shrink: 0; }
 .filter-status.error { color: #b63838; }
 #setting-filter_advertisement_list .chip { max-width: 100%; }
 #setting-filter_advertisement_list .chip > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+/* Match the dashboard's phone typography and shorter controls. */
+@media (max-width: 639px), (max-width: 1023px) and (max-height: 500px) and (orientation: landscape) {
+    body { font-size: 13px; line-height: 1.5; }
+    main { padding-top: 16px; padding-bottom: 88px; }
+    .intro { margin-bottom: 16px; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 16px; margin-bottom: 12px; }
+    p { margin-bottom: 12px; }
+    .card { padding: 16px; margin-bottom: 14px; border-radius: 12px; }
+    .section-heading { gap: 10px; }
+    .step { width: 28px; height: 28px; border-radius: 8px; }
+    label { margin-bottom: 5px; }
+    #settings-form input:not([type=checkbox]), #settings-form select, #setup-form input { height: 38px; padding: 8px 10px; }
+    input[type=checkbox] { width: 16px; height: 16px; }
+    .help, .clear-secret, .badge, .save-bar span { font-size: 11px; }
+    .choice, legend { font-size: 12px; }
+    button { padding: 8px 12px; }
+    .actions > button, .add-row > button, .save-bar button, #setup-form > button { min-height: 38px; }
+    .actions { gap: 8px; margin-top: 12px; }
+    .login-panel { padding: 12px; }
+    .account-options { margin-top: 16px; }
+    .settings-layout { display: block; }
+    aside { position: static; display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    aside a { padding: 6px 8px; font-size: 12px; }
+    .field-grid { gap: 16px; }
+    .save-bar-inner { padding-top: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+    #notice, .restart { padding: 12px 14px; }
+    .restart { margin-bottom: 16px; }
+    .choices { gap: 6px 12px; }
+    .chips { gap: 6px; }
+    .chip { padding: 3px 7px; }
+    #telegram-test-row { flex-wrap: wrap; }
+    #telegram-connection { min-width: 0; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+    html { scroll-padding-top: 12px; }
+    .configuration-header { position: static; }
+}

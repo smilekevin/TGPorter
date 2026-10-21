@@ -149,6 +149,7 @@
     "Select downloading": "選擇下載中",
     "Select paused": "選擇已暫停",
     "Showing {count} of {total} tasks": "符合 {count} / 共 {total} 個任務",
+    "All": "全部",
     "All statuses": "全部狀態",
     "Task status": "任務狀態",
     "Select tasks with the same status": "請選擇相同狀態的任務",

@@ -147,6 +147,7 @@
     "Select downloading": "Вибрати завантажувані",
     "Select paused": "Вибрати призупинені",
     "Showing {count} of {total} tasks": "Показано {count} із {total} завдань",
+    "All": "Усі",
     "All statuses": "Усі стани",
     "Task status": "Стан завдання",
     "Select tasks with the same status": "Виберіть завдання з однаковим станом",

@@ -52,7 +52,7 @@
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
         /* Mobile safe area & bottom nav */
         @media (max-width: 639px) {
-            main { padding-bottom: calc(4rem + env(safe-area-inset-bottom)) !important; }
+            main { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)) !important; }
             /* Reserve top safe-area space for iOS Safari and PWA headers. */
             .sticky-header-top { top: env(safe-area-inset-top); }
         }
@@ -61,7 +61,7 @@
         .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen" x-data="app()" x-cloak>
+<body class="bg-gray-50 min-h-screen" x-data="app()" :class="{'navigation-fallback': navigationCollapsed}" x-cloak>
 
     <!-- Sticky Header + Tabs Container -->
     <div class="dashboard-header sticky top-0 z-30 sticky-header-top">
@@ -70,43 +70,37 @@
     <header class="app-header safe-top">
         {% with header_dashboard=true %}{% include 'page_header.html' %}{% endwith %}
     </header>
-    <div class="dashboard-status page-container">
-        <div class="bot-connection" role="status" aria-live="polite">
-            <span class="bot-connection-badge" :data-state="botStatus.status">
-                <span class="bot-connection-dot" aria-hidden="true"></span>
-                <span x-text="t('Telegram Bot')"></span>
-                <span x-text="botStatusLabel"></span>
+    <details class="submission-panel page-container">
+        <summary :aria-label="t('Submit download')">
+            <span class="submission-toggle">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>
+                <span x-text="t('Submit download')"></span>
             </span>
-            <span x-show="botStatus.status === 'connected' && botStatus.rtt_ms !== null"
-                  x-text="t('Latency: {ms} ms', {ms: botStatus.rtt_ms})"></span>
-            <span x-show="botStatus.last_checked_at !== null"
-                  x-text="t('Last checked: {time}', {time: botLastChecked})"></span>
-            <span x-show="botStatus.status === 'flood_wait'"
-                  x-text="t('Retry in {seconds}s', {seconds: botStatus.flood_wait_remaining})"></span>
-        </div>
-        <div class="download-metrics">
-            <svg width="14" height="14" class="text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-            </svg>
-            <span class="font-mono font-medium" x-text="downloadSpeed">0.00 B/s</span>
-            <span x-text="t('Active streams: {count}', {count: activeStreams})"></span>
-        </div>
-    </div>
-
-    <form @submit.prevent="submitDownload()" class="submission-panel page-container py-4 flex flex-wrap gap-2">
-        <label for="download-url" class="sr-only" x-text="t('Telegram post link')"></label>
-        <input id="download-url" type="url" required maxlength="2048" x-model="downloadUrl"
-               placeholder="https://t.me/channel/123" :disabled="submitting"
-               class="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm">
-        <button type="submit" :disabled="submitting" class="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm disabled:opacity-50"
-                x-text="submitting ? t('Submitting...') : t('Submit download')"></button>
-        <p class="w-full text-xs text-gray-500" x-text="t('Submit one Telegram post link using the account already logged in on the server.')"></p>
-    </form>
+            <span class="bot-connection" role="status" aria-live="polite" tabindex="0"
+                  :title="botStatusDetails" :aria-label="botStatusDetails" @click.stop.prevent>
+                <span class="bot-connection-badge" :data-state="botStatus.status">
+                    <span class="bot-connection-dot" aria-hidden="true"></span>
+                    <span x-text="t('Telegram Bot')"></span>
+                    <span x-text="botStatusLabel"></span>
+                </span>
+            </span>
+        </summary>
+        <form @submit.prevent="submitDownload()" class="flex flex-wrap gap-2">
+            <label for="download-url" class="sr-only" x-text="t('Telegram post link')"></label>
+            <input id="download-url" type="url" required maxlength="2048" x-model="downloadUrl"
+                   placeholder="https://t.me/channel/123" :disabled="submitting"
+                   class="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <button type="submit" :disabled="submitting" class="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm disabled:opacity-50"
+                    x-text="submitting ? t('Submitting...') : t('Submit download')"></button>
+            <p class="w-full text-xs text-gray-500" x-text="t('Submit one Telegram post link using the account already logged in on the server.')"></p>
+        </form>
+    </details>
 
     <!-- Tab Navigation (Desktop Only) -->
-    <div class="hidden sm:block bg-white border-b border-gray-100 shadow-sm">
-        <div class="page-container">
-            <nav class="flex gap-0 overflow-x-auto" role="tablist">
+    <div class="download-navigation hidden sm:block bg-white border-b border-gray-100 shadow-sm"
+         :class="{'navigation-collapsed': navigationCollapsed}">
+        <div class="download-navigation-row page-container" x-ref="downloadNavigation">
+            <nav class="download-tabs flex gap-0" role="tablist" x-ref="downloadTabs">
                 <button
                                     @click="activeTab = 'active'; selectedTasks = []"
                                     class="shrink-0 px-4 py-3 text-sm font-medium transition-colors relative"
@@ -190,6 +184,7 @@
                                     </span>
                                 </button>
             </nav>
+            {% include 'download_metrics.html' %}
         </div>
     </div>
 
@@ -226,24 +221,50 @@
     </div>
 
     <!-- Main Content -->
-    <main class="dashboard-main page-container py-6">
-        <div class="task-tools mb-5">
-        <div class="task-search">
-            <label for="task-search" class="sr-only" x-text="t('Search task ID or filename...')"></label>
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            <input id="task-search" type="search" maxlength="200" x-model="taskSearch" @input="onTaskSearchInput()"
-                   :placeholder="t('Search task ID or filename...')" autocomplete="off">
-            <button type="button" x-show="taskSearch" @click="taskSearch = ''; onTaskSearchInput()" x-text="t('Clear search')"></button>
+    <main class="dashboard-main page-container py-6"
+          @touchstart.passive="startSearchPull($event)" @touchmove="moveSearchPull($event)"
+          @touchend="searchPull = null" @touchcancel="searchPull = null">
+        <div class="task-tools mb-5" :class="{'search-expanded': taskSearchExpanded || taskSearch.trim()}">
+            <div id="task-search-panel" class="task-search">
+                <label for="task-search" class="sr-only" x-text="t('Search task ID or filename...')"></label>
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input id="task-search" type="search" maxlength="200" x-model="taskSearch" @input="onTaskSearchInput()"
+                       :placeholder="t('Search task ID or filename...')" autocomplete="off">
+                <button type="button" x-show="taskSearch" @click="taskSearch = ''; onTaskSearchInput()" x-text="t('Clear search')"></button>
+            </div>
         </div>
-        <label x-show="activeTab === 'active'" class="status-filter">
-            <span class="sr-only" x-text="t('Task status')"></span>
-            <select x-model="activeStatusFilter" @change="selectedTasks = []" :aria-label="t('Task status')">
-                <option value="all" x-text="t('All statuses')"></option>
-                <option value="active" x-text="t('Downloading')"></option>
-                <option value="paused" x-text="t('Paused')"></option>
-                <option value="preparing" x-text="t('Preparing')"></option>
-            </select>
-        </label>
+        <div class="selection-tools mb-3">
+            <div x-show="activeTab === 'active'" class="selection-shortcuts">
+                <button type="button" @click="toggleSelectAll('active')" :disabled="batchBusy || !filteredActiveTasks.length"
+                        :aria-pressed="filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id))"
+                        class="selection-shortcut" x-text="t(filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
+                <button type="button" @click="selectActiveStatus('active')" :disabled="!filteredActiveTasks.some(task => task.status === 'active')"
+                        class="selection-shortcut" x-text="t('Select downloading')"></button>
+                <button type="button" @click="selectActiveStatus('paused')" :disabled="!filteredActiveTasks.some(task => task.status === 'paused')"
+                        class="selection-shortcut" x-text="t('Select paused')"></button>
+            </div>
+            <div class="selection-filters">
+                <details x-show="activeTab === 'active'" class="status-filter" x-ref="statusFilter"
+                         @click.outside="$el.open = false"
+                         @keydown.escape.stop.prevent="$el.open = false; $refs.statusFilterButton.focus()">
+                    <summary class="selection-shortcut" x-ref="statusFilterButton"
+                             :aria-label="t('Task status') + ': ' + activeStatusFilterLabel" :title="activeStatusFilterLabel"
+                             :data-active="activeStatusFilter !== 'all'">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/></svg>
+                    </summary>
+                    <div class="status-filter-options" role="group" :aria-label="t('Task status')">
+                        {% for value, label in [('all', 'All'), ('active', 'Downloading'), ('paused', 'Paused'), ('preparing', 'Preparing')] %}
+                        <button type="button" :aria-label="t('{{ label }}')" :aria-pressed="activeStatusFilter === '{{ value }}'"
+                                @click="chooseActiveStatus('{{ value }}')" x-text="t('{{ label }}')"></button>
+                        {% endfor %}
+                    </div>
+                </details>
+                <button type="button" class="selection-shortcut task-search-toggle" @click="toggleTaskSearch()"
+                        :aria-label="t('Search task ID or filename...')" :aria-expanded="taskSearchExpanded || Boolean(taskSearch.trim())"
+                        aria-controls="task-search-panel">
+                    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                </button>
+            </div>
         </div>
         <div x-show="(taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all')) && visibleTaskCount === 0 && !searchLoading" class="text-center py-16" role="status">
             <h3 class="text-gray-500 font-medium mb-1" x-text="t('No matching tasks')"></h3>
@@ -304,16 +325,6 @@
                 </div>
             </div>
 
-            <!-- Selection shortcuts apply to the current search and status filter. -->
-            <div x-show="filteredActiveTasks.length > 0" class="selection-tools mb-3">
-                <button type="button" @click="toggleSelectAll('active')" :disabled="batchBusy"
-                        :aria-pressed="filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id))"
-                        class="selection-shortcut" x-text="t(filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
-                <button type="button" @click="selectActiveStatus('active')" :disabled="!filteredActiveTasks.some(task => task.status === 'active')"
-                        class="selection-shortcut" x-text="t('Select downloading')"></button>
-                <button type="button" @click="selectActiveStatus('paused')" :disabled="!filteredActiveTasks.some(task => task.status === 'paused')"
-                        class="selection-shortcut" x-text="t('Select paused')"></button>
-            </div>
             <p class="text-xs text-gray-500 mb-3" x-text="t('Showing {count} of {total} tasks', {count: filteredActiveTasks.length, total: activeTasks.length})"></p>
 
             <!-- Empty State -->
@@ -929,6 +940,19 @@
                     stopped: 'Stopped', unknown: 'Unknown',
                 }[this.botStatus.status] || 'Unknown');
             },
+            get botStatusDetails() {
+                const details = [this.t('Telegram Bot') + ': ' + this.botStatusLabel];
+                if (this.botStatus.status === 'connected' && this.botStatus.rtt_ms !== null) {
+                    details.push(this.t('Latency: {ms} ms', {ms: this.botStatus.rtt_ms}));
+                }
+                if (this.botStatus.last_checked_at !== null) {
+                    details.push(this.t('Last checked: {time}', {time: this.botLastChecked}));
+                }
+                if (this.botStatus.status === 'flood_wait') {
+                    details.push(this.t('Retry in {seconds}s', {seconds: this.botStatus.flood_wait_remaining}));
+                }
+                return details.join('\n');
+            },
             get botLastChecked() {
                 return this.botStatus.last_checked_at === null ? '' :
                     new Date(this.botStatus.last_checked_at * 1000).toLocaleTimeString(this.locale);
@@ -958,6 +982,8 @@
             allTasks: [],
             selectedTasks: [],
             taskSearch: '',
+            taskSearchExpanded: false,
+            searchPull: null,
             activeStatusFilter: 'all',
             completedRequestId: 0,
             pendingRequestId: 0,
@@ -967,6 +993,9 @@
             completedRefreshPending: false,
             completedRefreshVersion: 0,
             scrollListener: null,
+            navigationCollapsed: false,
+            navigationObserver: null,
+            navigationResizeListener: null,
             toast: { show: false, message: '', type: 'success' },
             batchBusy: false,
             stopPolling: null,
@@ -988,6 +1017,75 @@
                 batchCount: 0,
                 batchFilesExist: 0,
                 batchFilesNotFound: 0,
+            },
+
+            get activeStatusFilterLabel() {
+                return this.t({all: 'All', active: 'Downloading', paused: 'Paused',
+                    preparing: 'Preparing'}[this.activeStatusFilter]);
+            },
+
+            chooseActiveStatus(status) {
+                this.activeStatusFilter = status;
+                this.selectedTasks = [];
+                this.$refs.statusFilter.open = false;
+                this.$refs.statusFilterButton.focus();
+            },
+
+            updateNavigationLayout() {
+                if (this.disposed) return;
+                const tabs = this.$refs.downloadTabs;
+                if (!tabs) return;
+                const portraitPhone = window.matchMedia('(max-width: 639px) and (orientation: portrait)').matches;
+                this.navigationCollapsed = portraitPhone || tabs.scrollWidth > tabs.clientWidth + 1;
+            },
+
+            observeNavigation() {
+                if (this.disposed) return;
+                const row = this.$refs.downloadNavigation;
+                const tabs = this.$refs.downloadTabs;
+                // Keep the hidden top row measurable so wider layouts can restore it.
+                this.navigationObserver = new ResizeObserver(() => this.updateNavigationLayout());
+                for (const element of [row, tabs, ...tabs.children]) this.navigationObserver.observe(element);
+                this.navigationResizeListener = () => this.updateNavigationLayout();
+                window.addEventListener('resize', this.navigationResizeListener);
+                this.updateNavigationLayout();
+            },
+
+            toggleTaskSearch() {
+                // Keep an active query visible until the user clears it.
+                if (!this.taskSearch.trim()) this.taskSearchExpanded = !this.taskSearchExpanded;
+                if (this.taskSearchExpanded || this.taskSearch.trim()) {
+                    this.$nextTick(() => document.getElementById('task-search').focus());
+                }
+            },
+
+            startSearchPull(event) {
+                this.searchPull = null;
+                if (this.taskSearchExpanded || this.taskSearch.trim() || window.scrollY > 0 ||
+                    event.touches.length !== 1 || event.target.closest('input, button, select, a, summary') ||
+                    !window.matchMedia('(max-width: 639px), (max-width: 1023px) and (max-height: 500px) and (orientation: landscape)').matches) return;
+                const touch = event.touches[0];
+                this.searchPull = {x: touch.clientX, y: touch.clientY};
+            },
+
+            moveSearchPull(event) {
+                if (!this.searchPull) return;
+                if (event.touches.length !== 1 || window.scrollY > 0) {
+                    this.searchPull = null;
+                    return;
+                }
+                const dx = Math.abs(event.touches[0].clientX - this.searchPull.x);
+                const dy = event.touches[0].clientY - this.searchPull.y;
+                if (dy < -10 || dx > Math.max(10, dy)) {
+                    this.searchPull = null;
+                    return;
+                }
+                // Consume only a downward pull at the top; normal scrolling stays native.
+                if (dy > 10 && event.cancelable) event.preventDefault();
+                if (dy >= 48) {
+                    this.taskSearchExpanded = true;
+                    this.searchPull = null;
+                }
             },
 
             matchesSearch(task) {
@@ -1040,6 +1138,7 @@
                 this.initialized = true;
                 this.scrollListener = () => this.onScroll();
                 window.addEventListener('scroll', this.scrollListener, { passive: true });
+                this.$nextTick(() => this.observeNavigation());
                 await Promise.allSettled([
                     this.fetchVersion(), this.fetchActive(),
                     this.fetchPending(true), this.fetchCompleted(true), this.fetchSkipped(),
@@ -1068,6 +1167,8 @@
                 if (this.stopPolling) this.stopPolling();
                 clearTimeout(this.taskSearchTimer);
                 window.removeEventListener('scroll', this.scrollListener);
+                if (this.navigationObserver) this.navigationObserver.disconnect();
+                window.removeEventListener('resize', this.navigationResizeListener);
             },
 
             onScroll() {
@@ -1782,8 +1883,10 @@
     </script>
 
     <!-- Mobile Bottom Navigation -->
-    <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 sm:hidden safe-bottom">
-        <div class="flex items-center justify-around h-14">
+    <nav class="mobile-download-nav fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 sm:hidden safe-bottom"
+         :class="{'navigation-fallback': navigationCollapsed}">
+        {% include 'download_metrics.html' %}
+        <div class="mobile-download-tabs flex items-center justify-around h-14">
             <!-- Downloading -->
             <button @click="activeTab = 'active'; selectedTasks = []"
                     class="flex flex-col items-center justify-center gap-0.5 px-3 py-1 min-w-[64px] transition-colors"

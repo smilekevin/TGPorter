@@ -145,6 +145,7 @@
     "Select downloading": "Выбрать загружаемые",
     "Select paused": "Выбрать приостановленные",
     "Showing {count} of {total} tasks": "Показано {count} из {total} задач",
+    "All": "Все",
     "All statuses": "Все статусы",
     "Task status": "Статус задачи",
     "Select tasks with the same status": "Выберите задачи с одинаковым статусом",

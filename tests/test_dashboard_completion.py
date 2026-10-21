@@ -230,6 +230,7 @@ context.authenticatedFetch=async url=>{
 await ui.pollCompletedCount();
 for(const name of ['fetchVersion','fetchActive','fetchPending','fetchCompleted','fetchSkipped',
     'fetchDownloadStatus','fetchFloodWait','fetchBotStatus'])ui[name]=async()=>{};
+ui.$nextTick=()=>{};
 await ui.init();
 now=1000;
 await cycle();
