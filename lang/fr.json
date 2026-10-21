@@ -589,6 +589,7 @@
     "Completed (file already exists)": "Terminé (le fichier existe déjà)",
     "Download ignores filters. Delete removes only the skipped record.": "Le téléchargement ignore les filtres. La suppression retire uniquement l’enregistrement ignoré.",
     "No skipped downloads": "Aucun téléchargement ignoré",
+    "Skipped downloads will appear here": "Les téléchargements ignorés apparaîtront ici",
     "Download queued": "Téléchargement mis en attente",
     "Skipped record deleted": "Enregistrement ignoré supprimé",
     "Message account is unavailable": "Le compte du message est indisponible",

@@ -47,9 +47,11 @@ BODY
 ui.activeTasks = rows(250);
 ui.failedTasks = rows(250);
 const calls = [];
-ui.loadMoreCompleted = () => calls.push('completed');
-ui.loadMorePending = () => calls.push('pending');
-ui.loadMoreSkipped = () => calls.push('skipped');
+context.authenticatedFetch = async url => {
+    const tab = url.includes('already_down=true') ? 'completed' : url.includes('pending') ? 'pending' : 'skipped';
+    calls.push(tab);
+    return response({tasks: [{task_id: tab, status: tab}], total: 1});
+};
 for (const tab of ['active', 'pending', 'completed', 'skipped', 'failed']) {
     ui.activeTab = tab;
     context.document.documentElement.scrollTop = 899;
@@ -286,4 +288,77 @@ await ui.pollPendingRefresh();
 assert.equal(ui.pendingOffset, 1);
 assert.equal(ui.pendingHasMore, false);
 assert.equal(ui.pendingTasks.length, 1);
+''')
+
+    def test_shared_loader_handles_loading_refresh_failure_and_stale_results_for_every_tab(self):
+        self.run_script(r'''
+for (const tab of ['active', 'pending', 'completed', 'skipped', 'failed']) {
+    const app = context.app();
+    app.activeTab = tab;
+    app.showToast = () => {};
+    let finish;
+    const source = app.taskListSource(tab);
+    const row = {task_id: 'same', filename: 'first.mp4', status: tab};
+    const payload = task => source.snapshot ? [task] : {tasks: [task], total: 1};
+    context.authenticatedFetch = async () => new Promise(done => {finish = done;});
+    const first = app.loadTaskList(tab, {mode: 'refresh'});
+    assert.equal(app[tab + 'Loading'], true, tab);
+    assert.equal(app.searchLoading, true, tab);
+    assert.equal(app.taskListIsEmpty(tab), false, 'do not announce empty while a first read is pending');
+    assert.equal(await app.loadTaskList(tab, {mode: 'refresh'}), false, 'coalesce concurrent requests');
+    finish(response(payload(row)));
+    assert.equal(await first, true);
+    assert.equal(app[tab + 'Loading'], false);
+    const original = app[tab + 'Tasks'][0];
+    context.authenticatedFetch = async () => response(payload({...row, filename: 'updated.mp4'}));
+    await app.loadTaskList(tab, {mode: 'refresh'});
+    assert.equal(app[tab + 'Tasks'][0], original, 'refreshes must retain card identity');
+    assert.equal(original.filename, 'updated.mp4');
+    for (const bad of [{ok: false}, response({tasks: null, total: 1})]) {
+        context.authenticatedFetch = async () => bad;
+        assert.equal(await app.loadTaskList(tab, {mode: 'refresh'}), false);
+        assert.equal(app[tab + 'Tasks'][0], original);
+        assert.equal(app[tab + 'Loading'], false);
+    }
+    context.authenticatedFetch = async () => new Promise(done => {finish = done;});
+    const old = app.loadTaskList(tab, {mode: 'refresh'});
+    app.taskSearch = 'new query';
+    finish(response(payload({...row, filename: 'stale.mp4'})));
+    assert.equal(await old, false);
+    assert.equal(original.filename, 'updated.mp4');
+    assert.equal(app[tab + 'Loading'], false);
+    context.authenticatedFetch = async () => response(source.snapshot ? [] : {tasks: [], total: 0});
+    await app.loadTaskList(tab, {mode: 'refresh'});
+    assert.equal(app.taskListIsEmpty(tab), true);
+    assert.equal(app.taskListIsFiltered(tab), true);
+}
+''')
+
+    def test_shared_append_keeps_selection_and_refresh_preserves_all_loaded_pages(self):
+        self.run_script(r'''
+for (const tab of ['active', 'pending', 'completed', 'skipped', 'failed']) {
+    const app = context.app();
+    app.activeTab = tab;
+    app.showToast = () => {};
+    const source = app.taskListSource(tab);
+    const data = rows(250).map(task => ({...task, status: tab}));
+    context.authenticatedFetch = async url => {
+        if (source.snapshot) return response(data);
+        const params = new URL(url, 'http://localhost').searchParams;
+        const start = Number(params.get('offset'));
+        const limit = Number(params.get('limit'));
+        return response({tasks: data.slice(start, start + limit), total: data.length});
+    };
+    await app.loadTaskList(tab, {mode: 'refresh'});
+    assert.equal(app.visibleTaskCount, 100, tab);
+    app.selectedTasks = ['row1'];
+    await app.loadMoreTasks();
+    assert.equal(app.visibleTaskCount, 200, tab);
+    assert.deepEqual([...app.selectedTasks], ['row1']);
+    await app.loadTaskList(tab, {mode: 'refresh'});
+    assert.equal(app.visibleTaskCount, 200, tab);
+    await app.loadMoreTasks();
+    assert.equal(app.visibleTaskCount, 250, tab);
+    assert.equal(app.listHasMore, false, tab);
+}
 ''')

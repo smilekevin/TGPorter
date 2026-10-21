@@ -1,0 +1,29 @@
+{% macro task_list(tab, title, description, icon, header='') -%}
+<section class="task-list" data-task-list="{{ tab }}" x-show="activeTab === '{{ tab }}'" x-transition:enter="fade-in" x-cloak>
+    {{ header }}
+    <div class="task-list-empty" x-show="taskListIsEmpty('{{ tab }}')" role="status">
+        <div class="task-list-empty-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="{{ icon }}"/>
+            </svg>
+        </div>
+        <h3 class="task-list-empty-title" x-text="t(taskListIsFiltered('{{ tab }}') ? 'No matching tasks' : '{{ title }}')">{{ title }}</h3>
+        <p class="task-list-empty-description" x-text="t(taskListIsFiltered('{{ tab }}') ? 'Try other keywords' : '{{ description }}')">{{ description }}</p>
+    </div>
+    <div class="task-list-cards">{{ caller() }}</div>
+</section>
+{%- endmacro %}
+
+{% macro task_card(border, dynamic_class='', card_id='') -%}
+<article class="task-card checkbox-row card-hover fade-in {{ border }}"{% if dynamic_class %} :class="{{ dynamic_class }}"{% endif %}{% if card_id %} :id="{{ card_id }}"{% endif %}>
+    {{ caller() }}
+</article>
+{%- endmacro %}
+
+{% macro task_list_status() -%}
+<div class="task-list-status" role="status" aria-live="polite">
+    <p x-show="searchLoading" class="task-list-loading" x-text="t('Loading...')"></p>
+    <p x-show="!searchLoading && !listHasMore && visibleTaskCount > 0" class="task-list-loaded"
+       x-text="t('All {count} items loaded', {count: visibleTaskCount})"></p>
+</div>
+{%- endmacro %}

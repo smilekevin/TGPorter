@@ -589,6 +589,7 @@
     "Completed (file already exists)",
     "Download ignores filters. Delete removes only the skipped record.",
     "No skipped downloads",
+    "Skipped downloads will appear here",
     "Download queued",
     "Skipped record deleted",
     "Message account is unavailable",

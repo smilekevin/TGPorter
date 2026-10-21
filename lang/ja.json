@@ -589,6 +589,7 @@
     "Completed (file already exists)": "完了（ファイルが既に存在します）",
     "Download ignores filters. Delete removes only the skipped record.": "ダウンロードはフィルターを無視します。削除ではスキップ記録のみを削除します。",
     "No skipped downloads": "スキップしたダウンロードはありません",
+    "Skipped downloads will appear here": "スキップしたダウンロードがここに表示されます",
     "Download queued": "ダウンロードをキューに追加しました",
     "Skipped record deleted": "スキップ記録を削除しました",
     "Message account is unavailable": "メッセージの取得用アカウントを利用できません",

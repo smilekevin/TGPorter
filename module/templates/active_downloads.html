@@ -1,0 +1,118 @@
+<template x-for="task in filteredActiveTasks" :key="task.task_id">
+    {% call task_card('', dynamic_class="{\n                             'border-amber-200': task.status === 'paused',\n                             'border-gray-200': task.phase === 'preparing' && task.status !== 'paused',\n                             'border-gray-100': task.status !== 'paused' && task.phase !== 'preparing'\n                         }", card_id="'card-' + task.task_id") %}
+        <div class="flex items-start gap-3">
+            <!-- Checkbox -->
+            <input type="checkbox" class="w-4 h-4 mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
+                :value="task.task_id"
+                :checked="selectedTasks.includes(task.task_id)"
+                @change="toggleSelect(task.task_id)">
+
+            <!-- File Info -->
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1 flex-wrap">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                          :class="{
+                              'bg-amber-100 text-amber-700': task.status === 'paused',
+                              'bg-blue-100 text-blue-700': task.status === 'active' && task.phase !== 'preparing',
+                              'bg-indigo-100 text-indigo-600': task.phase === 'preparing' && task.status !== 'paused'
+                          }"
+                          x-text="{
+                              'paused': t('Paused'),
+                              'active': task.phase === 'preparing' ? t('Preparing') : t('Downloading')
+                          }[task.status] || task.status">
+                    </span>
+                    <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
+                    <span class="text-xs text-gray-300">|</span>
+                    <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>
+                    <template x-if="task.created_at">
+                        <span>
+                            <span class="text-xs text-gray-300">|</span>
+                            <span class="text-xs text-gray-400" x-text="t('Created ') + task.created_at"></span>
+                        </span>
+                    </template>
+                </div>
+                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
+                <p x-show="task.wait_reason && task.phase !== 'preparing'" class="text-xs text-amber-600 mt-1"
+                   x-text="t(task.wait_reason, {seconds: task.wait_seconds})"></p>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-gray-500">
+                    <template x-if="task.phase !== 'preparing'">
+                        <span>
+                            <span x-text="t(task.total_size)"></span>
+                            <span class="text-gray-300">|</span>
+                            <span class="font-mono font-medium"
+                                  :class="{
+                                      'text-amber-600': task.status === 'paused',
+                                      'text-blue-600': task.status === 'active'
+                                  }"
+                                  x-text="task.download_speed"></span>
+                            <span class="text-gray-300">|</span>
+                            <span class="inline-block whitespace-nowrap" x-text="t('Active streams: {count}', {count: task.active_streams ?? 0})"></span>
+                        </span>
+                    </template>
+                    <template x-if="task.eta && task.phase !== 'preparing'">
+                        <span>
+                            <span class="text-gray-300">|</span>
+                            <span class="text-gray-400" x-text="t('Remaining ') + task.eta"></span>
+                        </span>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center gap-1.5 shrink-0">
+                <template x-if="task.status === 'active'">
+                    <button
+                        @click="pauseTask(task.task_id)"
+                        class="btn-action p-2.5 sm:p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 border border-amber-200"
+                        :title="t(&quot;Pause&quot;)"
+                    >
+                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M8 4v16m8-16v16"/>
+                        </svg>
+                    </button>
+                </template>
+
+                <button
+                    @click="deleteTask(task.task_id)"
+                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
+                    :title="t(&quot;Delete&quot;)"
+                >
+                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="mt-3 ml-7">
+            <template x-if="task.phase === 'preparing'">
+                <div class="flex items-center gap-2 text-xs text-indigo-500">
+                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    <span x-text="task.status === 'paused' ? t('Paused') : t(task.wait_reason || 'Fetching file information...', {seconds: task.wait_seconds})"></span>
+                </div>
+            </template>
+            <template x-if="task.phase !== 'preparing'">
+                <div>
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span><span data-i18n="Progress" x-text="t('Progress')">Progress</span></span>
+                        <span class="font-mono font-medium" x-text="task.download_progress + '%'"></span>
+                    </div>
+                    <div class="w-full h-3 sm:h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                            class="h-full rounded-full progress-bar"
+                            :class="{
+                                'bg-blue-500': task.download_progress_raw < 100,
+                                'bg-green-500': task.download_progress_raw >= 100
+                            }"
+                            :style="'width: ' + task.download_progress + '%'"
+                        ></div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    {% endcall %}
+</template>

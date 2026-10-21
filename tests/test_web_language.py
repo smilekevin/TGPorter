@@ -136,3 +136,47 @@ assert.equal(dashboard.document.title, 'TG Porter');
                  + ") new Function(statement ? expression : 'return (' + expression + ')');")
         result = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_all_task_tabs_render_the_shared_list_card_and_empty_state(self):
+        with patch.object(web, '_app', SimpleNamespace(web_login_secret='')):
+            page = web.get_flask_app().test_client().get('/').get_data(as_text=True)
+
+        class Lists(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.tabs = {}
+                self.current = None
+                self.statuses = 0
+
+            def handle_starttag(self, tag, attributes):
+                attrs = dict(attributes)
+                classes = set(attrs.get('class', '').split())
+                if 'task-list' in classes:
+                    self.current = attrs['data-task-list']
+                    self.tabs[self.current] = {'transition': attrs['x-transition:enter'], 'parts': []}
+                if self.current:
+                    shared = classes & {'task-list-empty', 'task-list-empty-icon', 'task-list-empty-title',
+                                        'task-list-empty-description', 'task-list-cards', 'task-card'}
+                    for part in shared:
+                        self.tabs[self.current]['parts'].append((part, tag))
+                    if 'task-card' in classes:
+                        if 'fade-in' not in classes:
+                            raise AssertionError('Every card must use the shared entrance animation')
+                if 'task-list-status' in classes:
+                    self.statuses += 1
+
+            def handle_endtag(self, tag):
+                if tag == 'section':
+                    self.current = None
+
+        parsed = Lists()
+        parsed.feed(page)
+        self.assertEqual(set(parsed.tabs), {'active', 'pending', 'completed', 'skipped', 'failed'})
+        expected = [('task-list-empty', 'div'), ('task-list-empty-icon', 'div'),
+                    ('task-list-empty-title', 'h3'), ('task-list-empty-description', 'p'),
+                    ('task-list-cards', 'div'), ('task-card', 'article')]
+        for tab, value in parsed.tabs.items():
+            with self.subTest(tab=tab):
+                self.assertEqual(value['transition'], 'fade-in')
+                self.assertEqual(value['parts'], expected)
+        self.assertEqual(parsed.statuses, 1)

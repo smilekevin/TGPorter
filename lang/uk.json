@@ -284,6 +284,7 @@
     "Completed (file already exists)": "Завершено (файл уже існує)",
     "Download ignores filters. Delete removes only the skipped record.": "Завантаження ігнорує фільтри. Видалення прибирає лише запис про пропуск.",
     "No skipped downloads": "Немає пропущених завантажень",
+    "Skipped downloads will appear here": "Пропущені завантаження з’являться тут",
     "Download queued": "Завантаження додано до черги",
     "Skipped record deleted": "Запис про пропуск видалено",
     "Message account is unavailable": "Обліковий запис повідомлення недоступний",
