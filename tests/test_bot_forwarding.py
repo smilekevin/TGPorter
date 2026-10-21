@@ -38,6 +38,7 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
         self.user_client.get_messages.return_value = self.source_message
         for item in (
             patch.object(bot, "_bot", self.backend),
+            patch.object(self.backend, "_ensure_pending_consumer"),
             patch.object(task_store, "_TASKS_FILE", str(Path(self.temp.name) / "tasks.json")),
             patch.object(task_store, "_COUNTER_FILE", str(Path(self.temp.name) / "counter.json")),
         ):

@@ -106,6 +106,8 @@ Use **Configuration** to manage Telegram login, downloads, web access and MCP. S
 
 The dashboard **Skipped** tab keeps reasons and saved filters across restarts. Desktop tabs and mobile bottom navigation share the same order (Downloading, Pending, Completed, Skipped, Failed) and outline icons. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons; verified existing files count as **Skipped**, without increasing successful downloads.
 
+Bot submissions of single post links or forwarded media are registered only after the task is saved. The Pending consumer waits for a file concurrency slot before queueing them. A repeated submission of the same message while pending or downloading returns the existing task ID, without a second task. A save failure is reported explicitly. Check `/query pending` or the dashboard Pending tab, and search `data/log/tdl.log` by the displayed task ID to trace submission, preparation and queue handoff. Queue acceptance does not mean the download has completed.
+
 ### config.yaml (optional)
 
 Optionally copy [config.yaml.example](https://github.com/smilekevin/TGPorter/blob/main/config.yaml.example) to `config.yaml` in the working directory before the first start. Fill in API credentials, account mode, download settings and any required proxy using the parameter table below:

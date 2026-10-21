@@ -1947,10 +1947,25 @@ async def direct_download(
         source_chat_title: Source channel title (for web display)
     """
 
-    replay_message = _t("Direct download...")
+    replay_message = _t("Added to download queue")
     last_reply_message = await download_bot.bot.send_message(
-        message.from_user.id, replay_message, reply_parameters=types.ReplyParameters(message_id=message.id)
+        message.from_user.id, _t("Submitting..."), reply_parameters=types.ReplyParameters(message_id=message.id)
     )
+
+    # Check after sending the provisional reply: another handler may persist the
+    # same post during that await. Keep deduplication through registration free
+    # of awaits so concurrent Bot submissions cannot create orphan live nodes.
+    for task in get_running_tasks():
+        if (str(task.get("chat_id")) == str(chat_id)
+                and str((task.get("extra_data") or {}).get("message_id")) == str(download_message.id)):
+            display = (task.get("extra_data") or {}).get("task_id_display") or str(task["task_id"])
+            logger.info("Bot submission reused task {} (id={}, chat={}, message={})",
+                        display, task["task_id"], chat_id, download_message.id)
+            await download_bot.bot.edit_message_text(
+                message.from_user.id, last_reply_message.id,
+                f"{_t('Task already exists')}\n{_t('Task')}: {display}",
+            )
+            return
 
     node = TaskNode(
         chat_id=chat_id,
@@ -1959,7 +1974,7 @@ async def direct_download(
         replay_message=replay_message,
         limit=1,
         bot=download_bot.bot,
-        task_id=_bot.gen_task_id(),
+        task_id=download_bot.gen_task_id(),
         download_filter=download_bot.app.resolve_download_filter(),
     )
 
@@ -1968,8 +1983,6 @@ async def direct_download(
     node.source_chat_title = source_chat_title
     node.source_chat_id = source_chat_id
     node.source_message_id = source_message_id
-
-    _bot.add_task_node(node)
 
     extra_data = {
         "message_id": download_message.id,
@@ -1985,7 +1998,7 @@ async def direct_download(
     if source_chat_title:
         extra_data["source_chat_title"] = source_chat_title
 
-    save_task(
+    saved = save_task(
         task_id=node.task_id,
         chat_id=chat_id,
         url="",
@@ -1997,11 +2010,23 @@ async def direct_download(
         task_type="direct",
         extra_data=extra_data,
     )
+    if not saved:
+        logger.error("Bot submission not accepted: task {} (id={}, chat={}, message={})",
+                     node.task_id_display, node.task_id, chat_id, download_message.id)
+        await download_bot.bot.edit_message_text(
+            message.from_user.id, last_reply_message.id,
+            _t("Task could not be persisted; submission was not accepted."),
+        )
+        return
 
+    download_bot.add_task_node(node)
     # Cache the message so consumer can skip get_messages.
     # Do NOT queue directly — consumer controls when to feed workers.
-    _bot._cached_messages[node.task_id] = download_message
+    download_bot._cached_messages[node.task_id] = download_message
     node.is_running = True
+    download_bot._ensure_pending_consumer()
+    logger.info("Bot submission accepted: task {} (id={}, chat={}, message={}) stays pending until a slot is available",
+                node.task_id_display, node.task_id, chat_id, download_message.id)
 
     # Do NOT trigger _consume_one_pending directly — let the periodic
     # _pending_consumer_loop (every 2s) pick it up. This ensures the
@@ -2544,9 +2569,9 @@ async def _consume_one_pending():
     """Consume exactly one pending task from bot_tasks.json.
     Single-shot, no loop. Sends TG notification on consumption.
     """
-    import logging
-    logger = logging.getLogger("bot.pending")
+    # Use the application's Loguru sinks, including data/log/tdl.log.
     task_id = None
+    task_display = ""
     reserved = False
     queued = False
     msg = None
@@ -2565,7 +2590,7 @@ async def _consume_one_pending():
         active = _bot._active_downloads
         if active + reserved_count >= max_tasks:
             logger.debug(
-                "Pending consumer: no free slot (active=%s reserved=%s max=%s)",
+                "Pending consumer: no free slot (active={} reserved={} max={})",
                 active, reserved_count, max_tasks,
             )
             return
@@ -2584,6 +2609,8 @@ async def _consume_one_pending():
         if not task_id:
             return
 
+        task_display = (task_data.get("extra_data") or {}).get("task_id_display") or str(task_id)
+
         chat_id = task_data.get("chat_id")
         extra = task_data.get("extra_data", {}) or {}
         msg_id = extra.get("message_id") or extra.get("source_message_id")
@@ -2597,7 +2624,7 @@ async def _consume_one_pending():
             return
 
         if not chat_id:
-            logger.warning("Pending task %s has no chat_id", task_id)
+            logger.warning("Pending task {} (id={}) has no chat_id", task_display, task_id)
             return
         client = (_bot.get_message_client(chat_id, from_user_id, extra.get("message_client", ""))
                   if msg_id else _bot.client)
@@ -2620,7 +2647,7 @@ async def _consume_one_pending():
             if task_type in ("download", "forward"):
                 _bot._start_range_recovery(task_data)
             else:
-                logger.warning("Pending task %s has no message_id", task_id)
+                logger.warning("Pending task {} (id={}) has no message_id", task_display, task_id)
             return
 
         node = _bot.task_node.get(int(task_id)) if str(task_id).isdigit() else _bot.task_node.get(task_id)
@@ -2647,6 +2674,8 @@ async def _consume_one_pending():
         # Hold this reservation across every await until queue handoff succeeds.
         _bot._consuming.add(task_id)
         reserved = True
+        logger.info("Pending consumer: preparing task {} (id={}, chat={}, message={})",
+                    task_display, task_id, cid, msg_id)
         from module.download_stat import prepare_download, is_download_cancelled, remove_preparing_download
         preparing_entry = prepare_download(int(msg_id), node, filename=extra.get("filename", ""),
                                            reason="Fetching message")
@@ -2829,13 +2858,14 @@ async def _consume_one_pending():
             return
         queued = await add_download_task(msg, node)
         if not queued:
-            logger.warning("Pending consumer: queue rejected task %s; will retry", task_id)
+            logger.warning("Pending consumer: queue rejected task {} (id={}); will retry", task_display, task_id)
             return
         # Persist the handoff only after the queue confirms acceptance.
         update_download_state(task_id, "downloading")
-        logger.info(f"Pending consumer: queued task {task_id} (msg {msg_id}) to download queue")
+        logger.info("Pending consumer: queued task {} (id={}, message={}) to download queue",
+                    task_display, task_id, msg_id)
     except Exception as e:
-        logger.warning(f"Pending consumer error: {e}")
+        logger.warning("Pending consumer error: task {} (id={}): {}", task_display, task_id, e)
     finally:
         if reserved:
             if not queued and preparing_entry is not None:
@@ -2855,8 +2885,6 @@ async def _pending_consumer_loop():
     >= max_download_task and returns early if all slots are full.
     This prevents over-filling when get_messages is fast (cached messages).
     """
-    import logging
-    logger = logging.getLogger("bot.pending_loop")
     while _bot.is_running:
         try:
             await asyncio.sleep(2)

@@ -157,7 +157,8 @@ class BotOfflineUpdatesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tasks[0]["extra_data"]["message_client"], "bot")
         self.backend.add_download_task.assert_not_awaited()
         self.assertIn(tasks[0]["task_id"], self.backend._cached_messages)
-        self.backend._ensure_pending_consumer.assert_called_once()
+        # Startup and the accepted replayed media both ensure the singleton.
+        self.assertEqual(self.backend._ensure_pending_consumer.call_count, 2)
 
     async def test_process_restart_keeps_session_cursor_and_recovers_task_ids_before_replay(self):
         self.messages = [self.message(2, media=True), self.message(3, text="/query")]
