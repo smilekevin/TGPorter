@@ -49,6 +49,34 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(lang.translate('Retry failed: {error}', 'fr', error='{count}<file>'),
                          'Échec de la nouvelle tentative : {count}<file>')
 
+    def test_configuration_and_skipped_translations_do_not_use_english_placeholders(self):
+        baseline = list(lang.CATALOGS['en']['messages'])
+        keys = set(baseline[baseline.index('API Hash'):baseline.index('Preparing')])
+        sources = '\n'.join((ROOT / name).read_text() for name in (
+            'module/templates/configuration.html', 'module/templates/filter_help.html',
+            'module/static/configuration.js', 'module/settings.py',
+            'module/configuration.py', 'module/telegram_login.py',
+        ))
+        keys.update(key for key in baseline if repr(key) in sources or json.dumps(key) in sources)
+        keys.difference_update({'id', 'name', 'all', ')'})
+        technical = {'TG Porter', 'API Hash', 'API ID', 'Bot Token', 'MCP Token', 'Telegram'}
+        same_spelling = {
+            'es': {'error', 'Audio', 'Bot'},
+            'fr': {'Bot', 'Configuration', 'Configuration - TG Porter',
+                   'Audio', 'Documents', 'Photos', 'Animations'},
+        }
+        fields = lambda text: set(re.findall(r'\{\w+\}', text))
+        for code, catalog in lang.CATALOGS.items():
+            if code == 'en':
+                continue
+            for key in keys:
+                with self.subTest(code=code, key=key):
+                    self.assertIn(key, catalog['messages'])
+                    value = catalog['messages'][key]
+                    self.assertEqual(fields(value), fields(key))
+                    if key not in technical | same_spelling.get(code, set()):
+                        self.assertNotEqual(value, key)
+
     def test_missing_translation_falls_back_and_unknown_text_stays_literal(self):
         with patch.dict(lang.CATALOGS['fr']['messages'], clear=True):
             self.assertEqual(lang.translate('Pause', 'fr'), 'Pause')
