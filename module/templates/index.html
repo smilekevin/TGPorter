@@ -267,11 +267,11 @@
                 </button>
             </div>
         </div>
-        <div class="task-summary flex items-center justify-between gap-3 mb-3 text-xs text-gray-500">
-            <span x-text="taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all')
-                ? t('Showing {count} of {total} tasks', {count: visibleTaskCount, total: currentTaskTotal})
-                : t('Tasks: {count}', {count: currentTaskTotal})"></span>
-            <span x-show="activeTab === 'pending'" x-text="t('By arrival time · oldest first')"></span>
+        <div class="task-summary flex items-center justify-between gap-3 mb-3 text-xs text-gray-500"
+             x-show="taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all') || activeTab === 'pending'">
+            <span x-show="taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all')"
+                  x-text="t('Showing {count} of {total} tasks', {count: visibleTaskCount, total: currentTaskTotal})"></span>
+            <span x-show="activeTab === 'pending'" class="ml-auto" x-text="t('By arrival time · oldest first')"></span>
         </div>
         <div x-show="(taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all')) && visibleTaskCount === 0 && !searchLoading" class="text-center py-16" role="status">
             <h3 class="text-gray-500 font-medium mb-1" x-text="t('No matching tasks')"></h3>
