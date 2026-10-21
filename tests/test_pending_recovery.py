@@ -1,6 +1,7 @@
 """Offline regression tests using real persistence, consumer and worker code."""
 
 import asyncio
+from collections import Counter
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ import media_downloader as downloader
 from module import bot, download_stat, task_store as store
 from module import web
 from module.app import TaskNode
+from module.language import set_language
 from module.download_service import DownloadService
 
 
@@ -50,6 +52,7 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(store, "_TASKS_FILE", str(Path(self.temp.name) / "tasks.json")),
             patch.object(store, "_COUNTER_FILE", str(Path(self.temp.name) / "counter.json")),
             patch.object(download_stat, "_download_result", {}),
+            patch.object(download_stat, "_chat_titles", {}),
             patch.object(download_stat, "add_failed_download", Mock()),
             patch.object(bot, "report_bot_status", AsyncMock()),
             patch.object(bot, "is_flood_wait_active", return_value=False),
@@ -61,6 +64,8 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         for item in patches:
             item.start()
             self.addCleanup(item.stop)
+        set_language("en")
+        self.addCleanup(set_language, "en")
 
     async def asyncTearDown(self):
         self.bot.is_running = False
@@ -377,6 +382,151 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await bot._consume_one_pending()
         await bot._consume_one_pending()
         self.assertEqual(self.queue.qsize(), 2)
+
+    async def test_duplicate_bot_links_return_original_task_without_orphan_nodes(self):
+        self.bot.bot = self.inbox_gateway()
+        self.bot.bot.edit_message_text = AsyncMock()
+        command = SimpleNamespace(id=2, from_user=SimpleNamespace(id=100))
+        media = self.message()
+        # Yield during the provisional reply to overlap all handlers.
+        async def reply(*args, **kwargs):
+            await asyncio.sleep(0)
+            return SimpleNamespace(id=5)
+        self.bot.bot.send_message.side_effect = reply
+        with patch.object(self.bot, "_ensure_pending_consumer") as ensure:
+            await asyncio.gather(*(bot.direct_download(self.bot, -10001, command, media)
+                                   for _ in range(20)))
+        stored = store.get_running_tasks()
+        self.assertEqual(len(stored), 1)
+        original_id = stored[0]["task_id"]
+        original_display = stored[0]["extra_data"]["task_id_display"]
+        self.assertEqual(set(self.bot.task_node), {original_id})
+        self.assertEqual(set(self.bot._cached_messages), {original_id})
+        self.assertEqual(self.bot.task_id, 1)
+        ensure.assert_called_once()
+        await bot._consume_one_pending()
+        self.assertEqual(self.queue.qsize(), 1)
+        # Submitting again after handoff must also reuse the downloading task.
+        await bot.direct_download(self.bot, -10001, command, media)
+        self.assertEqual(len(store.get_running_tasks()), 1)
+        self.assertEqual(self.queue.qsize(), 1)
+        self.assertEqual(set(self.bot.task_node), {original_id})
+        self.assertEqual(self.bot.bot.edit_message_text.await_count, 20)
+        for call in self.bot.bot.edit_message_text.await_args_list:
+            self.assertEqual(call.args[2], f"Task already exists\nTask: {original_display}")
+
+    async def test_failed_bot_persistence_never_registers_or_queues_a_task(self):
+        self.bot.bot = self.inbox_gateway()
+        self.bot.bot.edit_message_text = AsyncMock()
+        command = SimpleNamespace(id=2, from_user=SimpleNamespace(id=100))
+        with patch.object(store, "_save_all", return_value=False), \
+                patch.object(self.bot, "_ensure_pending_consumer") as ensure:
+            await bot.direct_download(self.bot, -10001, command, self.message())
+        self.assertFalse(store.get_running_tasks())
+        self.assertFalse(self.bot.task_node)
+        self.assertFalse(self.bot._cached_messages)
+        self.assertTrue(self.queue.empty())
+        ensure.assert_not_called()
+        self.assertEqual(self.bot.bot.edit_message_text.await_args.args[2],
+                         "Task could not be persisted; submission was not accepted.")
+
+    async def test_pending_lifecycle_reaches_application_log_with_display_id(self):
+        self.save()
+        path = Path(self.temp.name) / "tdl.log"
+        sink = bot.logger.add(path, format="{message}", level="INFO")
+        try:
+            await bot._consume_one_pending()
+        finally:
+            bot.logger.remove(sink)
+        log = path.read_text()
+        self.assertIn("preparing task 1014-1 (id=1", log)
+        self.assertIn("queued task 1014-1 (id=1", log)
+
+    async def test_stress_bot_links_to_real_queue_with_duplicates_and_capacity_limits(self):
+        # Only Telegram RPCs and media transfer are simulated. The link handler,
+        # atomic task store, consumer, queue handoff and worker accounting are real.
+        self.bot.bot = self.inbox_gateway()
+        self.bot.bot.edit_message_text = AsyncMock()
+        self.client.get_chat.return_value = SimpleNamespace(
+            id=-10001, title="Stress channel", first_name="", has_protected_content=False)
+        async def reply(*args, **kwargs):
+            await asyncio.sleep(0)
+            return SimpleNamespace(id=5)
+        self.bot.bot.send_message.side_effect = reply
+        unique_count, repetitions = 200, 5
+        for limit in (1, 5, 16):
+            with self.subTest(max_download_task=limit):
+                self.app.max_download_task = limit
+                release = asyncio.Event()
+                received, finished = Counter(), set()
+                peak = 0
+                stop_pump = False
+
+                async def transfer(client, message, node):
+                    received[message.id] += 1
+                    await release.wait()
+                    await asyncio.sleep(0)
+                    node.total_download_task = node.total_task
+                    store.complete_task(node.task_id)
+                    self.bot.task_node.pop(node.task_id, None)
+                    finished.add(message.id)
+
+                async def pump():
+                    nonlocal peak
+                    while not stop_pump:
+                        # Overlapping polls exercise the shared reservation guard.
+                        await asyncio.gather(*(bot._consume_one_pending() for _ in range(8)))
+                        occupied = self.bot._active_downloads + len(self.bot._in_queue | self.bot._consuming)
+                        peak = max(peak, occupied)
+                        self.assertLessEqual(occupied, limit)
+                        if not self.queue.empty():
+                            running = sum(not task.done() and task is not asyncio.current_task()
+                                          for task in self.workers)
+                            for _ in range(max(0, limit - running)):
+                                self.workers.append(asyncio.create_task(downloader.worker(self.client)))
+                        await asyncio.sleep(0.001)
+
+                async def submit(index):
+                    command = SimpleNamespace(id=index + 1, from_user=SimpleNamespace(id=100),
+                                              text=f"https://t.me/c/01/{index % unique_count + 1}")
+                    await bot.download_from_link(self.bot.bot, command)
+
+                with patch.object(downloader, "download_task", transfer), \
+                        patch.object(self.bot, "_ensure_pending_consumer"):
+                    pumping = asyncio.create_task(pump())
+                    self.workers.append(pumping)
+                    try:
+                        await asyncio.wait_for(asyncio.gather(
+                            *(submit(i) for i in range(unique_count * repetitions))), timeout=30)
+                        await self.until(lambda: self.bot._active_downloads == limit)
+                        self.assertEqual(len(store.get_running_tasks()), unique_count)
+                        self.assertEqual(len(self.bot.task_node), unique_count)
+                        self.assertEqual(self.bot.bot.edit_message_text.await_count,
+                                         unique_count * (repetitions - 1))
+                        release.set()
+                        async def drained():
+                            while len(finished) != unique_count or self.bot._active_downloads:
+                                if pumping.done():
+                                    await pumping
+                                await asyncio.sleep(0.001)
+                        await asyncio.wait_for(drained(), timeout=30)
+                    finally:
+                        stop_pump = True
+                        release.set()
+                        await pumping
+                        await asyncio.gather(*self.workers)
+                self.assertEqual(received, Counter({mid: 1 for mid in range(1, unique_count + 1)}))
+                self.assertEqual(peak, limit)
+                self.assertFalse(store.get_running_tasks())
+                self.assertTrue(self.queue.empty())
+                self.assertFalse(self.bot._cached_messages)
+                self.assertFalse(self.bot._consuming)
+                self.assertFalse(self.bot._in_queue)
+                self.assertFalse(self.bot.task_node)
+                self.assertEqual(self.bot._active_downloads, 0)
+                self.assertEqual(downloader._live_workers, 0)
+                self.bot.bot.edit_message_text.reset_mock()
+                self.workers.clear()
 
     def inbox_gateway(self):
         return SimpleNamespace(

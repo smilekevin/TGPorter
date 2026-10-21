@@ -160,6 +160,8 @@ docker run -d \
 | `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
 | `/help` `/start` | 显示帮助 | — |
 
+向 Bot 提交单条消息链接或转发媒体后，任务保存成功才会显示新任务编号，并等待 Pending 消费器按文件并发上限入队。同一消息已有待处理或下载中的任务时，Bot 回复“任务已存在”和原编号，不会创建第二个任务；任务保存失败会明确提示。可用 `/query pending` 查看排队任务，按显示编号在 `data/log/tdl.log` 中追踪提交和入队日志。
+
 ---
 
 ## Web API
@@ -527,6 +529,8 @@ For more details, please refer to the following deployment matrix:
 | `/query [all\|active\|pending\|completed\|failed] [page]` | Query all, active (including paused), pending, completed or failed tasks; category, paging and refresh buttons | `/query pending`, `/query completed 2` |
 | `/stop` | Stop download/forward/listen (interactive) | `/stop` |
 | `/help` `/start` | Show help | — |
+
+For a single post link or forwarded media, the Bot registers a new task only after persistence succeeds, then the Pending consumer queues it within the file concurrency limit. Submitting the same message while it is pending or downloading returns “Task already exists” with its original ID; persistence failures are reported explicitly. Use `/query pending` to inspect waiting tasks and search `data/log/tdl.log` by the displayed ID for submission and queue handoff logs.
 
 ---
 
