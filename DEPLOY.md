@@ -219,7 +219,7 @@ Saved Telegram sessions are reused after restart. Use **Test connection** to che
 
 Some older versions require signing in once after upgrading; subsequent service restarts preserve the new login.
 
-The dashboard shows unfinished tasks in Downloading and successful downloads in Completed. Lists update automatically and load more records as you scroll, retaining the current search and status filter. Bulk selection covers only displayed records.
+The dashboard shows unfinished tasks in Downloading and successful downloads in Completed. Once a query confirms a new task state, matching rows disappear from other lists and their counts and selection update immediately. Older requests finishing late cannot undo an observed handoff. Lists update automatically and load more records as you scroll, retaining the current search and status filter. Bulk selection covers only displayed records.
 
 **Task stages:** queued tasks appear in Pending, then move to Downloading as **Preparing** and **Downloading**. Pausing preserves progress, frees a download slot and moves the task to Pending as **Paused**; it stays paused after restart. Use Pending's selection shortcuts, status filter and Resume button to queue held tasks again. Resumed tasks still wait for available slots and Telegram cooldowns.
 

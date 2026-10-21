@@ -47,6 +47,7 @@
 - **响应式界面** — 浅色主题，适配桌面和手机；桌面标签与移动端底部导航使用一致的顺序和线框图标
 - **任务搜索** — 按任务 ID 或文件名查找任务
 - **自动加载** — 五个列表均在滚动接近底部时追加更多记录；批量选择仅作用于已显示记录
+- **状态同步** — 查询确认任务进入新状态后，立即从其他列表移除对应任务，并同步数量和选择；旧响应不会撤销已观察到的状态切换
 - **五个标签页**：
   - 📥 **进行中** — 实时进度、速度和 ETA
   - ⏳ **待执行** — 排队任务和等待时间
@@ -178,7 +179,7 @@ docker run -d \
 | `/submit_download` | POST | 提交单条 HTTPS `t.me` 消息链接（JSON: `{"url": "https://t.me/channel/123"}`）；返回持久化入队结果，非下载完成 |
 | `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中），每个文件含当前下载流数 `active_streams` |
 | `/get_download_list?already_down=true&offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
-| `/get_pending_list` | GET | 待下载队列（含暂停），支持 `offset` / `limit` 分页、`search` 搜索及 `status=all/pending/paused` 筛选 |
+| `/get_pending_list` | GET | 待下载队列（含暂停），支持 `offset` / `limit` 分页、`search` 搜索及 `status=all/pending/paused` 筛选；单消息任务通过 `chat` + `id` 关联下载记录，范围任务的 `id` 为空，队列操作仍使用 `task_id` |
 | `/get_failed_downloads` | GET | 失败列表 |
 | `/get_skipped_downloads` | GET | 已跳过列表及原因，支持 `offset`、`limit`、`search` |
 | `/download_skipped` | POST | 按 `task_id` 入队下载，绕过下载 Filter、媒体类型与格式限制 |
@@ -270,6 +271,7 @@ docker run -d \
 - **Responsive interface** — light theme for desktop and mobile, with matching tab order and outline icons in desktop tabs and mobile bottom navigation
 - **Task search** — find tasks by ID or filename
 - **Automatic loading** — all five lists append more records near the bottom; bulk selection covers displayed records only
+- **State synchronization** — a confirmed task state removes its matching rows from other lists and updates counts and selection; older responses cannot undo an observed handoff
 - **Five tabs**:
   - 📥 **Active** — live progress, speed and ETA
   - ⏳ **Pending** — queued tasks and wait time
@@ -401,7 +403,7 @@ After sending a post link or forwarding media to the Bot, use `/query pending` t
 | `/submit_download` | POST | Submit one HTTPS `t.me` post link (JSON: `{"url": "https://t.me/channel/123"}`); returns durable queue acceptance, not completion |
 | `/get_download_list` | GET | Download list (`already_down=true` completed, `false` active), with per-file `active_streams` |
 | `/get_download_list?already_down=true&offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
-| `/get_pending_list` | GET | Pending queue including held tasks; `offset` / `limit` pagination, `search` by ID/filename and `status=all/pending/paused` filtering |
+| `/get_pending_list` | GET | Pending queue including held tasks; `offset` / `limit` pagination, `search` by ID/filename and `status=all/pending/paused` filtering; `chat` + `id` link single-message downloads (`id` is empty for ranges); queue operations still use `task_id` |
 | `/get_failed_downloads` | GET | Failed list |
 | `/get_skipped_downloads` | GET | Skipped records and reasons; supports `offset`, `limit`, `search` |
 | `/download_skipped` | POST | Queue `task_id` while bypassing download expressions, media types and formats |
