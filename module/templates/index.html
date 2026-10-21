@@ -527,6 +527,8 @@
             floodWait: { active: false, remaining: 0, reason: '' },
             throttle: { active: false, elapsed: 0 },
             listPageSize: 100,
+            taskListsLoaded: {},
+            taskListsForeground: {},
             activeVisibleLimit: 100,
             failedVisibleLimit: 100,
             activeLoading: false,
@@ -732,7 +734,7 @@
                     skipped: this.skippedTotal}[this.activeTab];
             },
             get searchLoading() {
-                return this[this.activeTab + 'Loading'];
+                return this.taskListIsLoading(this.activeTab);
             },
 
             get completedCountDisplay() {
@@ -820,6 +822,7 @@
 
             resetTaskList(tab) {
                 this[tab + 'RequestId']++;
+                this.taskListsLoaded[tab] = false;
                 this[tab + 'Loading'] = false;
                 this[tab + 'Tasks'] = [];
                 this[tab + 'Offset'] = 0;
@@ -855,6 +858,7 @@
                 const start = append ? this[offsetKey] : 0;
                 const target = mode === 'refresh' ? Math.max(limit, this[offsetKey] || 0) : limit;
                 this[loading] = true;
+                this.taskListsForeground[tab] = append || reset;
                 let loaded = false;
                 try {
                     const rows = [];
@@ -904,6 +908,7 @@
                         const ids = new Set(this.visibleTasks.map(task => task.task_id));
                         this.selectedTasks = this.selectedTasks.filter(id => ids.has(id));
                     }
+                    this.taskListsLoaded[tab] = true;
                     loaded = true;
                     return true;
                 } catch (error) {
@@ -923,8 +928,13 @@
                 return this[tab + 'HasMore'];
             },
 
+            taskListIsLoading(tab) {
+                // Background polls retain the established rows or empty state without flashing.
+                return this[tab + 'Loading'] && (!this.taskListsLoaded[tab] || this.taskListsForeground[tab]);
+            },
+
             taskListIsEmpty(tab) {
-                return !this[tab + 'Loading'] && this.tasksForTab(tab).length === 0;
+                return !this.taskListIsLoading(tab) && this.tasksForTab(tab).length === 0;
             },
 
             taskListIsFiltered(tab) {
@@ -983,6 +993,7 @@
                 this.completedRequestId++;
                 this.pendingRequestId++;
                 this.skippedRequestId++;
+                for (const tab of ['completed', 'pending', 'skipped']) this.taskListsLoaded[tab] = false;
                 this.activeVisibleLimit = this.failedVisibleLimit = this.listPageSize;
                 this.queueScrollCheck();
                 this.skippedTasks = [];

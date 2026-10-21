@@ -362,3 +362,59 @@ for (const tab of ['active', 'pending', 'completed', 'skipped', 'failed']) {
     assert.equal(app.listHasMore, false, tab);
 }
 ''')
+
+    def test_background_refresh_keeps_empty_and_populated_lists_visible(self):
+        self.run_script(r'''
+for (const tab of ['active', 'pending', 'completed', 'skipped', 'failed']) {
+    for (const count of [0, 1]) {
+        const app = context.app();
+        app.activeTab = tab;
+        app.showToast = () => {};
+        const source = app.taskListSource(tab);
+        const tasks = rows(count).map(task => ({...task, status: tab}));
+        const data = source.snapshot ? tasks : {tasks, total: count};
+        context.authenticatedFetch = async () => response(data);
+        await app.loadTaskList(tab, {mode: 'refresh'});
+        let finish;
+        context.authenticatedFetch = async () => new Promise(done => {finish = done;});
+        const refresh = app.loadTaskList(tab, {mode: tab === 'completed' ? 'head' : 'refresh'});
+        assert.equal(app[tab + 'Loading'], true, 'still serialize requests during a background read');
+        assert.equal(app.searchLoading, false, tab + ' must not announce background polling');
+        assert.equal(app.taskListIsEmpty(tab), count === 0, 'retain the established empty state');
+        assert.equal(app.visibleTaskCount, count, 'retain established rows');
+        finish(response(data));
+        await refresh;
+        assert.equal(app.searchLoading, false);
+    }
+}
+''')
+
+    def test_first_read_reset_and_append_still_announce_loading(self):
+        self.run_script(r'''
+for (const tab of ['active', 'pending', 'completed', 'skipped', 'failed']) {
+    const app = context.app();
+    app.activeTab = tab;
+    app.showToast = () => {};
+    const source = app.taskListSource(tab);
+    let finish;
+    const empty = source.snapshot ? [] : {tasks: [], total: 0};
+    context.authenticatedFetch = async () => new Promise(done => {finish = done;});
+    const first = app.loadTaskList(tab, {mode: 'refresh'});
+    assert.equal(app.searchLoading, true, tab);
+    assert.equal(app.taskListIsEmpty(tab), false);
+    finish(response(empty));
+    await first;
+    const reset = app.loadTaskList(tab, {reset: true, mode: 'refresh'});
+    assert.equal(app.searchLoading, true, 'explicit filters/search reset must indicate loading');
+    assert.equal(app.taskListIsEmpty(tab), false);
+    finish(response(empty));
+    await reset;
+    if (!source.snapshot) {
+        app[tab + 'HasMore'] = true;
+        const page = app.loadMoreTasks();
+        assert.equal(app.searchLoading, true, 'appending a server page must indicate loading');
+        finish(response(empty));
+        await page;
+    }
+}
+''')

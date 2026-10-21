@@ -1,5 +1,5 @@
 /* Keep one refresh in flight and suspend recurring work in hidden tabs. */
-function startDashboardPolling(refresh, interval = 1000) {
+function startDashboardPolling(refresh, interval = 3000) {
     let timer = null;
     let running = false;
     let stopped = false;

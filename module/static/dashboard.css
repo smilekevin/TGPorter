@@ -111,8 +111,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .navigation-fallback .dashboard-toast { bottom: calc(6rem + env(safe-area-inset-bottom)); }
 
 /* All task tabs use the same list, card, empty state and entrance animation. */
-.task-list-cards { display: grid; gap: 12px; }
-.task-card { padding: 16px; border-width: 1px; border-style: solid; background: #fff; }
+.task-list-cards { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 12px; }
+.task-card { min-width: 0; overflow-wrap: anywhere; padding: 16px; border-width: 1px; border-style: solid; background: #fff; }
 .task-list-empty { padding: 80px 0; text-align: center; }
 .task-list-empty-icon { width: 64px; height: 64px; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #f3f4f6; }
 .task-list-empty-icon svg { width: 32px; height: 32px; color: #d1d5db; }
@@ -122,3 +122,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .task-list-loaded { font-size: 12px; line-height: 16px; color: #9ca3af; }
 .fade-in { animation: fadeIn .3s ease-in; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (max-width: 639px) {
+    .task-card .whitespace-nowrap { white-space: normal; }
+}
