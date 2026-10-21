@@ -16,18 +16,16 @@ body.bg-gray-50 { background: #f3f6fb; color: #17243b; -webkit-font-smoothing: a
 .bot-connection-badge[data-state="disconnected"], .bot-connection-badge[data-state="unresponsive"] { background: #fef2f2; color: #b91c1c; }
 .bot-connection-badge[data-state="connecting"], .bot-connection-badge[data-state="reconnecting"], .bot-connection-badge[data-state="flood_wait"] { background: #fffbeb; color: #b45309; }
 .submission-panel { background: #fff; }
-.submission-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px 0; color: #2563eb; font-size: 14px; font-weight: 600; cursor: pointer; list-style: none; }
-.submission-toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.submission-panel summary::-webkit-details-marker { display: none; }
-.submission-panel summary:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; border-radius: 4px; }
-.submission-panel summary svg { flex: none; transition: transform .15s ease; }
-.submission-panel[open] summary svg { transform: rotate(45deg); }
+.submission-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
+.submission-toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0; background: transparent; color: #2563eb; font-size: 14px; font-weight: 600; cursor: pointer; }
+.submission-toggle svg { flex: none; transition: transform .15s ease; }
+.submission-toggle[aria-expanded="true"] svg { transform: rotate(45deg); }
 .submission-panel form { padding-bottom: 12px; }
 .submission-panel input { background: #f8fafc; min-height: 44px; border-color: #dbe3f0; border-radius: 12px; }
-.submission-panel button { border-radius: 12px; font-weight: 600; box-shadow: 0 3px 8px rgb(37 99 235 / 16%); }
+.submission-panel form button { border-radius: 12px; font-weight: 600; box-shadow: 0 3px 8px rgb(37 99 235 / 16%); }
 .dashboard-main .card-hover { border-radius: 16px; box-shadow: 0 2px 6px rgb(31 51 86 / 3%); transition: box-shadow .15s ease, border-color .15s ease; }
 .dashboard-main .card-hover:hover { box-shadow: 0 6px 20px rgb(31 51 86 / 7%); }
-.dashboard-main .progress-bar { background-image: linear-gradient(90deg, #2563eb, #38bdf8); }
+.dashboard-main .progress-bar:not(.bg-green-500) { background-image: linear-gradient(90deg, #2563eb, #38bdf8); }
 button, a, input, select { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
 @media (max-width: 639px) {
@@ -65,7 +63,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .status-filter summary:not([data-active="true"]) { color: #64748b; }
 .status-filter summary::-webkit-details-marker { display: none; }
 .status-filter summary:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
-.status-filter summary[data-active="true"] { border-color: #93c5fd; color: #2563eb; background: #eff6ff; }
+.status-filter summary[data-active="true"], .task-search-toggle[aria-expanded="true"] { border-color: #93c5fd; color: #2563eb; background: #eff6ff; }
 .status-filter-options { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 160px; padding: 4px; border: 1px solid #dbe3f0; border-radius: 10px; background: #fff; box-shadow: 0 6px 20px rgb(31 51 86 / 12%); }
 .status-filter-options button { display: block; width: 100%; padding: 8px 10px; border-radius: 6px; text-align: left; white-space: nowrap; font-size: 12px; color: #475569; }
 .status-filter-options button:hover, .status-filter-options button[aria-pressed="true"] { background: #eff6ff; color: #2563eb; }
@@ -73,9 +71,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Keep phone controls compact in portrait and short landscape viewports. */
 @media (max-width: 639px), (max-width: 1023px) and (max-height: 500px) and (orientation: landscape) {
     .bot-connection, .download-navigation .download-metrics { gap: 6px; font-size: 11px; }
-    .submission-panel summary { padding-top: 8px; padding-bottom: 8px; font-size: 13px; }
+    .submission-header { padding-top: 8px; padding-bottom: 8px; }
+    .submission-toggle { font-size: 13px; }
     .submission-panel input { min-height: 40px; font-size: 13px; }
-    .submission-panel button { padding-left: 12px; padding-right: 12px; font-size: 13px; }
+    .submission-panel form button { padding-left: 12px; padding-right: 12px; font-size: 13px; }
     .download-tabs > button { padding: 8px 12px; font-size: 13px; }
     .dashboard-main.page-container { padding-top: 12px; }
     .dashboard-main .task-tools { gap: 8px; margin-bottom: 12px; }

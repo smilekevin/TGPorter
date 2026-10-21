@@ -70,22 +70,23 @@
     <header class="app-header safe-top">
         {% with header_dashboard=true %}{% include 'page_header.html' %}{% endwith %}
     </header>
-    <details class="submission-panel page-container">
-        <summary :aria-label="t('Submit download')">
-            <span class="submission-toggle">
+    <section class="submission-panel page-container">
+        <div class="submission-header">
+            <button type="button" class="submission-toggle" @click="submissionExpanded = !submissionExpanded"
+                    :aria-expanded="submissionExpanded" aria-controls="submission-form">
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>
                 <span x-text="t('Submit download')"></span>
-            </span>
+            </button>
             <span class="bot-connection" role="status" aria-live="polite" tabindex="0"
-                  :title="botStatusDetails" :aria-label="botStatusDetails" @click.stop.prevent>
+                  :title="botStatusDetails" :aria-label="botStatusDetails">
                 <span class="bot-connection-badge" :data-state="botStatus.status">
                     <span class="bot-connection-dot" aria-hidden="true"></span>
                     <span x-text="t('Telegram Bot')"></span>
                     <span x-text="botStatusLabel"></span>
                 </span>
             </span>
-        </summary>
-        <form @submit.prevent="submitDownload()" class="flex flex-wrap gap-2">
+        </div>
+        <form id="submission-form" x-show="submissionExpanded" @submit.prevent="submitDownload()" class="flex flex-wrap gap-2">
             <label for="download-url" class="sr-only" x-text="t('Telegram post link')"></label>
             <input id="download-url" type="url" required maxlength="2048" x-model="downloadUrl"
                    placeholder="https://t.me/channel/123" :disabled="submitting"
@@ -94,7 +95,7 @@
                     x-text="submitting ? t('Submitting...') : t('Submit download')"></button>
             <p class="w-full text-xs text-gray-500" x-text="t('Submit one Telegram post link using the account already logged in on the server.')"></p>
         </form>
-    </details>
+    </section>
 
     <!-- Tab Navigation (Desktop Only) -->
     <div class="download-navigation hidden sm:block bg-white border-b border-gray-100 shadow-sm"
@@ -234,13 +235,13 @@
             </div>
         </div>
         <div class="selection-tools mb-3">
-            <div x-show="activeTab === 'active'" class="selection-shortcuts">
-                <button type="button" @click="toggleSelectAll('active')" :disabled="batchBusy || !filteredActiveTasks.length"
-                        :aria-pressed="filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id))"
-                        class="selection-shortcut" x-text="t(filteredActiveTasks.length > 0 && filteredActiveTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
-                <button type="button" @click="selectActiveStatus('active')" :disabled="!filteredActiveTasks.some(task => task.status === 'active')"
+            <div class="selection-shortcuts">
+                <button type="button" @click="toggleSelectAll(activeTab)" :disabled="batchBusy || !visibleTasks.length"
+                        :aria-pressed="allVisibleSelected"
+                        class="selection-shortcut" x-text="t(allVisibleSelected ? 'Clear selection' : 'Select all')"></button>
+                <button type="button" x-show="activeTab === 'active'" @click="selectActiveStatus('active')" :disabled="!filteredActiveTasks.some(task => task.status === 'active')"
                         class="selection-shortcut" x-text="t('Select downloading')"></button>
-                <button type="button" @click="selectActiveStatus('paused')" :disabled="!filteredActiveTasks.some(task => task.status === 'paused')"
+                <button type="button" x-show="activeTab === 'active'" @click="selectActiveStatus('paused')" :disabled="!filteredActiveTasks.some(task => task.status === 'paused')"
                         class="selection-shortcut" x-text="t('Select paused')"></button>
             </div>
             <div class="selection-filters">
@@ -265,6 +266,12 @@
                     <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 </button>
             </div>
+        </div>
+        <div class="task-summary flex items-center justify-between gap-3 mb-3 text-xs text-gray-500"
+             x-show="taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all') || activeTab === 'pending'">
+            <span x-show="taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all')"
+                  x-text="t('Showing {count} of {total} tasks', {count: visibleTaskCount, total: currentTaskTotal})"></span>
+            <span x-show="activeTab === 'pending'" class="ml-auto" x-text="t('By arrival time · oldest first')"></span>
         </div>
         <div x-show="(taskSearch.trim() || (activeTab === 'active' && activeStatusFilter !== 'all')) && visibleTaskCount === 0 && !searchLoading" class="text-center py-16" role="status">
             <h3 class="text-gray-500 font-medium mb-1" x-text="t('No matching tasks')"></h3>
@@ -324,8 +331,6 @@
                     </div>
                 </div>
             </div>
-
-            <p class="text-xs text-gray-500 mb-3" x-text="t('Showing {count} of {total} tasks', {count: filteredActiveTasks.length, total: activeTasks.length})"></p>
 
             <!-- Empty State -->
             <div x-show="activeTasks.length === 0 && !taskSearch.trim() && activeStatusFilter === 'all'" class="text-center py-20">
@@ -480,16 +485,6 @@
 
         <!-- Pending Downloads Tab -->
         <div x-show="activeTab === 'pending'" x-transition:enter="fade-in">
-            <!-- Summary Bar -->
-            <div x-show="pendingTasks.length > 0" class="mb-4 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <button type="button" @click="toggleSelectAll('pending')" :disabled="batchBusy"
-                        :aria-pressed="pendingTasks.length > 0 && pendingTasks.every(task => selectedTasks.includes(task.task_id))"
-                        class="selection-shortcut" x-text="t(pendingTasks.length > 0 && pendingTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
-                                    </div>
-                <span class="text-xs text-gray-400"><span data-i18n="By arrival time · oldest first" x-text="t('By arrival time · oldest first')">By arrival time · oldest first</span></span>
-            </div>
-
             <!-- Empty State -->
             <div x-show="pendingTasks.length === 0 && !taskSearch.trim()" class="text-center py-20">
                 <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -569,10 +564,10 @@
                             <div class="flex items-center gap-1.5 shrink-0">
                                 <button
                                     @click="removePending(task.task_id)"
-                                    class="btn-action p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
+                                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
                                     :title="t(&quot;Cancel task&quot;)"
                                 >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                                     </svg>
                                 </button>
@@ -585,14 +580,6 @@
 
         <!-- Completed Downloads Tab -->
         <div x-show="activeTab === 'completed'" x-transition:enter="fade-in">
-            <!-- Select All Bar -->
-            <div x-show="completedTasks.length > 0" class="mb-3 flex items-center justify-between">
-                <button type="button" @click="toggleSelectAll('completed')" :disabled="batchBusy"
-                        :aria-pressed="completedTasks.length > 0 && completedTasks.every(task => selectedTasks.includes(task.task_id))"
-                        class="selection-shortcut" x-text="t(completedTasks.length > 0 && completedTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
-                <span class="text-xs text-gray-400" x-text="t('Tasks: {count}', {count: completedTasks.length + ' / ' + completedTotal})"></span>
-            </div>
-
             <!-- Empty State -->
             <div x-show="completedTotal === 0 && !taskSearch" class="text-center py-20">
                 <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -623,11 +610,11 @@
                                     </span>
                                     <span x-show="task.completion_reason" class="text-xs text-gray-500" x-text="t(task.completion_reason || '')"></span>
                                     <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
-                                    <span class="text-xs text-gray-300">•</span>
+                                    <span class="text-xs text-gray-300">|</span>
                                     <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>
                                 </div>
-                                <h4 class="text-sm font-medium text-gray-900 line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
-                                <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
+                                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-gray-500">
                                     <span x-text="t(task.total_size)"></span>
                                     <template x-if="task.completed_time">
                                         <span>
@@ -648,10 +635,10 @@
                             <div class="flex items-center gap-1.5 shrink-0">
                                 <button
                                     @click="deleteTask(task.task_id)"
-                                    class="btn-action p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
+                                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
                                     :title="t(&quot;Delete&quot;)"
                                 >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                                     </svg>
                                 </button>
@@ -664,7 +651,7 @@
                                 <span><span data-i18n="Progress" x-text="t('Progress')">Progress</span></span>
                                 <span class="font-mono font-medium text-green-600" x-text="task.download_progress + '%'"></span>
                             </div>
-                            <div class="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div class="w-full h-3 sm:h-2 bg-gray-100 rounded-full overflow-hidden">
                                 <div class="h-full rounded-full bg-green-500 progress-bar" style="width: 100%"></div>
                             </div>
                         </div>
@@ -689,14 +676,6 @@
 
         <!-- Failed Downloads Tab -->
         <div x-show="activeTab === 'failed'" x-transition:enter="fade-in">
-            <!-- Select All Bar -->
-            <div x-show="filteredFailedTasks.length > 0" class="mb-3 flex items-center justify-between">
-                <button type="button" @click="toggleSelectAll('failed')" :disabled="batchBusy"
-                        :aria-pressed="filteredFailedTasks.length > 0 && filteredFailedTasks.every(task => selectedTasks.includes(task.task_id))"
-                        class="selection-shortcut" x-text="t(filteredFailedTasks.length > 0 && filteredFailedTasks.every(task => selectedTasks.includes(task.task_id)) ? 'Clear selection' : 'Select all')"></button>
-                <span class="text-xs text-gray-400" x-text="t('Tasks: {count}', {count: filteredFailedTasks.length})"></span>
-            </div>
-
             <!-- Empty State -->
             <div x-show="failedTasks.length === 0 && !taskSearch.trim()" class="text-center py-20">
                 <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -771,10 +750,10 @@
                                 </button>
                                 <button
                                     @click="deleteTask(task.task_id)"
-                                    class="btn-action p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
+                                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
                                     :title="t(&quot;Delete&quot;)"
                                 >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                                     </svg>
                                 </button>
@@ -1001,6 +980,7 @@
             stopPolling: null,
             initialized: false,
             disposed: false,
+            submissionExpanded: false,
             downloadUrl: '',
             submitting: false,
             deleteModal: {
@@ -1117,11 +1097,21 @@
                       task.status === this.activeStatusFilter)));
             },
             get filteredFailedTasks() { return this.failedTasks.filter(task => this.matchesSearch(task)); },
-            get visibleTaskCount() {
-                if (this.activeTab === 'skipped') return this.skippedTasks.length;
-                if (this.activeTab === 'active') return this.filteredActiveTasks.length;
-                if (this.activeTab === 'failed') return this.filteredFailedTasks.length;
-                return this.activeTab === 'pending' ? this.pendingTasks.length : this.completedTasks.length;
+            get visibleTasks() {
+                if (this.activeTab === 'skipped') return this.skippedTasks;
+                if (this.activeTab === 'active') return this.filteredActiveTasks;
+                if (this.activeTab === 'failed') return this.filteredFailedTasks;
+                return this.activeTab === 'pending' ? this.pendingTasks : this.completedTasks;
+            },
+            get visibleTaskCount() { return this.visibleTasks.length; },
+            get allVisibleSelected() {
+                return this.visibleTasks.length > 0 &&
+                    this.visibleTasks.every(task => this.selectedTasks.includes(task.task_id));
+            },
+            get currentTaskTotal() {
+                return {active: this.activeTasks.length, pending: this.pendingTotal,
+                    completed: this.completedTotal, failed: this.failedTasks.length,
+                    skipped: this.skippedTotal}[this.activeTab];
             },
             get searchLoading() {
                 return this.activeTab === 'completed' ? this.completedLoading :
