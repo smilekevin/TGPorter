@@ -723,11 +723,15 @@ class DownloadBot:
             if not all_tasks:
                 return
 
-            # Reset all tasks to pending state so _consume_one_pending picks them up
+            from module.download_stat import pause_task
+            for task_data in all_tasks:
+                if task_data.get('download_state') == 'paused':
+                    pause_task(task_data['task_id'])
+            # Reset runnable tasks to pending; durable holds require explicit resume.
             from module.task_store import update_download_state
             for task_data in all_tasks:
                 tid = task_data.get("task_id")
-                if tid is not None and task_data.get("download_state") != "pending":
+                if tid is not None and task_data.get("download_state") not in ("pending", "paused"):
                     update_download_state(tid, "pending")
 
             logger.info(f"Found {len(all_tasks)} tasks, all queued as pending (will consume one by one)")
@@ -2586,6 +2590,24 @@ async def forward_msg(node: TaskNode, message_id: int):
 # Global flood wait cooldown is now unified in pyrogram_extension._unified_flood_wait
 
 async def _consume_one_pending():
+    """Isolate per-post cancellation from the singleton consumer's lifecycle."""
+    # Range scans are already separate, tracked tasks; avoid another scheduling
+    # boundary before returning their startup result.
+    pending = get_pending_tasks()
+    if pending and not any((task.get('extra_data') or {}).get(key)
+                           for task in pending for key in ('message_id', 'source_message_id')):
+        return await _prepare_one_pending()
+    work = asyncio.create_task(_prepare_one_pending())
+    try:
+        await work
+    except asyncio.CancelledError:
+        if not getattr(work, '_download_paused', False):
+            work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+            raise
+
+
+async def _prepare_one_pending():
     """Consume exactly one pending task from bot_tasks.json.
     Single-shot, no loop. Sends TG notification on consumption.
     """
@@ -2597,6 +2619,7 @@ async def _consume_one_pending():
     msg = None
     node = None
     preparing_entry = None
+    attempt = None
     try:
         from module.task_store import get_pending_tasks, update_download_state, remove_task
         add_download_task = _bot.add_download_task
@@ -2678,7 +2701,7 @@ async def _consume_one_pending():
             # instead of generating a new one (0628-1241)
             node = TaskNode(
                 chat_id=cid,
-                from_user_id=from_user_id or cid,
+                from_user_id=from_user_id,
                 reply_message_id=0,
                 limit=1,
                 bot=_bot.bot,
@@ -2687,10 +2710,20 @@ async def _consume_one_pending():
                 topic_id=extra.get("topic_id", 0),
                 download_filter=task_data.get("download_filter"),
             )
+            node.upload_telegram_chat_id = extra.get('dst_chat_id')
+            node.has_protected_content = extra.get('has_protected_content', False)
+            if node.upload_telegram_chat_id:
+                node.upload_user = _bot.bot if extra.get('upload_client') == 'bot' else _bot.client
+            if node.upload_telegram_chat_id:
+                node.task_type = TaskType.Forward
             node.bypass_filters = extra.get("bypass_filters") is True
             node.source_chat_id = extra.get("source_chat_id", 0)
             node.source_message_id = extra.get("source_message_id", 0)
             node.source_chat_title = extra.get("source_chat_title", "")
+        # Set the owning account before preparation snapshots are published.
+        node.client = _bot.bot if client is _bot.bot else None
+        from module.download_control import register_attempt
+        attempt = register_attempt(asyncio.current_task(), node, int(msg_id))
         # Hold this reservation across every await until queue handoff succeeds.
         _bot._consuming.add(task_id)
         reserved = True
@@ -2884,6 +2917,12 @@ async def _consume_one_pending():
         update_download_state(task_id, "downloading")
         logger.info("Pending consumer: queued task {} (id={}, message={}) to download queue",
                     task_display, task_id, msg_id)
+    except asyncio.CancelledError:
+        if attempt is not None and attempt.paused:
+            asyncio.current_task()._download_paused = True
+            from module.download_control import detach_file
+            detach_file(node, int(msg_id))
+        raise
     except Exception as e:
         logger.warning("Pending consumer error: task {} (id={}): {}", task_display, task_id, e)
     finally:
@@ -2897,6 +2936,11 @@ async def _consume_one_pending():
                 _bot._in_queue.discard(task_id)
                 if msg is not None:
                     _bot._cached_messages[task_id] = msg
+        if attempt is not None:
+            from module.download_control import release_attempt
+            release_attempt(attempt)
+
+
 async def _pending_consumer_loop():
     """Periodically fill the worker queue with pending tasks.
 

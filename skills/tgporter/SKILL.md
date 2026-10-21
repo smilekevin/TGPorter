@@ -58,7 +58,7 @@ operations do not require fetching a GitHub tool reference.
    identifies an existing unfinished task.
 3. Use `list_downloads` to find progress in `pending`, `active`, `completed` or
    `failed`. Keep the returned `task_id` and `pending_task_id` distinct;
-   `task_id_display` is only a display label. An active row can be paused.
+   `task_id_display` is only a display label. Individually paused tasks appear in `pending` with `status="paused"`.
 4. Query completion only as requested. For a one-time submission, return queue
    acceptance without starting a monitoring loop. For an explicit request to
    wait, space queries apart, respect cooldown and the available execution time,
@@ -76,7 +76,10 @@ ambiguous filenames or display labels before changing a task. Page through lists
 when needed; do not describe one page as the entire queue. `search` is supported
 only for completed tasks; other lists require filtering returned pages.
 
-- Use `pause_task` / `resume_task` for one active task. Use
+- Use `pause_task` to hold one active or queued task. This saves the hold across
+  restarts, preserves checkpoints and frees the file slot after writers stop.
+  Find the held task in Pending and use `resume_task` to queue it again; resume
+  waits for normal capacity and cooldowns. Use
   `set_download_state` only when the user intends to pause or resume all processing.
   A global resume preserves individually paused tasks.
 - Use `retry_task` or `batch_retry_tasks` for failed tasks. Inspect `queued` and

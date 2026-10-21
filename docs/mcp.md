@@ -14,15 +14,17 @@ TG Porter 的 MCP 在主服务的 `/mcp` 提供工具，直接调用内部任务
 | `submit_download` | `url` | 提交单条 Telegram 消息链接，持久化进入待下载队列 |
 | `set_download_state` | `state`: paused / downloading | 全局暂停 / 恢复 |
 | `set_max_workers` | `workers`: 1–6 | 设置同时下载的文件数，立即保存到 `data/settings.json`，重启后保留；不改变单文件分片 worker 数 |
-| `pause_task` / `resume_task` | `task_id` | 暂停 / 恢复单个任务 |
+| `pause_task` / `resume_task` | `task_id` | 持久化暂停并释放名额、移到待下载；恢复只重新排队 |
 | `retry_task` | `task_id` | 重试一个失败任务 |
 | `batch_retry_tasks` | `task_ids` | 批量重试失败任务 |
 | `delete_task` / `batch_delete_tasks` | `task_id` / `task_ids`, `delete_file` | 取消或删除任务；`delete_file=true` 清理文件与临时数据 |
 | `remove_pending_task` | `task_id` | 从待下载队列移除任务 |
 
-任务操作使用列表中的 `task_id`，不是 `task_id_display`。`list_downloads` 默认查询 active、offset 0、每页 100 条，最大 500 条；active 包含单独暂停的任务，实际状态看每条记录的 `status`。仅 completed 支持 `search`；批量操作最多 100 个任务。
+任务操作使用列表中的 `task_id`，不是 `task_id_display`。`list_downloads` 默认查询 active、offset 0、每页 100 条，最大 500 条；pending 包含单独暂停的任务，使用 `status="paused"` 标识。仅 completed 支持 `search`；批量操作最多 100 个任务。
 
 `submit_download` 接受长度不超过 2048 的 HTTPS `t.me` 消息链接。返回 `task_id`（进行中/已完成）、`pending_task_id`（待执行/取消）和展示用的 `task_id_display`；尚未完成的重复提交返回原任务，`duplicate: true`。账号权限、链接形式、超时和入队语义见 [提交下载](../DEPLOY_CN.md#提交下载)。
+
+暂停的任务归入 pending，`status="paused"`；重启后不会自动开始。暂停响应提供 `pending_task_id`，恢复时使用待下载列表中的标识；恢复后仍按正常并发和冷却限制排队。
 
 ## 结果与错误
 
@@ -71,12 +73,12 @@ Complete installation, token generation/configuration, Streamable HTTP client ex
 | `submit_download` | `url` | Persist a single Telegram post in the download queue |
 | `set_download_state` | `state`: paused / downloading | Pause/resume global processing |
 | `set_max_workers` | `workers`: 1–6 | Set simultaneous files and save immediately to `data/settings.json` for restarts; leaves per-file part workers unchanged |
-| `pause_task` / `resume_task` | `task_id` | Pause/resume an individual task |
+| `pause_task` / `resume_task` | `task_id` | Persist a hold and free its slot; resume returns it to Pending |
 | `retry_task` / `batch_retry_tasks` | `task_id` / `task_ids` | Requeue failed tasks |
 | `delete_task` / `batch_delete_tasks` | `task_id` / `task_ids`, `delete_file` | Cancel/delete tasks; `delete_file=true` removes files and partial data |
 | `remove_pending_task` | `task_id` | Remove a task before it starts |
 
-Use exact `task_id` values, not `task_id_display`. Lists default to active, offset zero and 100 entries, with at most 500 per page; active includes individually paused tasks, identified by each record's `status`. Only completed supports search. Batches accept up to 100 task IDs.
+Use exact `task_id` values, not `task_id_display`. Lists default to active, offset zero and 100 entries, with at most 500 per page; pending includes individually paused tasks, identified by `status="paused"`. Pausing persists the hold, preserves checkpoints and frees the file slot after writers stop. The response includes `pending_task_id`; use the identifier from the pending list to resume. Resume only makes the task eligible for normal scheduling, and restarts never resume held tasks automatically. Only completed supports search. Batches accept up to 100 task IDs.
 
 `submit_download` accepts HTTPS `t.me` post links up to 2048 characters and returns `task_id` for active/completed records, `pending_task_id` for pending/cancellation, and a display-only `task_id_display`. Repeating an unfinished post returns the same task with `duplicate: true`. See [Submit a Download](../DEPLOY.md#submit-a-download) for account requirements, supported links, timeouts and queue semantics.
 

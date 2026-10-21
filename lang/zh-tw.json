@@ -604,6 +604,8 @@
     "Waiting for download slot": "等待可用下載名額",
     "Establishing download connections": "正在建立下載連線",
     "All downloads are paused": "所有下載已暫停",
-    "Waiting for Telegram cooldown: {seconds} seconds": "等待 Telegram 冷卻，剩餘 {seconds} 秒"
+    "Waiting for Telegram cooldown: {seconds} seconds": "等待 Telegram 冷卻，剩餘 {seconds} 秒",
+    "Select queued": "選擇排隊中",
+    "Paused; resume manually": "已暫停，請手動恢復"
   }
 }

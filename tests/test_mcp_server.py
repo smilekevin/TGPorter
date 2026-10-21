@@ -187,6 +187,8 @@ class MCPIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(download_stat.get_download_state(), download_stat.DownloadState.Downloading)
 
     async def test_individual_pause_resume_and_worker_setting_reach_real_handlers(self):
+        from module.app import TaskNode
+        download_stat.prepare_download(1, TaskNode(chat_id=100, task_id=1, task_id_display='1021-1'))
         async with Client(self.server) as client:
             self.assert_success(await client.call_tool("pause_task", {"task_id": "100_1"}))
             self.assertTrue(download_stat.is_task_paused("100_1"))

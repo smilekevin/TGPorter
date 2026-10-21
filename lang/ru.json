@@ -462,6 +462,8 @@
     "Resolving allowed users": "Определение разрешённых пользователей",
     "Registering bot commands": "Регистрация команд бота",
     "Clear saved Telegram login": "Удалить сохранённый вход Telegram",
-    "Telegram startup failed during {reason}. Saved login is kept; try reconnecting.": "Не удалось запустить Telegram на этапе {reason}. Сохранённый вход оставлен; попробуйте переподключиться."
+    "Telegram startup failed during {reason}. Saved login is kept; try reconnecting.": "Не удалось запустить Telegram на этапе {reason}. Сохранённый вход оставлен; попробуйте переподключиться.",
+    "Select queued": "Выбрать в очереди",
+    "Paused; resume manually": "Приостановлено; возобновите вручную"
   }
 }

@@ -409,7 +409,7 @@ def web_batch_retry():
 def web_get_pending_list():
     return _service_response(_download_service().web_get_pending_list(
         offset=request.args.get("offset", 0, type=int), limit=request.args.get("limit", 100, type=int),
-        search=request.args.get("search", ""),
+        search=request.args.get("search", ""), status=request.args.get("status", "all"),
     ))
 
 

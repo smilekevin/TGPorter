@@ -14,7 +14,7 @@ from pyrogram import enums, types
 from pyrogram.file_id import FileId, FileType
 
 import media_downloader as downloader
-from module import bot, download_stat, parallel_download, pyrogram_extension, web
+from module import bot, download_stat, parallel_download, pyrogram_extension, web, task_store, download_control
 from module.app import Application, DownloadStatus, ForwardStatus, TaskNode, TaskType
 from module.download_service import DownloadService
 from module.parallel_download import parts_path
@@ -896,6 +896,63 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
                             for request in requests))
         self.owner.get_messages.assert_awaited_once_with(chat_id=100, message_ids=61)
         self.assertEqual(self.node.success_download_task, 1)
+
+
+    async def test_durable_pause_closes_real_part_workers_and_resumes_saved_ranges(self):
+        import hashlib
+        self.app.is_running = True
+        self.app.loop = asyncio.get_running_loop()
+        controller = bot.DownloadBot()
+        controller.app = self.app
+        controller.client = self.client
+        controller.add_download_task = downloader.add_download_task
+        self.client.get_messages = AsyncMock(return_value=self.message)
+        entered = asyncio.Event()
+        async def before(index):
+            if index >= 1:
+                entered.set()
+                await asyncio.Event().wait()
+        self.client.before_chunk = before
+        queue = downloader._DownloadQueue(self.client)
+        with patch.object(bot, '_bot', controller), \
+                patch.object(task_store, '_TASKS_FILE', str(self.path / 'tasks.json')), \
+                patch.object(task_store, '_COUNTER_FILE', str(self.path / 'counter.json')), \
+                patch.object(download_control, '_attempts', {}), \
+                patch.object(download_control, '_queued', {}), \
+                patch.object(download_control, '_locks', {}), \
+                patch.object(downloader, 'queue', queue), \
+                patch.object(downloader, '_live_workers', 0):
+            try:
+                self.node.total_task = 0
+                await downloader.add_download_task(self.message, self.node)
+                await asyncio.wait_for(entered.wait(), 3)
+                result = await asyncio.to_thread(DownloadService(self.app).web_pause_task, '100_61')
+                self.assertEqual(result['code'], '1')
+                self.assertEqual(self.client.tracker['active'], 0)
+                self.assertEqual(controller._active_downloads, 0)
+                checkpoint = json.loads((parts_path(str(self.path / 'partial.mp4')) / 'manifest.json').read_text())
+                self.assertGreater(sum(checkpoint['committed_bytes']), 0)
+                self.assertFalse((self.path / 'saved.mp4').exists())
+                await controller.recover_tasks()
+                self.assertEqual(task_store.get_pending_tasks(), [])
+                result = await asyncio.to_thread(DownloadService(self.app).web_resume_task, '100_61')
+                self.assertEqual(result['code'], '1')
+                self.assertTrue(queue.empty())
+                self.client.calls.clear()
+                self.client.before_chunk = None
+                # Changes to settings cannot repartition the saved plan.
+                self.app.file_download_concurrency = 1
+                self.app.download_part_size_mb = 64
+                await bot._consume_one_pending()
+                queue.ensure_workers()
+                await asyncio.wait_for(asyncio.gather(*queue.workers), 5)
+                output = (self.path / 'saved.mp4').read_bytes()
+                self.assertEqual(hashlib.sha256(output).digest(), hashlib.sha256(self.data).digest())
+                self.assertTrue(all(offset > 0 for offset, _ in self.client.calls))
+                self.assertFalse(parts_path(str(self.path / 'partial.mp4')).exists())
+            finally:
+                self.app.is_running = False
+                await queue.stop()
 
 
 class DownloadConfigTests(unittest.TestCase):

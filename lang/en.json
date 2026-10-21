@@ -600,6 +600,8 @@
     "Waiting for download slot",
     "Establishing download connections",
     "All downloads are paused",
-    "Waiting for Telegram cooldown: {seconds} seconds"
+    "Waiting for Telegram cooldown: {seconds} seconds",
+    "Select queued",
+    "Paused; resume manually"
   ]
 }

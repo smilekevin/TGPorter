@@ -82,6 +82,8 @@ def prepare_download(message_id, node, *, filename="", reason="Fetching file inf
                 "phase": "preparing", "preparation_reason": reason,
             }
             messages[message_id] = entry
+        from module.download_control import pause_metadata
+        entry['pause_metadata'] = pause_metadata(message_id, node)
         return entry
 
 

@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import media_downloader as downloader
-from module import download_stat, web
+from module import download_stat, web, task_store
 from module.app import DownloadStatus, TaskNode
 
 
@@ -30,6 +30,7 @@ class WebTaskTests(unittest.TestCase):
         self.app = web.get_flask_app()
         for item in (
             patch.object(web, '_app', self.config),
+            patch.object(task_store, '_TASKS_FILE', str(self.root / 'tasks.json')),
             patch.object(download_stat, '_download_result', {1: {2: {
                 'task_id': 'task-1', 'file_name': str(self.file), 'down_byte': 5, 'total_size': 5,
             }}}),
@@ -68,10 +69,10 @@ class WebTaskTests(unittest.TestCase):
             self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 3)
             rows = self.client.get('/get_download_list?already_down=false').json
             self.assertEqual(rows[0]['active_streams'], 2)
-            self.assertEqual(self.post('/pause_task?task_id=1_2').json['code'], '1')
+            self.assertTrue(download_stat.pause_task('1_2'))
             self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 1)
             self.assertEqual(self.client.get('/get_download_list?already_down=false').json[0]['active_streams'], 0)
-            self.assertEqual(self.post('/resume_task?task_id=1_2').json['code'], '1')
+            self.assertTrue(download_stat.resume_task('1_2'))
             self.assertEqual(self.client.get('/get_download_status').json['active_streams'], 3)
         record['down_byte'] = 100
         # Saved history never supplies a live stream count, even if it has an old field.
@@ -91,9 +92,9 @@ class WebTaskTests(unittest.TestCase):
         self.assertEqual(active[0]['download_progress_raw'], 99.9)
         self.assertEqual(self.client.get('/get_completed_count').json['total'], 0)
         self.assertEqual(self.client.get('/get_download_list?already_down=true').json['tasks'], [])
-        self.post('/pause_task?task_id=1_2')
+        download_stat.pause_task('1_2')
         self.assertEqual(self.client.get('/get_download_list?already_down=false').json[0]['status'], 'paused')
-        self.post('/resume_task?task_id=1_2')
+        download_stat.resume_task('1_2')
         record['down_byte'] = total
         self.assertEqual(self.client.get('/get_download_list?already_down=false').json, [])
         completed = self.client.get('/get_download_list?already_down=true').json
@@ -121,9 +122,9 @@ class WebTaskTests(unittest.TestCase):
         # No bytes and no live stream must not revert a started file to preparation.
         row = self.client.get('/get_download_list?already_down=false').json[0]
         self.assertEqual(row['phase'], 'downloading')
-        self.post('/pause_task?task_id=1_2')
+        download_stat.pause_task('1_2')
         self.assertEqual(self.client.get('/get_download_list?already_down=false').json[0]['status'], 'paused')
-        self.post('/resume_task?task_id=1_2')
+        download_stat.resume_task('1_2')
         asyncio.run(download_stat.update_download_status(1, 1, 2, str(self.file), 1, node, None))
         self.assertEqual(self.client.get('/get_download_list?already_down=false').json, [])
         self.assertEqual(self.client.get('/get_download_list?already_down=true').json['total'], 1)
@@ -143,7 +144,7 @@ class WebTaskTests(unittest.TestCase):
             download_stat.set_download_state(download_stat.DownloadState.StopDownload)
             row = self.client.get('/get_download_list?already_down=false').json[0]
             self.assertEqual(row['wait_reason'], 'All downloads are paused')
-            self.post('/pause_task?task_id=1_2')
+            download_stat.pause_task('1_2')
             row = self.client.get('/get_download_list?already_down=false').json[0]
             self.assertEqual((row['status'], row['wait_reason']), ('paused', ''))
 
@@ -315,9 +316,9 @@ global.fetch = async (url, options) => {
     }
     ui.$refs = {statusFilter: {open: true}, statusFilterButton: {focus() {}}};
     ui.selectedTasks = ['a'];
-    ui.chooseActiveStatus('paused');
-    assert.equal(ui.activeStatusFilterLabel, 'Paused');
-    assert.deepEqual(ui.filteredActiveTasks.map(task => task.task_id), ['c']);
+    ui.chooseActiveStatus('preparing');
+    assert.equal(ui.activeStatusFilterLabel, 'Preparing');
+    assert.deepEqual(ui.filteredActiveTasks.map(task => task.task_id), ['a']);
     assert.deepEqual(ui.selectedTasks, []);
     assert.equal(ui.$refs.statusFilter.open, false);
     ui.chooseActiveStatus('all');
@@ -511,3 +512,18 @@ ui.updateNavigationLayout();
 assert.equal(ui.navigationCollapsed, true);
 '''], text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_pause_moves_to_pending_and_resume_stays_queued_through_real_routes(self):
+        node = TaskNode(chat_id=1, task_id='task-1', task_id_display='1021-1')
+        download_stat._download_result[1][2].update(down_byte=2, total_size=5)
+        download_stat.prepare_download(2, node)
+        self.assertEqual(self.post('/pause_task?task_id=1_2').json['code'], '1')
+        self.assertEqual(self.client.get('/get_download_list?already_down=false').json, [])
+        paused = self.client.get('/get_pending_list?status=paused').json
+        self.assertEqual(paused['total'], 1)
+        self.assertEqual(paused['tasks'][0]['status'], 'paused')
+        self.assertEqual(self.post('/resume_task?task_id=1_2').json['code'], '1')
+        self.assertEqual(self.client.get('/get_download_list?already_down=false').json, [])
+        queued = self.client.get('/get_pending_list?status=pending').json
+        self.assertEqual(queued['total'], 1)
+        self.assertEqual(queued['tasks'][0]['queue_label'], 'Queued')

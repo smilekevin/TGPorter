@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import media_downloader as downloader
 from module import bot, download_stat, task_store as store
-from module import web
+from module import web, download_control
 from module.app import TaskNode
 from module.language import set_language
 from module.download_service import DownloadService
@@ -52,6 +52,11 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(store, "_TASKS_FILE", str(Path(self.temp.name) / "tasks.json")),
             patch.object(store, "_COUNTER_FILE", str(Path(self.temp.name) / "counter.json")),
             patch.object(download_stat, "_download_result", {}),
+            patch.object(download_stat, "_paused_tasks", set()),
+            patch.object(download_stat, "_HISTORY_FILE", str(Path(self.temp.name) / 'history.json')),
+            patch.object(download_control, '_attempts', {}),
+            patch.object(download_control, '_queued', {}),
+            patch.object(download_control, '_locks', {}),
             patch.object(download_stat, "_chat_titles", {}),
             patch.object(download_stat, "add_failed_download", Mock()),
             patch.object(bot, "report_bot_status", AsyncMock()),
@@ -741,3 +746,115 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    async def test_pause_frees_slot_after_cleanup_and_restart_keeps_hold(self):
+        self.app.max_download_task = 1
+        self.save(tid=1, mid=101)
+        self.save(tid=2, mid=102)
+        started, cleaned = asyncio.Event(), asyncio.Event()
+
+        async def transfer(client, message, node):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0.01)
+                cleaned.set()
+
+        await bot._consume_one_pending()
+        with patch.object(downloader, 'download_task', transfer):
+            worker = asyncio.create_task(downloader.worker(self.client))
+            self.workers.append(worker)
+            await started.wait()
+            response = await asyncio.to_thread(DownloadService(self.app).web_pause_task, '-10001_101')
+            self.assertEqual(response['code'], '1')
+            self.assertTrue(cleaned.is_set())
+            self.assertEqual(self.bot._active_downloads, 0)
+            await worker
+        held = next(task for task in store.get_running_tasks() if task['task_id'] == '-10001_101')
+        self.assertEqual(held['download_state'], 'paused')
+        self.assertEqual([task['task_id'] for task in store.get_pending_tasks()], [2])
+        self.assertEqual(DownloadService(self.app).get_download_list(already_down='false'), [])
+        await self.bot.recover_tasks()
+        self.assertEqual(next(task for task in store.get_running_tasks()
+                              if task['task_id'] == held['task_id'])['download_state'], 'paused')
+        await bot._consume_one_pending()
+        self.assertEqual(self.queue.get_nowait()[0].id, 102)
+        response = await asyncio.to_thread(DownloadService(self.app).web_resume_task, held['task_id'])
+        self.assertEqual(response['code'], '1')
+        self.assertTrue(self.queue.empty(), 'resume only accepts the task into Pending')
+        self.assertEqual(store.get_pending_tasks()[0]['download_state'], 'pending')
+
+    async def test_pause_during_fetch_releases_reservation_without_stopping_consumer(self):
+        self.save()
+        fetching, cleaned = asyncio.Event(), asyncio.Event()
+        async def fetch(*args):
+            fetching.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+        self.client.get_messages.side_effect = fetch
+        work = asyncio.create_task(bot._consume_one_pending())
+        self.workers.append(work)
+        await fetching.wait()
+        result = await asyncio.to_thread(DownloadService(self.app).web_pause_task, '-10001_101')
+        self.assertEqual(result['code'], '1')
+        await work
+        self.assertTrue(cleaned.is_set())
+        self.assertFalse(self.bot._consuming)
+        self.assertTrue(self.queue.empty())
+        self.client.get_messages.side_effect = lambda cid, mid: self.message(mid, cid)
+        self.save(tid=2, mid=102)
+        await bot._consume_one_pending()
+        self.assertEqual(self.queue.get_nowait()[0].id, 102)
+
+    async def test_queued_pause_removes_reservation_and_retains_owning_account(self):
+        self.bot.bot = object()
+        self.save(extra={'message_client': 'bot', 'dst_chat_id': -10088, 'topic_id': 9,
+                         'bypass_filters': True})
+        self.bot.get_message_client = Mock(return_value=self.client)
+        await bot._consume_one_pending()
+        message, node = self.queue._queue[0]
+        node.client = self.bot.bot
+        download_stat.prepare_download(message.id, node)
+        response = await asyncio.to_thread(DownloadService(self.app).web_pause_task, '-10001_101')
+        self.assertEqual(response['code'], '1')
+        self.assertTrue(self.queue.empty())
+        self.assertFalse(self.bot._in_queue)
+        extra = store.get_pending_tasks(include_paused=True)[0]['extra_data']
+        self.assertEqual((extra['message_client'], extra['dst_chat_id'], extra['topic_id']),
+                         ('bot', -10088, 9))
+        self.assertTrue(extra['bypass_filters'])
+
+    async def test_pause_write_failure_does_not_interrupt_or_remove_queued_file(self):
+        self.save()
+        await bot._consume_one_pending()
+        with patch.object(store, '_save_all', return_value=False):
+            result = await asyncio.to_thread(DownloadService(self.app).web_pause_task, '-10001_101')
+        self.assertEqual(result['code'], '0')
+        self.assertEqual(self.queue.qsize(), 1)
+        self.assertEqual(store.get_running_tasks()[0]['download_state'], 'downloading')
+
+    async def test_range_file_hold_survives_parent_completion_and_rescan(self):
+        self.save(mid=None, kind='download')
+        node = TaskNode(chat_id=-10001, task_id=1, task_id_display='1014-1')
+        await downloader.add_download_task(self.message(), node)
+        result = await asyncio.to_thread(DownloadService(self.app).web_pause_task, '-10001_101')
+        self.assertEqual(result['code'], '1')
+        store.complete_task(1)
+        self.assertEqual(store.get_pending_tasks(include_paused=True)[0]['download_state'], 'paused')
+        self.assertFalse(await downloader.add_download_task(self.message(), node))
+        self.assertTrue(self.queue.empty())
+
+    async def test_pending_pause_filter_is_applied_before_pagination(self):
+        for tid in range(1, 5):
+            self.save(tid=tid, mid=100 + tid)
+        for tid in (1, 3):
+            self.assertIsNotNone(store.set_task_paused(tid, True))
+        service = DownloadService(self.app)
+        held = service.web_get_pending_list(status='paused', offset=1, limit=1)
+        self.assertEqual(held['total'], 2)
+        self.assertEqual([row['task_id'] for row in held['tasks']], ['3'])
+        self.assertEqual(held['tasks'][0]['wait_reason'], 'Paused; resume manually')
+        self.assertEqual(service.web_get_pending_list(status='pending')['total'], 2)
