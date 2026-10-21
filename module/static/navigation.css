@@ -1,4 +1,6 @@
 /* Shared page width, brand and navigation for dashboard and Configuration. */
+/* Keep mobile browsers from inflating text after rotation; browser zoom stays available. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .page-container { box-sizing: border-box; width: 100%; max-width: 80rem; margin-left: auto; margin-right: auto; padding-left: 24px; padding-right: 24px; }
 .app-header { background: #fff; border-top: 3px solid #2563eb; border-bottom: 1px solid #e5e7eb; padding-top: env(safe-area-inset-top); box-shadow: 0 4px 24px rgb(31 51 86 / 5%); }
 .app-header-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; padding-bottom: 12px; }

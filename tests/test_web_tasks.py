@@ -376,6 +376,54 @@ global.fetch = async (url, options) => {
         self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'Node.js required')
+    def test_shared_toolbar_selects_only_visible_rows_in_each_tab(self):
+        html = self.client.get('/').get_data(as_text=True)
+        script = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)[-1]
+        result = subprocess.run(['node', '-e', '''
+const assert = require('node:assert/strict');
+global.WebI18n = {language: 'en', t: text => text};
+''' + script + '''
+const ui = app();
+ui.activeTasks = [
+    {task_id: 'active', filename: 'match.mp4', status: 'active'},
+    {task_id: 'paused', filename: 'match.mp4', status: 'paused'},
+];
+ui.failedTasks = [
+    {task_id: 'failed', filename: 'match.mp4'},
+    {task_id: 'hidden', filename: 'other.mp4'},
+];
+ui.completedTasks = [{task_id: 'completed'}];
+ui.pendingTasks = [{task_id: 'pending'}];
+ui.skippedTasks = [{task_id: 'skipped'}];
+ui.pendingTotal = 4;
+ui.completedTotal = 8;
+ui.skippedTotal = 2;
+ui.taskSearch = 'match';
+ui.activeStatusFilter = 'paused';
+for (const [tab, id, total] of [
+    ['active', 'paused', 2], ['pending', 'pending', 4],
+    ['completed', 'completed', 8], ['failed', 'failed', 2], ['skipped', 'skipped', 2],
+]) {
+    ui.activeTab = tab;
+    ui.selectedTasks = [];
+    assert.equal(ui.visibleTaskCount, 1);
+    assert.equal(ui.currentTaskTotal, total);
+    assert.equal(ui.allVisibleSelected, false);
+    ui.toggleSelectAll(tab);
+    assert.deepEqual(ui.selectedTasks, [id]);
+    assert.equal(ui.allVisibleSelected, true);
+    ui.toggleSelectAll(tab);
+    assert.deepEqual(ui.selectedTasks, []);
+    assert.equal(ui.allVisibleSelected, false);
+}
+ui.completedTasks = [];
+ui.activeTab = 'completed';
+assert.equal(ui.allVisibleSelected, false);
+assert.equal(ui.visibleTaskCount, 0);
+'''], text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js required')
     def test_mobile_search_pull_preserves_native_scrolling_and_active_queries(self):
         html = self.client.get('/').get_data(as_text=True)
         script = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)[-1]
