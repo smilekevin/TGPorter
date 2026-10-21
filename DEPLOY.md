@@ -368,12 +368,15 @@ Set the Compose image to `tgporter:local`, then run `docker compose up -d`. Keep
 | `data/bot.yaml` | Existing Bot task/listener metadata |
 | `data/log/tdl.log` | Application log, 10 MB rotation, 30-day retention, configured level |
 | `data/bot_tasks.json` | Download and forwarding tasks |
+| `data/bot_processed_messages.json` | IDs of the last 1,000 handled Bot messages, saved atomically with mode 0600 |
 | `data/task_counter.json` | Daily task sequence numbers |
 | `data/download_history.json` | Completed and failed downloads |
 | `downloads/` | Completed files |
 | `downloads/.temp/` | Staging data and `.parts/manifest.json` checkpoints |
 
 Mount writable `data/` and download directories. The application creates its runtime files and keeps partial downloads under `.temp/`; no separate temporary-data mount is needed. Recreating the container preserves host-mounted data. Keep backups private because they contain credentials and Telegram authorization. JSON data files are stored directly in `data/`; `data/log/` contains logs only. For older installations, stop the service and move JSON files from `data/log/` to `data/` before restarting; the old location is no longer read.
+
+Bot startup and reconnection replay offline updates. Before executing an authorized message handler, the application checks its Bot account, chat and message IDs against a persistent ring of the last 1,000 handled messages. Receipts are saved immediately after the handler returns, including durable download-queue acceptance; downloads continue through the existing task recovery path. Exceptions, cancellation and rejected single-message task writes do not create receipts. Concurrent repeated deliveries wait for the first handler; callback button clicks remain repeatable. No message text, media or tokens are stored in the ring. Existing deployments start with an empty ring, so messages processed before this update and entries evicted from the ring are not covered. A crash between a business operation and its receipt write can still replay that operation; this is bounded replay protection, not an exactly-once transaction. Keep this file when updating the container.
 
 ## Proxy Configuration
 

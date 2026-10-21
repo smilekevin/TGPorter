@@ -384,12 +384,15 @@ docker build --build-arg APP_VERSION="$(git describe --tags --always --dirty)" -
 | `data/bot.yaml` | 既有 Bot 任务/监听元数据 |
 | `data/log/tdl.log` | 应用日志，10 MB 轮转，保留 30 天，使用配置日志级别 |
 | `data/bot_tasks.json` | 下载和转发任务 |
+| `data/bot_processed_messages.json` | 最近 1,000 条已处理 Bot 消息的 ID；原子保存，权限为 0600 |
 | `data/task_counter.json` | 每日任务序号 |
 | `data/download_history.json` | 完成和失败的下载记录 |
 | `downloads/` | 已完成文件 |
 | `downloads/.temp/` | 临时文件与 `.parts/manifest.json` 断点 |
 
 挂载可写的 `data/` 和下载目录，运行文件会自动创建，断点保存在下载目录的 `.temp/` 中，无需额外临时目录挂载。重建容器会保留宿主机挂载数据。备份包含凭据和 Telegram 授权，请妥善保管。JSON 数据文件直接保存在 `data/`，`data/log/` 仅保存日志。旧部署请在停服后将 `data/log/` 中的 JSON 文件移到 `data/` 再启动，程序不再读取旧位置。
+
+Bot 启动和重连时补收离线更新。执行已授权消息的处理器前，应用按 Bot 账号、聊天和消息 ID 检查持久化的最近 1,000 条已处理消息记录。处理器返回后立即保存记录，包括下载任务已持久化入队的情况；后续下载继续使用现有任务恢复机制。异常、取消和单消息任务落盘失败不会生成记录。并发重复投递等待首次处理结束；按钮回调仍可重复点击。记录不包含消息正文、媒体或 Token。已有部署从空记录开始，因此本次升级前处理过的消息和已被淘汰的记录不在保护范围内。如果进程在业务操作完成后、记录写入前崩溃，该操作仍可能重放；这属于有界去重，并非严格的恰好执行一次事务。更新容器时保留此文件。
 
 ## 代理配置
 

@@ -107,6 +107,7 @@ class BotOfflineUpdatesTests(unittest.IsolatedAsyncioTestCase):
         client.get_me = AsyncMock(return_value=self.account)
         client.set_bot_commands = AsyncMock()
         client.send_message = AsyncMock(return_value=types.Message(id=200))
+        client.edit_message_text = AsyncMock()
         return client
 
     def state(self, pts):
@@ -192,3 +193,35 @@ class BotOfflineUpdatesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.requested_pts, [10, 11, 12])
         self.assertEqual(self.queries, [2, 4, 6])
         self.assertEqual([t["extra_data"]["message_id"] for t in task_store.get_pending_tasks()], [3, 5])
+
+    async def test_stale_session_replay_skips_handled_inbox_messages_after_restart(self):
+        self.messages = [self.message(2, media=True), self.message(3, text="/query")]
+        await self.start_backend()
+        # A finished download no longer has an active task to deduplicate against.
+        task_store.complete_task(task_store.get_pending_tasks()[0]["task_id"])
+        # Simulate a session cursor older than the independently committed receipts.
+        await self.backend.bot.storage.set_update_state(UpdateState(0, 10, 0, self.date, 1))
+        await self.backend.bot.stop()
+        self.new_backend()
+        self.processed.clear()
+        self.messages = [self.message(2, media=True), self.message(3, text="/query"),
+                         self.message(4, media=True), self.message(5, text="/query")]
+        await self.start_backend()
+        self.assertEqual(self.requested_pts, [10, 10])
+        self.assertEqual(self.queries, [3, 5])
+        self.assertEqual([task["extra_data"]["message_id"]
+                          for task in task_store.get_pending_tasks()], [4])
+
+    async def test_rejected_download_is_not_recorded_as_a_handled_message(self):
+        self.messages = [self.message(2, media=True), self.message(3, text="/query")]
+        with patch.object(task_store, "_save_all", return_value=False):
+            await self.start_backend()
+        self.assertFalse(self.backend._message_store.contains((999, 123, 2)))
+        self.assertFalse(task_store.get_pending_tasks())
+        await self.backend.bot.stop()
+        self.new_backend()
+        self.processed.clear()
+        self.messages = [self.message(2, media=True), self.message(4, text="/query")]
+        await self.start_backend()
+        self.assertEqual([task["extra_data"]["message_id"]
+                          for task in task_store.get_pending_tasks()], [2])

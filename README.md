@@ -75,6 +75,7 @@
 ### 任务管理
 
 - **任务持久化** — 保存任务与下载历史，重启后恢复未完成任务
+- **Bot 消息去重** — 补收离线消息，持久化最近 1,000 条已处理消息的 ID，跳过重启后的重复投递
 - **任务 ID** — `MMDD-序号` 格式，如 `0628-1`
 - **排队下载** — 在网页查看和管理等待执行的任务
 - **配置保存** — 网页设置自动保存，重启后复用。[持久化说明](./DEPLOY_CN.md#docker-数据持久化)
@@ -445,6 +446,7 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 ### Task Management
 
 - **Persistent tasks** — save tasks and download history; recover unfinished tasks after restart
+- **Bot message deduplication** — replay offline messages and persist the IDs of the last 1,000 handled messages to skip repeated deliveries after restart
 - **Task ID** — `MMDD-N` format, such as `0628-1`
 - **Queued downloads** — view and manage waiting tasks in the WebUI
 - **Saved settings** — web settings persist across restarts. [Persistence guide](./DEPLOY.md#docker-data-persistence)

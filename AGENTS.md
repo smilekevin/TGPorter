@@ -27,6 +27,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `module/bot.py` | Bot commands, message entry points, task recovery, Pending consumer, forwarding, and listening |
 | `module/bot_query.py` | Read-only `/query` task lists and pagination using the shared download service |
 | `module/task_store.py` | Persistent tasks and daily task sequence numbers, using locks and atomic file replacement |
+| `module/bot_message_store.py` | Atomic, private ring of the last 1,000 handled Bot inbox identities for replay deduplication |
 | `module/download_stat.py` | Download progress, history, failures, pause, and cancellation state |
 | `module/parallel_download.py` | Fixed-size ranges, per-file queues, durable checkpoints, and atomic publication |
 | `module/partial_file.py` | Preallocation, positioned writes, disk synchronization, and cancellation-safe disk operations |
@@ -53,6 +54,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 
 - Persist single-message tasks as Pending before the consumer fetches their messages and hands them to the shared file task queue. Batch history scans and live listeners also feed this queue.
 - `recover_tasks()` in `module/bot.py` restores task state and sequence numbers. Incomplete tasks return to Pending to avoid a burst of network requests after a restart.
+- Keep offline Bot replay enabled and register authorized handlers before startup. Deduplicate message handlers by Bot account/chat/message ID using `data/bot_processed_messages.json`; persist only handled messages, retain the last 1,000 identities and preserve callback button reuse. Concurrent duplicate messages wait for the first handler; exceptions, cancellation and rejected single-message task writes remain retryable. Receipt persistence does not replace task persistence or provide an exactly-once transaction.
 - Keep the Bot heartbeat independent of progress notifications. Require a bounded Telegram response, respect Bot FLOOD_WAIT, log dispatch metadata without message contents or credentials, and cancel and await the singleton monitor during shutdown.
 - Start the Pending consumer even when there are no historical tasks. Repeated startup must not create duplicate consumers. Cancel and await background tasks during shutdown.
 - Tasks being fetched, queued, and actively processed must share the concurrency budget. Release reservations on rejected handoffs, exceptions, and cancellation to prevent duplicate consumption, lost tasks, and leaked capacity.
