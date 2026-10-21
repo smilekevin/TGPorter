@@ -33,7 +33,6 @@
     </template>
     <div class="flex items-center justify-center gap-4">
         <button @click="selectedTasks = []; skippedOffset = Math.max(0, skippedOffset - 50); fetchSkipped()" :disabled="skippedOffset === 0 || skippedLoading" class="px-3 py-2 rounded-lg border" x-text="t('Previous')"></button>
-        <span class="text-sm text-gray-500" x-text="t('Tasks: {count}', {count: skippedTotal})"></span>
         <button @click="selectedTasks = []; skippedOffset += 50; fetchSkipped()" :disabled="skippedOffset + 50 >= skippedTotal || skippedLoading" class="px-3 py-2 rounded-lg border" x-text="t('Next')"></button>
     </div>
 </section>
