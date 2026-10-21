@@ -210,7 +210,6 @@
                     </svg>
                     <span x-text="t(activeTab === 'pending' ? 'Cancel selected tasks' : 'Delete selected')"></span>
                 </button>
-                <span x-show="activeTab === 'pending' && mixedActiveSelection" class="text-xs text-blue-700" x-text="t('Select tasks with the same status')"></span>
                 <button @click="selectedTasks = []" class="btn-action px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200">
                     <span data-i18n="Clear selection" x-text="t('Clear selection')">Clear selection</span>
                 </button>

@@ -94,6 +94,23 @@ MOCK_PENDING = [
     ], 1)
 ]
 
+MOCK_SKIPPED = [
+    {"task_id": f"skipped_{index:03d}", "task_id_display": f"1021-{index + 20}",
+     "file_name": filename, "chat_title": title, "reason": reason,
+     "timestamp": time.time() - index * 180, "source_link": f"https://t.me/example/{index + 100}",
+     "download_filter": expression}
+    for index, (filename, title, reason, expression) in enumerate([
+        ("City_Walk_Episode_01.mp4", "Travel films", "already download,download skipped", ""),
+        ("Photography_Tips_Short.mp4", "Photography group", "No download filter matched",
+         "media_type == video and file_size > 500MB"),
+        ("Design_Source_Files.psd", "Design resources", "File format is not allowed", ""),
+        ("Workshop_Voice_Note.ogg", "Workshop recordings", "Media type is not allowed", ""),
+        ("Architecture_Collection.zip", "Media archive", "already download,download skipped", ""),
+        ("Piano_Concert_Preview.flac", "Music collection", "No download filter matched",
+         "media_type == audio and file_size > 100MB"),
+    ], 1)
+]
+
 # API routes.
 @app.route("/")
 def index():
@@ -199,7 +216,36 @@ def get_flood_wait():
 
 @app.route('/get_skipped_downloads')
 def get_skipped_downloads():
-    return jsonify(tasks=[], total=0)
+    query = request.args.get('search', '').strip().lower()
+    rows = [task for task in MOCK_SKIPPED if not query or any(
+        query in str(task.get(key, '')).lower() for key in
+        ('task_id', 'task_id_display', 'file_name', 'chat_title', 'reason'))]
+    rows.sort(key=lambda task: task['timestamp'], reverse=True)
+    offset = max(0, request.args.get('offset', 0, type=int))
+    limit = max(1, min(200, request.args.get('limit', 100, type=int)))
+    return jsonify(tasks=rows[offset:offset + limit], total=len(rows))
+
+
+@app.route('/delete_skipped', methods=['POST'])
+def delete_skipped():
+    MOCK_SKIPPED[:] = [task for task in MOCK_SKIPPED if task['task_id'] != request.args.get('task_id')]
+    return jsonify(code='1', message='Skipped record deleted')
+
+
+@app.route('/download_skipped', methods=['POST'])
+def download_skipped():
+    task = next((task for task in MOCK_SKIPPED if task['task_id'] == request.args.get('task_id')), None)
+    if task is None:
+        return jsonify(code='0', message='Task not found')
+    MOCK_PENDING.append(dict(
+        task_id=task['task_id'], task_id_display=task['task_id_display'],
+        filename=task['file_name'], chat=task['chat_title'], chat_title=task['chat_title'],
+        total_size='Unknown', source_type='Channel post', url=task['source_link'],
+        created_ts=time.time(), created_at=time.strftime('%m-%d %H:%M:%S'), wait_time='0m',
+        queue_label='Queued', status='pending', wait_reason='Waiting for download slot', wait_seconds=0,
+    ))
+    MOCK_SKIPPED.remove(task)
+    return jsonify(code='1', message='Queued for download')
 
 
 if __name__ == "__main__":

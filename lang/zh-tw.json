@@ -153,7 +153,7 @@
     "All statuses": "全部狀態",
     "Task status": "任務狀態",
     "Select tasks with the same status": "請選擇相同狀態的任務",
-    "Cancel selected tasks": "取消所選任務",
+    "Cancel selected tasks": "取消選中",
     "Cancel task": "取消任務",
     "Cancel {count} queued tasks?": "取消佇列中的 {count} 個任務？",
     "Pause selected": "暫停所選",
