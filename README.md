@@ -48,6 +48,7 @@
 - **交互式配置页面** — 通过网页管理 Telegram 登录、下载、网页访问和 MCP，下拉框与单行输入框等高。[配置指南](./DEPLOY_CN.md#webui-登录)。
 - **响应式界面** — 浅色主题，适配桌面和手机；桌面标签与移动端底部导航使用一致的顺序和线框图标
 - **任务搜索** — 按任务 ID 或文件名查找任务
+- **自动加载** — 五个列表均在滚动接近底部时追加更多记录；批量选择仅作用于已显示记录
 - **五个标签页**：
   - 📥 **进行中** — 实时进度、速度和 ETA
   - ⏳ **待执行** — 排队任务和等待时间
@@ -419,6 +420,7 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 - **Interactive configuration page** — manage Telegram login, downloads, web access and MCP in your browser, with matching dropdown and single-line input heights. [Setup guide](./DEPLOY.md#webui-login).
 - **Responsive interface** — light theme for desktop and mobile, with matching tab order and outline icons in desktop tabs and mobile bottom navigation
 - **Task search** — find tasks by ID or filename
+- **Automatic loading** — all five lists append more records near the bottom; bulk selection covers displayed records only
 - **Five tabs**:
   - 📥 **Active** — live progress, speed and ETA
   - ⏳ **Pending** — queued tasks and wait time

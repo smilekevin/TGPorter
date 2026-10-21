@@ -282,3 +282,25 @@ assert.equal(ui.activeTasks.length,0);
 assert.equal(ui.completedTasks[0].task_id,'match');
 assert.equal(ui.taskSearch,'match');
 ''')
+
+    def test_pending_filter_change_rejects_the_previous_inflight_page(self):
+        self.run_script(r'''
+ui.queueScrollCheck = () => {};
+let finishPrevious;
+const urls = [];
+context.authenticatedFetch = async url => {
+    urls.push(url);
+    if (url.includes('status=all')) return new Promise(resolve => { finishPrevious = resolve; });
+    assert.ok(url.includes('status=paused'));
+    return response({tasks:[{task_id:'held',status:'paused'}],total:1});
+};
+const previous = ui.fetchPending(true);
+ui.pendingStatusFilter = 'paused';
+await ui.fetchPending(true);
+finishPrevious(response({tasks:[{task_id:'queued',status:'pending'}],total:1}));
+await previous;
+assert.deepEqual([...ui.pendingTasks.map(task => task.task_id)], ['held']);
+assert.equal(ui.pendingTotal, 1);
+assert.equal(ui.pendingLoading, false);
+assert.equal(urls.length, 2);
+''')
