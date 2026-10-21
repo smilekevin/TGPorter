@@ -114,7 +114,7 @@ vm.runInContext(SOURCE, context);
     };
     attachDom(app);
     const names = ['fetchVersion', 'fetchActive', 'fetchPending',
-        'fetchCompleted', 'fetchSkipped', 'fetchDownloadStatus', 'fetchFloodWait', 'fetchBotStatus'];
+        'fetchCompleted', 'fetchSkipped', 'fetchFailed', 'fetchDownloadStatus', 'fetchFloodWait', 'fetchBotStatus'];
     let calls = 0;
     let releases = [];
     names.forEach(name => app[name] = () => {

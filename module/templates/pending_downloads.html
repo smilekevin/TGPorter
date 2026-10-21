@@ -1,0 +1,87 @@
+<template x-for="task in pendingTasks" :key="task.task_id">
+    {% call task_card('', dynamic_class="task.status === 'paused' ? 'border-amber-200' : 'border-gray-100'", card_id="'card-' + task.task_id") %}
+        <div class="flex items-start gap-3">
+            <!-- Checkbox -->
+            <input type="checkbox" class="w-4 h-4 mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
+                :value="task.task_id"
+                :checked="selectedTasks.includes(task.task_id)"
+                @change="toggleSelect(task.task_id)">
+
+            <!-- File Info -->
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1 flex-wrap">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                          :class="task.status === 'paused' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'"
+                          x-text="t(task.queue_label) || t('Queued')"></span>
+                    <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
+                    <span class="text-xs text-gray-300">|</span>
+                    <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>
+                    <template x-if="task.created_at">
+                        <span>
+                            <span class="text-xs text-gray-300">|</span>
+                            <span class="text-xs text-gray-400" x-text="t('Received ') + task.created_at"></span>
+                        </span>
+                    </template>
+                </div>
+                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
+                <p x-show="task.wait_reason" class="text-xs text-amber-600 mt-1"
+                   x-text="t(task.wait_reason, {seconds: task.wait_seconds})"></p>
+                <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+                    <span x-text="t(task.total_size)"></span>
+                    <span class="text-gray-300">|</span>
+                    <span class="text-xs text-gray-400" x-text="t(task.source_type)"></span>
+                    <template x-if="task.wait_time">
+                        <span>
+                            <span class="text-gray-300">|</span>
+                            <span class="text-amber-600 font-medium" x-text="t('Waiting ') + task.wait_time"></span>
+                        </span>
+                    </template>
+                </div>
+                <!-- Source URL -->
+                <template x-if="task.url">
+                    <div class="mt-1.5 flex items-center gap-1.5">
+                        <svg class="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                        </svg>
+                        <span class="text-xs text-gray-400 truncate" x-text="task.url" :title="task.url"></span>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center gap-1.5 shrink-0">
+                <template x-if="task.status !== 'paused'">
+                    <button
+                        @click="pauseTask(task.task_id)"
+                        class="btn-action p-2.5 sm:p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 border border-amber-200"
+                        :title="t(&quot;Pause&quot;)"
+                    >
+                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M8 4v16m8-16v16"/>
+                        </svg>
+                    </button>
+                </template>
+                <template x-if="task.status === 'paused'">
+                    <button
+                        @click="resumeTask(task.task_id)"
+                        class="btn-action p-2.5 sm:p-1.5 rounded-lg text-green-600 hover:bg-green-50 border border-green-200"
+                        :title="t(&quot;Resume&quot;)"
+                    >
+                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M7 5.5a1.5 1.5 0 0 1 2.25-1.3l11.25 6.5a1.5 1.5 0 0 1 0 2.6L9.25 19.8A1.5 1.5 0 0 1 7 18.5v-13z"/>
+                        </svg>
+                    </button>
+                </template>
+                <button
+                    @click="removePending(task.task_id)"
+                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
+                    :title="t(&quot;Cancel task&quot;)"
+                >
+                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    {% endcall %}
+</template>

@@ -228,7 +228,7 @@ context.authenticatedFetch=async url=>{
     return response({tasks:[completed('new')],total:1});
 };
 await ui.pollCompletedCount();
-for(const name of ['fetchVersion','fetchActive','fetchPending','fetchCompleted','fetchSkipped',
+for(const name of ['fetchVersion','fetchActive','fetchPending','fetchCompleted','fetchSkipped','fetchFailed',
     'fetchDownloadStatus','fetchFloodWait','fetchBotStatus'])ui[name]=async()=>{};
 ui.$nextTick=()=>{};
 await ui.init();

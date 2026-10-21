@@ -109,3 +109,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .mobile-download-nav.navigation-fallback .mobile-download-tabs { height: 48px; }
 .navigation-fallback .dashboard-main { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)) !important; }
 .navigation-fallback .dashboard-toast { bottom: calc(6rem + env(safe-area-inset-bottom)); }
+
+/* All task tabs use the same list, card, empty state and entrance animation. */
+.task-list-cards { display: grid; gap: 12px; }
+.task-card { padding: 16px; border-width: 1px; border-style: solid; background: #fff; }
+.task-list-empty { padding: 80px 0; text-align: center; }
+.task-list-empty-icon { width: 64px; height: 64px; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #f3f4f6; }
+.task-list-empty-icon svg { width: 32px; height: 32px; color: #d1d5db; }
+.task-list-empty-title { margin-bottom: 4px; font-weight: 500; color: #6b7280; }
+.task-list-empty-description, .task-list-loading { font-size: 14px; line-height: 20px; color: #9ca3af; }
+.task-list-status { padding: 16px 0; text-align: center; }
+.task-list-loaded { font-size: 12px; line-height: 16px; color: #9ca3af; }
+.fade-in { animation: fadeIn .3s ease-in; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }

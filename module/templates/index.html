@@ -1,3 +1,4 @@
+{% from 'task_list.html' import task_list, task_card, task_list_status %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -36,8 +37,6 @@
         .tab-inactive { border-bottom: 2px solid transparent; color: #6b7280; }
         .tab-inactive:hover { color: #374151; border-bottom-color: #93c5fd; }
         .progress-bar { transition: width 0.5s ease-in-out; }
-        .fade-in { animation: fadeIn 0.3s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         .card-hover { transition: all 0.15s ease-in-out; }
         .card-hover:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
         .btn-action { transition: all 0.15s ease; }
@@ -288,13 +287,7 @@
             <span x-show="taskSearch.trim() || ((activeTab === 'active' && activeStatusFilter !== 'all') || (activeTab === 'pending' && pendingStatusFilter !== 'all'))"
                   x-text="t('Showing {count} of {total} tasks', {count: visibleTaskCount, total: currentTaskTotal})"></span>
         </div>
-        <div x-show="(taskSearch.trim() || ((activeTab === 'active' && activeStatusFilter !== 'all') || (activeTab === 'pending' && pendingStatusFilter !== 'all'))) && visibleTaskCount === 0 && !searchLoading" class="text-center py-16" role="status">
-            <h3 class="text-gray-500 font-medium mb-1" x-text="t('No matching tasks')"></h3>
-            <p class="text-gray-400 text-sm" x-text="t('Try other keywords')"></p>
-        </div>
-
-        <!-- Active Downloads Tab -->
-        <div x-show="activeTab === 'active'" x-transition:enter="fade-in">
+        {% set active_notices %}
             <!-- Silent throttle banner -->
             <div x-show="throttle.active" x-transition class="mb-4 rounded-xl border border-orange-300 bg-orange-50 px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
                 <div class="flex items-center gap-2 sm:gap-3">
@@ -346,432 +339,19 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Empty State -->
-            <div x-show="activeTasks.length === 0 && !taskSearch.trim() && activeStatusFilter === 'all'" class="text-center py-20">
-                <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                    </svg>
-                </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No active downloads" x-text="t('No active downloads')">No active downloads</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="Tasks will appear here when they start" x-text="t('Tasks will appear here when they start')">Tasks will appear here when they start</span></p>
-            </div>
-
-            <!-- Active Task Cards -->
-            <div class="space-y-3">
-                <template x-for="task in filteredActiveTasks" :key="task.task_id">
-                    <div class="checkbox-row card-hover rounded-xl p-4 border fade-in bg-white shadow-sm"
-                         :class="{
-                             'border-amber-200': task.status === 'paused',
-                             'border-gray-200': task.phase === 'preparing' && task.status !== 'paused',
-                             'border-gray-100': task.status !== 'paused' && task.phase !== 'preparing'
-                         }"
-                         :id="'card-' + task.task_id">
-                        <div class="flex items-start gap-3">
-                            <!-- Checkbox -->
-                            <input type="checkbox" class="w-4 h-4 mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                                :value="task.task_id"
-                                :checked="selectedTasks.includes(task.task_id)"
-                                @change="toggleSelect(task.task_id)">
-
-                            <!-- File Info -->
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                                          :class="{
-                                              'bg-amber-100 text-amber-700': task.status === 'paused',
-                                              'bg-blue-100 text-blue-700': task.status === 'active' && task.phase !== 'preparing',
-                                              'bg-indigo-100 text-indigo-600': task.phase === 'preparing' && task.status !== 'paused'
-                                          }"
-                                          x-text="{
-                                              'paused': t('Paused'),
-                                              'active': task.phase === 'preparing' ? t('Preparing') : t('Downloading')
-                                          }[task.status] || task.status">
-                                    </span>
-                                    <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
-                                    <span class="text-xs text-gray-300">|</span>
-                                    <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>
-                                    <template x-if="task.created_at">
-                                        <span>
-                                            <span class="text-xs text-gray-300">|</span>
-                                            <span class="text-xs text-gray-400" x-text="t('Created ') + task.created_at"></span>
-                                        </span>
-                                    </template>
-                                </div>
-                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
-                                <p x-show="task.wait_reason && task.phase !== 'preparing'" class="text-xs text-amber-600 mt-1"
-                                   x-text="t(task.wait_reason, {seconds: task.wait_seconds})"></p>
-                                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-gray-500">
-                                    <template x-if="task.phase !== 'preparing'">
-                                        <span>
-                                            <span x-text="t(task.total_size)"></span>
-                                            <span class="text-gray-300">|</span>
-                                            <span class="font-mono font-medium"
-                                                  :class="{
-                                                      'text-amber-600': task.status === 'paused',
-                                                      'text-blue-600': task.status === 'active'
-                                                  }"
-                                                  x-text="task.download_speed"></span>
-                                            <span class="text-gray-300">|</span>
-                                            <span class="inline-block whitespace-nowrap" x-text="t('Active streams: {count}', {count: task.active_streams ?? 0})"></span>
-                                        </span>
-                                    </template>
-                                    <template x-if="task.eta && task.phase !== 'preparing'">
-                                        <span>
-                                            <span class="text-gray-300">|</span>
-                                            <span class="text-gray-400" x-text="t('Remaining ') + task.eta"></span>
-                                        </span>
-                                    </template>
-                                </div>
-                            </div>
-
-                            <!-- Action Buttons -->
-                            <div class="flex items-center gap-1.5 shrink-0">
-                                <template x-if="task.status === 'active'">
-                                    <button
-                                        @click="pauseTask(task.task_id)"
-                                        class="btn-action p-2.5 sm:p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 border border-amber-200"
-                                        :title="t(&quot;Pause&quot;)"
-                                    >
-                                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M8 4v16m8-16v16"/>
-                                        </svg>
-                                    </button>
-                                </template>
-
-                                <button
-                                    @click="deleteTask(task.task_id)"
-                                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;Delete&quot;)"
-                                >
-                                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Progress Bar -->
-                        <div class="mt-3 ml-7">
-                            <template x-if="task.phase === 'preparing'">
-                                <div class="flex items-center gap-2 text-xs text-indigo-500">
-                                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                                    </svg>
-                                    <span x-text="task.status === 'paused' ? t('Paused') : t(task.wait_reason || 'Fetching file information...', {seconds: task.wait_seconds})"></span>
-                                </div>
-                            </template>
-                            <template x-if="task.phase !== 'preparing'">
-                                <div>
-                                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
-                                        <span><span data-i18n="Progress" x-text="t('Progress')">Progress</span></span>
-                                        <span class="font-mono font-medium" x-text="task.download_progress + '%'"></span>
-                                    </div>
-                                    <div class="w-full h-3 sm:h-2 bg-gray-100 rounded-full overflow-hidden">
-                                        <div
-                                            class="h-full rounded-full progress-bar"
-                                            :class="{
-                                                'bg-blue-500': task.download_progress_raw < 100,
-                                                'bg-green-500': task.download_progress_raw >= 100
-                                            }"
-                                            :style="'width: ' + task.download_progress + '%'"
-                                        ></div>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </template>
-            </div>
-        </div>
-
-        <!-- Pending Downloads Tab -->
-        <div x-show="activeTab === 'pending'" x-transition:enter="fade-in">
-            <!-- Empty State -->
-            <div x-show="pendingTasks.length === 0 && !taskSearch.trim()" class="text-center py-20">
-                <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                    </svg>
-                </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No pending tasks" x-text="t('No pending tasks')">No pending tasks</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="Links sent to the Telegram Bot will queue here" x-text="t('Links sent to the Telegram Bot will queue here')">Links sent to the Telegram Bot will queue here</span></p>
-            </div>
-
-            <!-- Pending Task Cards -->
-            <div class="space-y-3">
-                <template x-for="task in pendingTasks" :key="task.task_id">
-                    <div class="checkbox-row card-hover rounded-xl p-4 border bg-white shadow-sm fade-in"
-                         :class="task.status === 'paused' ? 'border-amber-200' : 'border-gray-100'"
-                         :id="'card-' + task.task_id">
-                        <div class="flex items-start gap-3">
-                            <!-- Checkbox -->
-                            <input type="checkbox" class="w-4 h-4 mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                                :value="task.task_id"
-                                :checked="selectedTasks.includes(task.task_id)"
-                                @change="toggleSelect(task.task_id)">
-
-                            <!-- File Info -->
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                                          :class="task.status === 'paused' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'"
-                                          x-text="t(task.queue_label) || t('Queued')"></span>
-                                    <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
-                                    <span class="text-xs text-gray-300">|</span>
-                                    <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>
-                                    <template x-if="task.created_at">
-                                        <span>
-                                            <span class="text-xs text-gray-300">|</span>
-                                            <span class="text-xs text-gray-400" x-text="t('Received ') + task.created_at"></span>
-                                        </span>
-                                    </template>
-                                </div>
-                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
-                                <p x-show="task.wait_reason" class="text-xs text-amber-600 mt-1"
-                                   x-text="t(task.wait_reason, {seconds: task.wait_seconds})"></p>
-                                <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
-                                    <span x-text="t(task.total_size)"></span>
-                                    <span class="text-gray-300">|</span>
-                                    <span class="text-xs text-gray-400" x-text="t(task.source_type)"></span>
-                                    <template x-if="task.wait_time">
-                                        <span>
-                                            <span class="text-gray-300">|</span>
-                                            <span class="text-amber-600 font-medium" x-text="t('Waiting ') + task.wait_time"></span>
-                                        </span>
-                                    </template>
-                                </div>
-                                <!-- Source URL -->
-                                <template x-if="task.url">
-                                    <div class="mt-1.5 flex items-center gap-1.5">
-                                        <svg class="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
-                                        </svg>
-                                        <span class="text-xs text-gray-400 truncate" x-text="task.url" :title="task.url"></span>
-                                    </div>
-                                </template>
-                            </div>
-
-                            <!-- Action Buttons -->
-                            <div class="flex items-center gap-1.5 shrink-0">
-                                <template x-if="task.status !== 'paused'">
-                                    <button
-                                        @click="pauseTask(task.task_id)"
-                                        class="btn-action p-2.5 sm:p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 border border-amber-200"
-                                        :title="t(&quot;Pause&quot;)"
-                                    >
-                                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M8 4v16m8-16v16"/>
-                                        </svg>
-                                    </button>
-                                </template>
-                                <template x-if="task.status === 'paused'">
-                                    <button
-                                        @click="resumeTask(task.task_id)"
-                                        class="btn-action p-2.5 sm:p-1.5 rounded-lg text-green-600 hover:bg-green-50 border border-green-200"
-                                        :title="t(&quot;Resume&quot;)"
-                                    >
-                                        <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                            <path d="M7 5.5a1.5 1.5 0 0 1 2.25-1.3l11.25 6.5a1.5 1.5 0 0 1 0 2.6L9.25 19.8A1.5 1.5 0 0 1 7 18.5v-13z"/>
-                                        </svg>
-                                    </button>
-                                </template>
-                                <button
-                                    @click="removePending(task.task_id)"
-                                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;Cancel task&quot;)"
-                                >
-                                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </template>
-            </div>
-        </div>
-
-        <!-- Completed Downloads Tab -->
-        <div x-show="activeTab === 'completed'" x-transition:enter="fade-in">
-            <!-- Empty State -->
-            <div x-show="completedTotal === 0 && !taskSearch" class="text-center py-20">
-                <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                    </svg>
-                </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No completed tasks" x-text="t('No completed tasks')">No completed tasks</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="Completed downloads will appear here" x-text="t('Completed downloads will appear here')">Completed downloads will appear here</span></p>
-            </div>
-
-            <!-- Completed Task Cards -->
-            <div class="space-y-3">
-                <template x-for="task in completedTasks" :key="task.task_id">
-                    <div class="checkbox-row card-hover bg-white rounded-xl p-4 border border-gray-100 fade-in shadow-sm">
-                        <div class="flex items-start gap-3">
-                            <!-- Checkbox -->
-                            <input type="checkbox" class="w-4 h-4 mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                                :value="task.task_id"
-                                :checked="selectedTasks.includes(task.task_id)"
-                                @change="toggleSelect(task.task_id)">
-
-                            <!-- File Info -->
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
-                                        <span data-i18n="Completed" x-text="t('Completed')">Completed</span>
-                                    </span>
-                                    <span x-show="task.completion_reason" class="text-xs text-gray-500" x-text="t(task.completion_reason || '')"></span>
-                                    <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
-                                    <span class="text-xs text-gray-300">|</span>
-                                    <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>
-                                </div>
-                                <h4 class="text-sm font-medium text-gray-900 sm:truncate line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
-                                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-gray-500">
-                                    <span x-text="t(task.total_size)"></span>
-                                    <template x-if="task.completed_time">
-                                        <span>
-                                            <span class="text-gray-300">|</span>
-                                            <span class="text-gray-400" x-text="t('Completed ') + task.completed_time"></span>
-                                        </span>
-                                    </template>
-                                </div>
-                                <div class="mt-1.5 text-xs text-gray-400 truncate" :title="task.save_path">
-                                    <svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                                    </svg>
-                                    <span x-text="task.save_path"></span>
-                                </div>
-                            </div>
-
-                            <!-- Action Buttons -->
-                            <div class="flex items-center gap-1.5 shrink-0">
-                                <button
-                                    @click="deleteTask(task.task_id)"
-                                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;Delete&quot;)"
-                                >
-                                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Progress Bar (100% green) -->
-                        <div class="mt-3 ml-7">
-                            <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
-                                <span><span data-i18n="Progress" x-text="t('Progress')">Progress</span></span>
-                                <span class="font-mono font-medium text-green-600" x-text="task.download_progress + '%'"></span>
-                            </div>
-                            <div class="w-full h-3 sm:h-2 bg-gray-100 rounded-full overflow-hidden">
-                                <div class="h-full rounded-full bg-green-500 progress-bar" style="width: 100%"></div>
-                            </div>
-                        </div>
-                    </div>
-                </template>
-
-            </div>
-        </div>
-
-        <!-- Failed Downloads Tab -->
-        <div x-show="activeTab === 'failed'" x-transition:enter="fade-in">
-            <!-- Empty State -->
-            <div x-show="failedTasks.length === 0 && !taskSearch.trim()" class="text-center py-20">
-                <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/>
-                    </svg>
-                </div>
-                <h3 class="text-gray-500 font-medium mb-1"><span data-i18n="No failed tasks" x-text="t('No failed tasks')">No failed tasks</span></h3>
-                <p class="text-gray-400 text-sm"><span data-i18n="Failed downloads will appear here" x-text="t('Failed downloads will appear here')">Failed downloads will appear here</span></p>
-            </div>
-
-            <!-- Failed Task Cards -->
-            <div class="space-y-3">
-                <template x-for="task in filteredFailedTasks" :key="task.task_id">
-                    <div class="checkbox-row card-hover bg-white rounded-xl p-4 border border-red-100 fade-in shadow-sm">
-                        <div class="flex items-start gap-3">
-                            <!-- Checkbox -->
-                            <input type="checkbox" class="w-4 h-4 mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
-                                :value="task.task_id"
-                                :checked="selectedTasks.includes(task.task_id)"
-                                @change="toggleSelect(task.task_id)">
-
-                            <!-- File Info -->
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">
-                                        <span data-i18n="Failed" x-text="t('Failed')">Failed</span>
-                                    </span>
-                                    <span class="text-xs text-gray-400 font-medium" x-text="task.chat_title || task.chat"></span>
-                                    <span class="text-xs text-gray-300">•</span>
-                                    <span class="text-xs text-gray-400 font-mono" x-text="'task: ' + (task.task_id_display || task.task_id)"></span>
-                                </div>
-                                <h4 class="text-sm font-medium text-gray-900 line-clamp-2" :title="task.filename" x-text="task.filename"></h4>
-                                <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
-                                    <span x-text="t(task.total_size)"></span>
-                                    <template x-if="task.failed_time">
-                                        <span>
-                                            <span class="text-gray-300">|</span>
-                                            <span class="text-gray-400" x-text="t('Failed ') + task.failed_time"></span>
-                                        </span>
-                                    </template>
-                                </div>
-                                <!-- Error Message -->
-                                <div class="mt-2 flex items-start gap-1.5 p-2 bg-red-50 rounded-lg border border-red-100">
-                                    <svg class="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                    </svg>
-                                    <span class="text-xs text-red-600" x-text="t(task.error_message)"></span>
-                                </div>
-                                <!-- Source Link -->
-                                <template x-if="task.source_link">
-                                    <div class="mt-2 flex items-center gap-1.5">
-                                        <svg class="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-                                        </svg>
-                                        <a :href="task.source_link" target="_blank" class="text-xs text-blue-500 hover:text-blue-700 hover:underline truncate" x-text="task.source_link"></a>
-                                    </div>
-                                </template>
-                            </div>
-
-                            <!-- Action Buttons -->
-                            <div class="flex items-center gap-1.5 shrink-0">
-                                <button
-                                    @click="retryTask(task.task_id)"
-                                    class="btn-action flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 border border-blue-200"
-                                    :title="t(&quot;Retry&quot;)"
-                                >
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                                    </svg>
-                                    <span data-i18n="Retry" x-text="t('Retry')">Retry</span>
-                                </button>
-                                <button
-                                    @click="deleteTask(task.task_id)"
-                                    class="btn-action p-2.5 sm:p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-200"
-                                    :title="t(&quot;Delete&quot;)"
-                                >
-                                    <svg class="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </template>
-            </div>
-        </div>
-        {% include 'skipped_downloads.html' %}
-        <div class="text-center py-4" role="status" aria-live="polite">
-            <p x-show="searchLoading" class="text-sm text-gray-400" x-text="t('Loading...')"></p>
-            <p x-show="!searchLoading && !listHasMore && visibleTaskCount > 0" class="text-xs text-gray-400"
-               x-text="t('All {count} items loaded', {count: visibleTaskCount})"></p>
-        </div>
+        {% endset %}
+        {% for tab, title, description, icon, template in [
+            ('active', 'No active downloads', 'Tasks will appear here when they start', 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4', 'active_downloads.html'),
+            ('pending', 'No pending tasks', 'Links sent to the Telegram Bot will queue here', 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', 'pending_downloads.html'),
+            ('completed', 'No completed tasks', 'Completed downloads will appear here', 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', 'completed_downloads.html'),
+            ('skipped', 'No skipped downloads', 'Skipped downloads will appear here', 'M5 5l10 7-10 7V5zm14 0v14', 'skipped_downloads.html'),
+            ('failed', 'No failed tasks', 'Failed downloads will appear here', 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z', 'failed_downloads.html')
+        ] %}
+        {% call task_list(tab, title, description, icon, active_notices if tab == 'active' else '') %}
+            {% include template %}
+        {% endcall %}
+        {% endfor %}
+        {{ task_list_status() }}
     </main>
 
     <!-- Delete Confirmation Modal -->
@@ -949,6 +529,10 @@
             listPageSize: 100,
             activeVisibleLimit: 100,
             failedVisibleLimit: 100,
+            activeLoading: false,
+            activeRequestId: 0,
+            failedLoading: false,
+            failedRequestId: 0,
             activeTasks: [],
             completedTasks: [],
             completedTotal: 0,
@@ -1130,18 +714,13 @@
             get filteredActiveTasks() { return this.matchingActiveTasks.slice(0, this.activeVisibleLimit); },
             get matchingFailedTasks() { return this.failedTasks.filter(task => this.matchesSearch(task)); },
             get filteredFailedTasks() { return this.matchingFailedTasks.slice(0, this.failedVisibleLimit); },
-            get listHasMore() {
-                return {active: this.filteredActiveTasks.length < this.matchingActiveTasks.length,
-                    failed: this.filteredFailedTasks.length < this.matchingFailedTasks.length,
-                    pending: this.pendingHasMore, completed: this.completedHasMore,
-                    skipped: this.skippedHasMore}[this.activeTab];
+            get listHasMore() { return this.listHasMoreFor(this.activeTab); },
+            tasksForTab(tab) {
+                if (tab === 'active') return this.filteredActiveTasks;
+                if (tab === 'failed') return this.filteredFailedTasks;
+                return this[tab + 'Tasks'];
             },
-            get visibleTasks() {
-                if (this.activeTab === 'skipped') return this.skippedTasks;
-                if (this.activeTab === 'active') return this.filteredActiveTasks;
-                if (this.activeTab === 'failed') return this.filteredFailedTasks;
-                return this.activeTab === 'pending' ? this.pendingTasks : this.completedTasks;
-            },
+            get visibleTasks() { return this.tasksForTab(this.activeTab); },
             get visibleTaskCount() { return this.visibleTasks.length; },
             get allVisibleSelected() {
                 return this.visibleTasks.length > 0 &&
@@ -1153,8 +732,7 @@
                     skipped: this.skippedTotal}[this.activeTab];
             },
             get searchLoading() {
-                return {completed: this.completedLoading, pending: this.pendingLoading,
-                    skipped: this.skippedLoading}[this.activeTab] || false;
+                return this[this.activeTab + 'Loading'];
             },
 
             get completedCountDisplay() {
@@ -1172,7 +750,7 @@
                 this.$nextTick(() => this.observeNavigation());
                 await Promise.allSettled([
                     this.fetchVersion(), this.fetchActive(),
-                    this.fetchPending(true), this.fetchCompleted(true), this.fetchSkipped(),
+                    this.fetchPending(true), this.fetchCompleted(true), this.fetchSkipped(), this.fetchFailed(),
                     this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchBotStatus(),
                 ]);
                 if (this.disposed) return;
@@ -1218,17 +796,141 @@
             onScroll() {
                 if (this.disposed) return;
                 const page = document.documentElement;
-                if (page.scrollTop + page.clientHeight < page.scrollHeight - 300) return;
-                if (this.activeTab === 'completed') return this.loadMoreCompleted();
-                if (this.activeTab === 'pending') return this.loadMorePending();
-                if (this.activeTab === 'skipped') return this.loadMoreSkipped();
-                if (this.activeTab === 'active' && this.listHasMore) {
-                    this.activeVisibleLimit += this.listPageSize;
-                    this.queueScrollCheck();
-                } else if (this.activeTab === 'failed' && this.listHasMore) {
-                    this.failedVisibleLimit += this.listPageSize;
-                    this.queueScrollCheck();
+                if (page.scrollTop + page.clientHeight >= page.scrollHeight - 300) {
+                    return this.loadMoreTasks();
                 }
+            },
+
+            loadMoreTasks(tab = this.activeTab) {
+                return this.loadTaskList(tab);
+            },
+
+            taskListSource(tab) {
+                // Transport differences belong here; paging, races and row updates are shared.
+                return {
+                    active: {url: '/get_download_list?already_down=false', snapshot: true,
+                        accepts: task => task.status !== 'completed'},
+                    failed: {url: '/get_failed_downloads', snapshot: true},
+                    completed: {url: '/get_download_list?already_down=true',
+                        accepts: task => task.status === 'completed'},
+                    pending: {url: '/get_pending_list', status: this.pendingStatusFilter},
+                    skipped: {url: '/get_skipped_downloads', maxLimit: 200},
+                }[tab];
+            },
+
+            resetTaskList(tab) {
+                this[tab + 'RequestId']++;
+                this[tab + 'Loading'] = false;
+                this[tab + 'Tasks'] = [];
+                this[tab + 'Offset'] = 0;
+                this[tab + 'HasMore'] = true;
+            },
+
+            async loadTaskList(tab, {mode = 'append', reset = false, supersede = false, beforeCommit = null} = {}) {
+                const source = this.taskListSource(tab);
+                if (reset) this.resetTaskList(tab);
+                const loading = tab + 'Loading';
+                const generation = tab + 'RequestId';
+                const rowsKey = tab + 'Tasks';
+                const offsetKey = tab + 'Offset';
+                const totalKey = tab + 'Total';
+                const moreKey = tab + 'HasMore';
+                const append = mode === 'append' && !(reset && source.snapshot);
+                if (this.disposed || (this[loading] && !supersede)) return false;
+                if (tab === 'completed' && append && !this.taskSearch && this.completedPolling) return false;
+                if (source.snapshot && append) {
+                    if (this.listHasMoreFor(tab)) {
+                        this[tab + 'VisibleLimit'] += this.listPageSize;
+                        this.queueScrollCheck();
+                    }
+                    return true;
+                }
+                if (append && !this[moreKey]) return false;
+                const requestId = ++this[generation];
+                const query = this.taskSearch;
+                const status = source.status;
+                const current = () => !this.disposed && requestId === this[generation] &&
+                    query === this.taskSearch && status === this.taskListSource(tab).status;
+                const limit = this[tab + 'Limit'] || this.listPageSize;
+                const start = append ? this[offsetKey] : 0;
+                const target = mode === 'refresh' ? Math.max(limit, this[offsetKey] || 0) : limit;
+                this[loading] = true;
+                let loaded = false;
+                try {
+                    const rows = [];
+                    let total = 0;
+                    // Refresh loaded ranges in bounded requests when the source caps page size.
+                    do {
+                        const size = Math.min(source.maxLimit || target, target - rows.length);
+                        let url = source.url;
+                        if (!source.snapshot) {
+                            url += (url.includes('?') ? '&' : '?') + 'offset=' + (start + rows.length) + '&limit=' + size;
+                            if (tab !== 'completed' || query) url += '&search=' + encodeURIComponent(query.trim());
+                            if (status !== undefined) url += '&status=' + encodeURIComponent(status);
+                        }
+                        const response = await authenticatedFetch(url);
+                        if (response.ok === false) throw new Error('Task list request failed');
+                        const data = await response.json();
+                        if (!current()) return false;
+                        const tasks = Array.isArray(data) ? data : data.tasks;
+                        total = Array.isArray(data) ? data.length : data.total;
+                        if (!Array.isArray(tasks) || !Number.isInteger(total) || total < 0) throw new Error('Invalid task list');
+                        rows.push(...tasks);
+                        if (source.snapshot || !tasks.length || start + rows.length >= total) break;
+                    } while (rows.length < target);
+                    const incoming = source.accepts ? rows.filter(source.accepts) : rows;
+                    if (beforeCommit && await beforeCommit(incoming) === false) return false;
+                    if (!current()) return false;
+                    let previous = append ? this[rowsKey] : [];
+                    if (mode === 'head') {
+                        // Retain older pages only if the fresh head joins them, avoiding gaps after bursts.
+                        const anchor = incoming.length ? this[rowsKey].findIndex(task =>
+                            task.task_id === incoming[incoming.length - 1].task_id) : -1;
+                        previous = rows.length === limit && anchor >= 0 ? this[rowsKey].slice(anchor + 1) : [];
+                    }
+                    const existing = new Map(this[rowsKey].map(task => [task.task_id, task]));
+                    const ordered = new Map((mode === 'head' ? incoming : previous).map(task => [task.task_id, task]));
+                    for (const task of mode === 'head' ? previous : incoming) ordered.set(task.task_id, task);
+                    // Reuse task objects so live speed/progress changes do not remount cards or replay animations.
+                    this[rowsKey] = [...ordered.values()].map(task => {
+                        const old = existing.get(task.task_id);
+                        return old ? Object.assign(old, task) : task;
+                    });
+                    this[totalKey] = total;
+                    this[offsetKey] = mode === 'head' ? this[rowsKey].length : start + rows.length;
+                    this[moreKey] = rows.length > 0 && this[offsetKey] < total;
+                    if (tab === 'completed' && !query && (!append || start === 0)) this.completedLastTotal = total;
+                    if (tab === this.activeTab && !this.batchBusy) {
+                        const ids = new Set(this.visibleTasks.map(task => task.task_id));
+                        this.selectedTasks = this.selectedTasks.filter(id => ids.has(id));
+                    }
+                    loaded = true;
+                    return true;
+                } catch (error) {
+                    if (current() && tab === 'skipped') this.showToast(this.t('Network error'), 'error');
+                    return false;
+                } finally {
+                    if (requestId === this[generation]) this[loading] = false;
+                    if (loaded) this.queueScrollCheck();
+                }
+            },
+
+            listHasMoreFor(tab) {
+                if (this.taskListSource(tab).snapshot) {
+                    return this[tab === 'active' ? 'filteredActiveTasks' : 'filteredFailedTasks'].length <
+                        this[tab === 'active' ? 'matchingActiveTasks' : 'matchingFailedTasks'].length;
+                }
+                return this[tab + 'HasMore'];
+            },
+
+            taskListIsEmpty(tab) {
+                return !this[tab + 'Loading'] && this.tasksForTab(tab).length === 0;
+            },
+
+            taskListIsFiltered(tab) {
+                return !!this.taskSearch.trim() ||
+                    (tab === 'active' && this.activeStatusFilter !== 'all') ||
+                    (tab === 'pending' && this.pendingStatusFilter !== 'all');
             },
 
             async showCompleted() {
@@ -1260,27 +962,7 @@
                         if (version === this.completedRefreshVersion) this.completedRefreshPending = false;
                         return;
                     }
-                    // Refresh a bounded head page. Counts may change between the
-                    // two requests, so a count delta cannot identify missing rows.
-                    const res2 = await authenticatedFetch(`/get_download_list?already_down=true&offset=0&limit=${this.completedLimit}`);
-                    if (res2.ok === false) throw new Error('Completed list request failed');
-                    const data2 = await res2.json();
-                    if (this.taskSearch || requestId !== this.completedRequestId) return;
-                    const tasks = data2.tasks || data2;
-                    if (!Array.isArray(tasks) || !Number.isInteger(data2.total) || data2.total < 0) throw new Error('Invalid completed list');
-                    const head = tasks.filter(task => task.status === 'completed');
-                    // Preserve older loaded pages only when the head page joins
-                    // them. A large burst must not leave a gap in pagination.
-                    const anchor = head.length ? this.completedTasks.findIndex(task =>
-                        task.task_id === head[head.length - 1].task_id) : -1;
-                    const tail = tasks.length === this.completedLimit && anchor >= 0 ?
-                        this.completedTasks.slice(anchor + 1) : [];
-                    const ids = new Set(head.map(task => task.task_id));
-                    this.completedTasks = [...head, ...tail.filter(task => !ids.has(task.task_id))];
-                    this.completedOffset = this.completedTasks.length;
-                    this.completedTotal = data2.total;
-                    this.completedLastTotal = data2.total;
-                    this.completedHasMore = this.completedOffset < this.completedTotal;
+                    if (!await this.loadTaskList('completed', {mode: 'head'})) return;
                     if (version === this.completedRefreshVersion) this.completedRefreshPending = false;
                     this.queueScrollCheck();
                 } catch(e) {
@@ -1290,33 +972,8 @@
                 }
             },
 
-            async loadMoreCompleted() {
-                if (this.completedLoading || (!this.taskSearch && this.completedPolling) || !this.completedHasMore) return;
-                this.completedLoading = true;
-                const requestId = ++this.completedRequestId;
-                const query = this.taskSearch;
-                const offset = this.completedOffset;
-                let loaded = false;
-                try {
-                    const searchParam = query ? `&search=${encodeURIComponent(query)}&status=${this.pendingStatusFilter}` : '';
-                    const res = await authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedOffset}&limit=${this.completedLimit}${searchParam}`);
-                    if (res.ok === false) throw new Error('Completed page request failed');
-                    const data = await res.json();
-                    if (query !== this.taskSearch || requestId !== this.completedRequestId) return;
-                    const tasks = data.tasks || data;
-                    const newTasks = tasks.filter(t => t.status === 'completed');
-                    // Deduplicate against existing tasks
-                    const existingIds = new Set(this.completedTasks.map(t => t.task_id));
-                    const fresh = newTasks.filter(t => !existingIds.has(t.task_id));
-                    this.completedTasks = [...this.completedTasks, ...fresh];
-                    this.completedOffset += tasks.length;
-                    this.completedTotal = data.total ?? this.completedTasks.length;
-                    if (!query && offset === 0) this.completedLastTotal = this.completedTotal;
-                    this.completedHasMore = tasks.length > 0 && this.completedOffset < this.completedTotal;
-                    loaded = true;
-                } catch(e) {}
-                if (requestId === this.completedRequestId) this.completedLoading = false;
-                if (loaded) this.queueScrollCheck();
+            loadMoreCompleted() {
+                return this.loadMoreTasks('completed');
             },
 
             onTaskSearchInput() {
@@ -1343,12 +1000,8 @@
             },
 
             resetCompletedList() {
-                this.completedRequestId++;
-                this.completedTasks = [];
-                this.completedOffset = 0;
-                this.completedHasMore = true;
-                this.completedLoading = false;
-                this.loadMoreCompleted();
+                this.resetTaskList('completed');
+                return this.loadMoreCompleted();
             },
 
             async fetchVersion() {
@@ -1405,109 +1058,26 @@
                 } catch(e) {}
             },
 
-            async fetchActive() {
-                try {
-                    const res = await authenticatedFetch('/get_download_list?already_down=false');
-                    const data = await res.json();
-                    if (res.ok === false || !Array.isArray(data)) throw new Error('Active list request failed');
-                    const newTasks = data.filter(task => task.status !== 'completed');
-                    const ids = new Set(newTasks.map(task => task.task_id));
+            fetchActive() {
+                return this.loadTaskList('active', {mode: 'refresh', beforeCommit: async tasks => {
+                    const ids = new Set(tasks.map(task => task.task_id));
                     if (this.activeTasks.some(task => !ids.has(task.task_id))) {
                         if (this.taskSearch && !this.completedLoading) await this.fetchCompleted(true);
                         else await this.pollCompletedCount(true);
                     }
-                    // Smart merge: update existing tasks in-place instead of replacing
-                    // the entire array. Alpine's Proxy reactivity only re-renders DOM
-                    // elements whose bound values actually changed (speed, ETA, progress),
-                    // not static elements (filename, chat_title, buttons, etc.)
-                    const newMap = {};
-                    newTasks.forEach(t => { newMap[t.task_id] = t; });
-                    for (let i = this.activeTasks.length - 1; i >= 0; i--) {
-                        const t = this.activeTasks[i];
-                        if (newMap[t.task_id]) {
-                            Object.assign(t, newMap[t.task_id]);
-                            delete newMap[t.task_id];
-                        } else {
-                            this.activeTasks.splice(i, 1);
-                        }
-                    }
-                    Object.values(newMap).forEach(t => this.activeTasks.push(t));
-                    this.queueScrollCheck();
-                    return true;
-                } catch(e) { return false; }
+                }});
             },
 
-            async fetchCompleted(reset = false) {
-                if (reset) {
-                    this.completedRequestId++;
-                    this.completedTasks = [];
-                    this.completedOffset = 0;
-                    this.completedHasMore = true;
-                    this.completedLoading = false;
-                }
-                await this.loadMoreCompleted();
-                await this.fetchFailed();
+            fetchCompleted(reset = false) {
+                return this.loadTaskList('completed', {reset});
             },
 
-            async fetchSkipped(reset = false) {
-                if (reset) {
-                    this.skippedRequestId++;
-                    this.skippedTasks = [];
-                    this.skippedOffset = 0;
-                    this.skippedHasMore = true;
-                    this.skippedLoading = false;
-                }
-                return this.loadSkipped(false);
+            fetchSkipped(reset = false) {
+                return this.loadTaskList('skipped', {mode: 'refresh', reset, supersede: true});
             },
 
             loadMoreSkipped() {
-                if (!this.skippedHasMore || this.skippedLoading) return;
-                return this.loadSkipped(true);
-            },
-
-            async loadSkipped(append) {
-                // Refreshes supersede pending pages after deletions; a page never interrupts a refresh.
-                if (append && this.skippedLoading) return;
-                const requestId = ++this.skippedRequestId;
-                const query = this.taskSearch.trim();
-                const start = append ? this.skippedOffset : 0;
-                const target = append ? this.skippedLimit : Math.max(this.skippedLimit, this.skippedOffset);
-                this.skippedLoading = true;
-                let loaded = false;
-                try {
-                    const rows = [];
-                    let total = 0;
-                    // The production API caps each request at 200 rows. Refresh the loaded
-                    // prefix in bounded chunks to keep loaded pages after insertions and deletions.
-                    while (rows.length < target) {
-                        const limit = Math.min(200, target - rows.length);
-                        const response = await authenticatedFetch('/get_skipped_downloads?offset=' +
-                            (start + rows.length) + '&limit=' + limit + '&search=' + encodeURIComponent(query));
-                        if (response.ok === false) throw new Error('Skipped list request failed');
-                        const data = await response.json();
-                        if (requestId !== this.skippedRequestId || query !== this.taskSearch.trim()) return;
-                        if (!Array.isArray(data.tasks) || !Number.isInteger(data.total) || data.total < 0) {
-                            throw new Error('Invalid skipped list');
-                        }
-                        total = data.total;
-                        rows.push(...data.tasks);
-                        if (!data.tasks.length || start + rows.length >= total) break;
-                    }
-                    const previous = append ? this.skippedTasks : [];
-                    const byId = new Map(previous.map(task => [task.task_id, task]));
-                    rows.forEach(task => byId.set(task.task_id, task));
-                    this.skippedTasks = [...byId.values()];
-                    this.skippedOffset = start + rows.length;
-                    this.skippedTotal = total;
-                    this.skippedHasMore = rows.length > 0 && this.skippedOffset < total;
-                    if (this.activeTab === 'skipped' && !this.batchBusy) {
-                        const visibleIds = new Set(this.skippedTasks.map(task => task.task_id));
-                        this.selectedTasks = this.selectedTasks.filter(id => visibleIds.has(id));
-                    }
-                    loaded = true;
-                } catch(e) { this.showToast(this.t('Network error'), 'error'); }
-                finally { if (requestId === this.skippedRequestId) this.skippedLoading = false; }
-                if (loaded) this.queueScrollCheck();
+                return this.loadMoreTasks('skipped');
             },
 
             async skippedAction(taskId, action) {
@@ -1523,89 +1093,21 @@
                 finally { this.skippedBusy = this.skippedBusy.filter(id => id !== taskId); }
             },
 
-            async fetchFailed() {
-                try {
-                    const failedRes = await authenticatedFetch('/get_failed_downloads');
-                    const failedData = await failedRes.json();
-                    this.failedTasks = failedData;
-                    this.queueScrollCheck();
-                } catch(e) {}
+            fetchFailed() {
+                return this.loadTaskList('failed', {mode: 'refresh'});
             },
 
-            async fetchPending(reset = false) {
-                if (reset) {
-                    this.pendingRequestId++;
-                    this.pendingLoading = false;
-                    this.pendingTasks = [];
-                    this.pendingOffset = 0;
-                    this.pendingHasMore = true;
-                }
-                if (this.pendingLoading || !this.pendingHasMore) return;
-                this.pendingLoading = true;
-                const requestId = ++this.pendingRequestId;
-                const query = this.taskSearch;
-                const status = this.pendingStatusFilter;
-                let loaded = false;
-                try {
-                    const res = await authenticatedFetch(`/get_pending_list?offset=${this.pendingOffset}&limit=${this.pendingLimit}&search=${encodeURIComponent(query)}&status=${status}`);
-                    if (res.ok === false) throw new Error('Pending list request failed');
-                    const data = await res.json();
-                    if (query !== this.taskSearch || status !== this.pendingStatusFilter || requestId !== this.pendingRequestId) return;
-                    const tasks = data.tasks || data || [];
-                    const existingIds = new Set(this.pendingTasks.map(t => t.task_id));
-                    const fresh = tasks.filter(t => !existingIds.has(t.task_id));
-                    this.pendingTasks = [...this.pendingTasks, ...fresh];
-                    this.pendingOffset += tasks.length;
-                    this.pendingTotal = data.total ?? this.pendingTasks.length;
-                    this.pendingHasMore = tasks.length > 0 && this.pendingOffset < this.pendingTotal;
-                    loaded = true;
-                } catch(e) {}
-                if (requestId === this.pendingRequestId) this.pendingLoading = false;
-                if (loaded) this.queueScrollCheck();
+            fetchPending(reset = false) {
+                return this.loadTaskList('pending', {reset});
             },
 
             loadMorePending() {
-                if (this.activeTab !== 'pending') return;
-                return this.fetchPending();  // Append the next page without resetting.
+                return this.loadMoreTasks('pending');
             },
 
-            // Refresh loaded task state without clearing the list or changing offset.
-            // Detect new tasks from changes in the pending count.
-            async pollPendingRefresh() {
-                if (this.pendingLoading) return;
-                const query = this.taskSearch;
-                const status = this.pendingStatusFilter;
-                const requestId = this.pendingRequestId;
-                try {
-                    // Refresh the loaded range and check for newly queued tasks.
-                    const res = await authenticatedFetch(`/get_pending_list?offset=0&limit=${Math.max(this.pendingOffset, this.pendingLimit)}&search=${encodeURIComponent(query)}&status=${status}`);
-                    if (res.ok === false) throw new Error('Pending list request failed');
-                    const data = await res.json();
-                    if (query !== this.taskSearch || status !== this.pendingStatusFilter || requestId !== this.pendingRequestId) return;
-                    const tasks = data.tasks || data || [];
-                    const total = data.total ?? this.pendingTotal;
-                    // Keep queued rows until the receiving list has been read successfully.
-                    if (await this.fetchActive() === false) return;
-                    if (query !== this.taskSearch || status !== this.pendingStatusFilter || requestId !== this.pendingRequestId) return;
-                    // Merge existing task objects by task_id while preserving order.
-                    const byId = {};
-                    tasks.forEach(t => { byId[t.task_id] = t; });
-                    // Update existing tasks and remove consumed or deleted entries in order.
-                    this.pendingTasks = this.pendingTasks
-                        .filter(t => byId[t.task_id])
-                        .map(t => byId[t.task_id]);
-                    // Insert newly observed tasks into the loaded range in created_ts order.
-                    const loadedIds = new Set(this.pendingTasks.map(t => t.task_id));
-                    const freshInView = tasks.filter(t => !loadedIds.has(t.task_id));
-                    if (freshInView.length) {
-                        // Append a newly observed task in the loaded range, preserving created_ts order.
-                        this.pendingTasks = [...this.pendingTasks, ...freshInView];
-                    }
-                    this.pendingTotal = total;
-                    this.pendingOffset = tasks.length;
-                    this.pendingHasMore = tasks.length > 0 && this.pendingOffset < total;
-                    this.queueScrollCheck();
-                } catch(e) {}
+            pollPendingRefresh() {
+                // Read the receiving list before removing tasks handed over by the queue.
+                return this.loadTaskList('pending', {mode: 'refresh', beforeCommit: () => this.fetchActive()});
             },
 
             async removePending(taskId) {

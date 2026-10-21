@@ -593,6 +593,7 @@
     "Completed (file already exists)": "已完成（文件已存在）",
     "Download ignores filters. Delete removes only the skipped record.": "下载将忽略过滤规则；删除仅移除跳过记录。",
     "No skipped downloads": "暂无跳过的下载",
+    "Skipped downloads will appear here": "跳过的下载会在这里显示",
     "Download queued": "下载已入队",
     "Skipped record deleted": "已删除跳过记录",
     "Message account is unavailable": "消息所属账号不可用",

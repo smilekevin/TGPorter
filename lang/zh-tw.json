@@ -593,6 +593,7 @@
     "Completed (file already exists)": "已完成（檔案已存在）",
     "Download ignores filters. Delete removes only the skipped record.": "下載將忽略篩選規則；刪除僅移除略過紀錄。",
     "No skipped downloads": "尚無略過的下載",
+    "Skipped downloads will appear here": "略過的下載會顯示在這裡",
     "Download queued": "下載已排入佇列",
     "Skipped record deleted": "已刪除略過紀錄",
     "Message account is unavailable": "訊息所屬帳號無法使用",

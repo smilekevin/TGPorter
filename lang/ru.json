@@ -282,6 +282,7 @@
     "Completed (file already exists)": "Завершено (файл уже существует)",
     "Download ignores filters. Delete removes only the skipped record.": "Загрузка игнорирует фильтры. Удаление убирает только запись о пропуске.",
     "No skipped downloads": "Нет пропущенных загрузок",
+    "Skipped downloads will appear here": "Пропущенные загрузки появятся здесь",
     "Download queued": "Загрузка добавлена в очередь",
     "Skipped record deleted": "Запись о пропуске удалена",
     "Message account is unavailable": "Аккаунт сообщения недоступен",
