@@ -63,7 +63,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .status-filter summary:not([data-active="true"]) { color: #64748b; }
 .status-filter summary::-webkit-details-marker { display: none; }
 .status-filter summary:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
-.status-filter summary[data-active="true"] { border-color: #93c5fd; color: #2563eb; background: #eff6ff; }
+.status-filter summary[data-active="true"], .task-search-toggle[aria-expanded="true"] { border-color: #93c5fd; color: #2563eb; background: #eff6ff; }
 .status-filter-options { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 160px; padding: 4px; border: 1px solid #dbe3f0; border-radius: 10px; background: #fff; box-shadow: 0 6px 20px rgb(31 51 86 / 12%); }
 .status-filter-options button { display: block; width: 100%; padding: 8px 10px; border-radius: 6px; text-align: left; white-space: nowrap; font-size: 12px; color: #475569; }
 .status-filter-options button:hover, .status-filter-options button[aria-pressed="true"] { background: #eff6ff; color: #2563eb; }
