@@ -83,30 +83,17 @@ python media_downloader.py
 
 Open `http://localhost:5088/configuration`, claim setup using the code from startup logs, set the web password, then enter API credentials and log in to Telegram. Downloads default to the project's `downloads/` directory. Subsequent starts reuse settings and valid sessions.
 
-### Local Dev Mode
-
-To preview the dashboard with example data:
-
-```bash
-python3.14 -m venv .venv
-source .venv/bin/activate
-python -m pip install Flask Werkzeug
-python run_local.py
-```
-
-Mock mode does not connect to Telegram or save settings. To test Configuration and login, run the [real application](#manual-install).
-
 ## Configuration
 
 ### Web Configuration and Interactive Login (preferred)
 
-Use the header icons to switch between downloads and Configuration. Configuration dropdowns and single-line inputs use matching heights. **Sign out** ends your web login. See the [mobile and desktop screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
+Use the header icons to switch between downloads and Configuration. **Sign out** ends your web login. See the [mobile and desktop screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
 
 Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
 
 The dashboard **Skipped** tab keeps reasons and saved filters across restarts. Desktop tabs and mobile bottom navigation share the same order (Downloading, Pending, Completed, Skipped, Failed) and outline icons. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons; verified existing files count as **Skipped**, without increasing successful downloads.
 
-Bot submissions of single post links or forwarded media are registered only after the task is saved. The Pending consumer waits for a file concurrency slot before queueing them. A repeated submission of the same message while pending or downloading returns the existing task ID, without a second task. A save failure is reported explicitly. Check `/query pending` or the dashboard Pending tab, and search `data/log/tdl.log` by the displayed task ID to trace submission, preparation and queue handoff. Queue acceptance does not mean the download has completed.
+Send a post link or forward media to the Bot, then check `/query pending` or the dashboard Pending tab. Tasks wait for an available download slot. Repeating an unfinished submission returns the existing task ID. Check any save error before submitting again, and search `data/log/tdl.log` by the displayed task ID when troubleshooting. Queue acceptance does not mean the download has completed.
 
 ### config.yaml (optional)
 
@@ -134,7 +121,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `allowed_user_ids` | Allowed Bot command user IDs; human download accounts are allowed automatically, and legacy `me` grants no human access in Bot mode | `[]` |
 | `language` | Bot/log language, independent of browser language; saves and applies immediately | `"en"` |
 | `max_download_task` | Simultaneous files, 1–6; saves and applies immediately | `5` |
-| `file_download_concurrency` | Concurrent download workers per file | `4` |
+| `file_download_concurrency` | Download connections per file | `4` |
 | `download_part_size_mb` | Fixed part size in MiB; positive integer | `64` |
 | `save_path` | File save path | `"./downloads"` |
 | `media_types` | Media types to download | `["audio", "document", "photo", "video", "voice", "animation"]` |
@@ -205,17 +192,15 @@ Defaults apply to new download tasks without restart. Explicit task/channel expr
 
 `max_download_task` controls simultaneous files (1–6); `file_download_concurrency` controls connections per file (1–32); `download_part_size_mb` sets part size (1–4096 MiB). Defaults are 5 files, 4 connections per file and 64 MiB parts. Leave transport capacity at `0` for automatic sizing.
 
-Each download preallocates one `downloads/.temp/timestamp_guid.tmp.temp` data file. Workers write directly at their range offsets, without separate `.part` files or a merge copy. Version 3 `.parts/manifest.json` records file identity, ranges, worker count and each range's durable prefix. Preallocated file length is not progress. Data is synchronized before atomically updating the checkpoint, normally after 8 MiB of new data or once a second, with forced commits on range completion and orderly stop. An abrupt exit may require downloading data written after the last commit again.
+Partial files and checkpoints are stored under `downloads/.temp/`. Keep this directory when restarting or upgrading if you want to resume unfinished downloads. Existing downloads retain their saved part settings; changed settings apply to new downloads. An abrupt exit may require downloading a small amount of recent data again.
 
-Pauses, network failures and restarts preserve new checkpoints. Saved ranges and worker counts take precedence over changed settings. Old `.part` files, older manifests and sequential `.temp` files without a new manifest are not migrated or resumed. Finish old downloads before upgrading, or explicitly delete the affected task's cache and download again. Unsupported cache is preserved with an error; older versions cannot resume new checkpoints either.
+Older checkpoint formats are not supported. Finish older downloads before upgrading, or explicitly delete the affected task's cache and download again. Unsupported cache is preserved with an error; older application versions cannot resume new checkpoints either.
 
-Where supported, allocation reserves disk space; otherwise only logical file length is set, so later writes can still run out of space or exceed a quota. Normal downloads need one file's data plus checkpoint metadata, without a second full merge copy. Linux/macOS use `pwrite`; platforms without it use independently opened file handles for positioned writes. NAS allocation and synchronization guarantees depend on the filesystem.
+Allow disk space for each complete file and its checkpoint data. The size of a temporary file is not download progress; use the dashboard to check progress. Check free space and NAS quotas if writes fail. Keep the download directory and its `.temp/` subdirectory on the same filesystem; avoid separate mounts within the download tree.
 
-After every range completes, the file is synchronized and all handles close. Atomic renames first create the ready staging file and then publish it at the final path; completion is recorded afterward. Staging and destination must share a filesystem. Cross-device publication fails and preserves staging instead of copying. Avoid separate filesystem mounts inside the download tree.
+When deleting a task, select file deletion only if you also want to remove local files and partial data. Otherwise they are preserved.
 
-When deleting a task, select file deletion only if you also want to remove local files and partial data. Cleanup waits for connections and in-flight disk writes to stop.
-
-Bot/log language is set in Configuration; the header selector controls browser language. Supported codes: `en`, `zh-cn`, `zh-tw`, `ja`, `es`, `fr`, `ru`, `uk`; `zh` means Simplified Chinese. See the [language guide](https://github.com/smilekevin/TGPorter/blob/main/docs/languages.md) to add a translation.
+Bot/log language is set in Configuration; the header selector controls browser language. Supported codes: `en`, `zh-cn`, `zh-tw`, `ja`, `es`, `fr`, `ru`, `uk`; `zh` means Simplified Chinese.
 
 Downloads skipped because a complete local file already exists appear in the Skipped tab with their filename and reason, and survive restarts. These duplicate downloads do not count toward completed downloads in the Web API, Bot queries or MCP. Deleting a skipped record preserves the local file. Filtered, unsupported and cancelled downloads are also excluded from completed downloads.
 
@@ -230,13 +215,13 @@ Saved Telegram sessions are reused after restart. Use **Test connection** to che
 
 **Web access:** downloads and Configuration require the management password by default. Enable **Public downloads** to let anyone who can reach the service view, submit and manage downloads without signing in. Configuration still requires the management password. A blank password field keeps the existing password. Older password-free deployments retain public downloads; use the setup code to create a Configuration password.
 
-**Remember me (7 days)** is optional: selecting it keeps the browser signed in for seven days, including browser and service restarts. Without it, the cookie lasts for the browser session and remains valid across service restarts, for up to seven days. The signing key is generated automatically in `data/web_session.key` with mode 0600; preserve this file when upgrading or recreating containers. Changing the password signs out other browser sessions; the current session remains signed in when you change its password. Web APIs use the same browser login and require a CSRF token for changes. An MCP Token is only for `/mcp`.
+**Remember me (7 days)** is optional: selecting it keeps the browser signed in for seven days, including browser and service restarts. Without it, the cookie lasts for the browser session and remains valid across service restarts, for up to seven days. Preserve `data/web_session.key` when upgrading or recreating containers to keep browser logins valid. Changing the password signs out other browser sessions; the current session remains signed in when you change its password. Web APIs use the same browser login and require a CSRF token for changes. An MCP Token is only for `/mcp`.
 
-Upgrading from a version with an in-memory signing key requires signing in once more; subsequent service restarts preserve the new login.
+Some older versions require signing in once after upgrading; subsequent service restarts preserve the new login.
 
-The dashboard separates Active and Completed using task status; unfinished files display at most 99.9%. When a task leaves Active or you open Completed, the dashboard refreshes the latest completed records. Failed reads retry on subsequent polls without a page reload. All five task lists append more records automatically when you scroll within 300 pixels of the bottom, retaining the current search and status filter. Short lists continue loading until the viewport is filled or all matches are shown. Bulk selection covers only displayed records.
+The dashboard shows unfinished tasks in Downloading and successful downloads in Completed. Lists update automatically and load more records as you scroll, retaining the current search and status filter. Bulk selection covers only displayed records.
 
-**Task stages:** Pending tasks show **Queued**; after scheduling, the Downloading tab shows **Preparing**, then **Downloading**. Pausing stops the file’s writers and connections, preserves its v3 checkpoint, frees the file slot and moves it to Pending as **Paused**. The hold is saved in `data/bot_tasks.json` and survives restarts. Use Pending’s selection shortcuts, status filter and Resume button to return held tasks to the regular queue; resume does not bypass occupied slots or Telegram cooldowns. Queue capacity and Telegram cooldowns appear as separate reasons; zero speed alone does not move a download back to the queue.
+**Task stages:** queued tasks appear in Pending, then move to Downloading as **Preparing** and **Downloading**. Pausing preserves progress, frees a download slot and moves the task to Pending as **Paused**; it stays paused after restart. Use Pending's selection shortcuts, status filter and Resume button to queue held tasks again. Resumed tasks still wait for available slots and Telegram cooldowns.
 
 ### Command-line Login
 
@@ -313,14 +298,6 @@ Ask the agent to help deploy TG Porter, connect MCP or manage downloads. Skill i
 
 CI preview ZIPs are available in the corresponding Actions run's **Artifacts** for 14 days and require GitHub login. They use that run's SHA image rather than a Release.
 
-To build a preview ZIP locally, use the Python environment from [Manual Install](#manual-install):
-
-```bash
-python tools/build_skill.py --tag v1.2.3 --commit "$(git rev-parse HEAD)" --output-dir dist
-```
-
-`v1.2.3` is an example tag for this local preview; the command does not publish a Release.
-
 ### Submit a Download
 
 Use MCP `submit_download` or the download page to submit one HTTPS `t.me` post link, such as `https://t.me/channel/123` or `https://t.me/c/123456/789`. Topic links are also supported. The download account must have access to the post. Accepted tasks enter the queue; acceptance does not mean the download is complete. Submitting the same unfinished post returns its existing task.
@@ -361,14 +338,14 @@ Set the Compose image to `tgporter:local`, then run `docker compose up -d`. Keep
 
 | Path | Purpose |
 | --- | --- |
-| `data/settings.json` | Configuration, credentials, Bot/log language, concurrency and ad rules; created automatically with mode 0600 |
+| `data/settings.json` | Configuration, credentials, Bot/log language, concurrency and ad rules |
 | `data/web_session.key` | Private browser-session signing key; preserves logins across service restarts |
-| `data/data.json` | Channel checkpoints and retry IDs; unrelated fields and disabled-channel records are retained |
+| `data/data.json` | Channel checkpoints and retry IDs |
 | `data/sessions/` | Telegram authorization |
 | `data/bot.yaml` | Existing Bot task/listener metadata |
 | `data/log/tdl.log` | Application log, 10 MB rotation, 30-day retention, configured level |
 | `data/bot_tasks.json` | Download and forwarding tasks |
-| `data/bot_processed_messages.json` | IDs of the last 1,000 handled Bot messages, saved atomically with mode 0600 |
+| `data/bot_processed_messages.json` | Recent Bot message history used to avoid repeated processing |
 | `data/task_counter.json` | Daily task sequence numbers |
 | `data/download_history.json` | Completed and failed downloads |
 | `downloads/` | Completed files |
@@ -376,7 +353,7 @@ Set the Compose image to `tgporter:local`, then run `docker compose up -d`. Keep
 
 Mount writable `data/` and download directories. The application creates its runtime files and keeps partial downloads under `.temp/`; no separate temporary-data mount is needed. Recreating the container preserves host-mounted data. Keep backups private because they contain credentials and Telegram authorization. JSON data files are stored directly in `data/`; `data/log/` contains logs only. For older installations, stop the service and move JSON files from `data/log/` to `data/` before restarting; the old location is no longer read.
 
-Bot startup and reconnection replay offline updates. Before executing an authorized message handler, the application checks its Bot account, chat and message IDs against a persistent ring of the last 1,000 handled messages. Receipts are saved immediately after the handler returns, including durable download-queue acceptance; downloads continue through the existing task recovery path. Exceptions, cancellation and rejected single-message task writes do not create receipts. Concurrent repeated deliveries wait for the first handler; callback button clicks remain repeatable. No message text, media or tokens are stored in the ring. Existing deployments start with an empty ring, so messages processed before this update and entries evicted from the ring are not covered. A crash between a business operation and its receipt write can still replay that operation; this is bounded replay protection, not an exactly-once transaction. Keep this file when updating the container.
+Keep `data/bot_processed_messages.json` during updates so recently handled Bot messages are not processed again after reconnection. Protection covers the most recent 1,000 handled messages; earlier messages and messages handled before the file was created are outside that window. An interrupted operation can still be repeated, so check the task list before resubmitting.
 
 ## Proxy Configuration
 
@@ -392,7 +369,7 @@ Container `127.0.0.1` refers to the container itself. Docker Desktop may use `ho
 - **Invalid session:** reconnect from Configuration, or sign out and log in again if reconnect fails. Tasks and checkpoints remain.
 - **Changes not applied:** check the restart notice; port changes also require Docker mapping updates.
 - **MCP 404 / 401 / Host rejection:** check enable/restart, the separate Token, and actual Host/allowlist respectively.
-- **Save failure:** check data write permissions and disk space; failed atomic replacement preserves the old file.
+- **Save failure:** check data write permissions and disk space; failed saves preserve the old settings.
 
 ### Bot Heartbeat and Message Diagnostics
 
@@ -413,4 +390,4 @@ Application logs are also in `data/log/tdl.log` (10 MB rotation, 30-day retentio
 - **Single-message links:** send the `https://t.me/...` post link directly to the Bot; link previews are supported for public and private channels. The download account must have access to the post.
 - **Status is unknown:** check the last check time, whether the service is still running and whether Telegram is reachable.
 
-MCP exposes the same Bot status; see the [tool reference](https://github.com/smilekevin/TGPorter/blob/main/docs/mcp.md#mcp-tool-reference). To verify real download integrity, follow the [parallel-download guide](https://github.com/smilekevin/TGPorter/blob/main/docs/parallel-download-testing.md).
+MCP exposes the same Bot status; see the [tool reference](https://github.com/smilekevin/TGPorter/blob/main/docs/mcp.md#mcp-tool-reference).

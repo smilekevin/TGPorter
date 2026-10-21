@@ -26,6 +26,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `module/runtime_paths.py` | Default data directory, runtime JSON, log, session and Bot configuration paths |
 | `module/bot.py` | Bot commands, message entry points, task recovery, Pending consumer, forwarding, and listening |
 | `module/bot_query.py` | Read-only `/query` task lists and pagination using the shared download service |
+| `module/download_control.py` | Loop-owned pause, resume and task interruption, including range/listener detachment |
 | `module/task_store.py` | Persistent tasks and daily task sequence numbers, using locks and atomic file replacement |
 | `module/bot_message_store.py` | Atomic, private ring of the last 1,000 handled Bot inbox identities for replay deduplication |
 | `module/download_stat.py` | Download progress, history, failures, pause, and cancellation state |
@@ -46,7 +47,71 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 | `module/mcp_server.py` | Integrated Streamable HTTP MCP tools at `/mcp`, using shared download operations |
 | `skills/tgporter/` | Distributable user skill for deployment guidance, MCP connection and download management |
 | `tools/build_skill.py` | Release skill ZIP generation with bundled documentation, examples and pinned image/source references |
-| `README.md`, `DEPLOY_CN.md`, `DEPLOY.md`, `docs/` | Bilingual overview, separate Chinese/English deployment guides, and focused design/test guides |
+| `README.md`, `DEPLOY_CN.md`, `DEPLOY.md` | User manual, commands/API usage, installation, configuration and operations in both languages |
+| `AGENTS.md` | Authoritative architecture, internal design, engineering requirements and development/release workflows |
+| `docs/` | Supporting tool references, language resources and detailed test procedures linked from this file |
+
+## Architecture and Runtime Flow
+
+```mermaid
+flowchart TB
+    User["User<br/>WebUI / Browser"]
+    Agent["Agent<br/>MCP Client"]
+    Telegram["Telegram"]
+
+    subgraph Container["Docker Container"]
+        direction TB
+        Bot["Bot commands and media<br/>Kurigram"]
+        subgraph HTTP["Single HTTP service<br/>Default port: 5088"]
+            API["Pages / Web API<br/>Flask"]
+            MCP["MCP /mcp<br/>Streamable HTTP"]
+        end
+        Service["Download management"]
+        Store["Task storage"]
+        Recovery["Startup recovery"]
+        Consumer["Pending tasks"]
+        Scan["History scans / live monitoring"]
+        Queue["Download queue"]
+        Workers["Parallel downloads"]
+        Clients["Select message owner<br/>Bot / User Client"]
+        Stats["Progress and history"]
+    end
+
+    Data[("Persistent host directories<br/>data / downloads")]
+
+    User --> Bot
+    User -->|Session / CSRF| API
+    Agent -->|Bearer Token| MCP
+    API --> Service
+    MCP --> Service
+    Bot -->|Save task| Store
+    Service -->|Submission / Pending queries / retry| Store
+    Service <-->|Status queries / task control| Stats
+    Recovery -->|Restore states and IDs| Store
+    Store -->|Read Pending| Consumer
+    Consumer -->|Single download| Queue
+    Consumer -->|Recover range task| Scan
+    Bot -.->|Batch / monitoring| Scan
+    Scan --> Queue
+    Queue --> Workers
+    Workers --> Clients
+    Clients <-->|Download / forward| Telegram
+    Workers --> Stats
+    Store -.->|Tasks and IDs| Data
+    Stats -.->|Completed / failed / skipped history| Data
+    Clients -.->|Media / sessions| Data
+
+    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
+    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
+    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
+    class User,Bot,API,Agent,MCP entry
+    class Service,Consumer,Scan,Queue,Workers,Clients pipeline
+    class Store,Stats,Data storage
+```
+
+The Bot, WebUI and MCP share the download backend. Tasks and history are stored in `data/`; media files go to the download directory.
+
+The downloader's asyncio loop owns Telegram sessions and file workers. Flask handlers run across a thread boundary and submit operations through the shared service; MCP uses the same backend without another Telegram client or worker pool. Pending tasks are persisted before consumption. Recovery restores durable state and reservations before normal consumption resumes. Paused tasks retain their hold and must not become runnable during recovery.
 
 ## Design Constraints
 
@@ -69,7 +134,7 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 - Bootstrap foreign non-CDN download keys on the regular DC endpoint, then open each worker's independent media connection. Cache foreign key bytes in memory on the owning client, scoped by DC/test mode and protected by per-key locks; reuse them across workers/files without sharing media sessions or transports. Cancellation must release key-creation locks without stopping unrelated files. Clear the cache after client shutdown cleanup and evict matching rejected keys without deleting newer replacements. Reuse stored home-DC keys and keep CDN endpoint selection separate. Bound auth-key creation to 60 seconds and close interrupted transports before retrying; never apply that limit to normal media transfers.
 - New media staging paths use flat `downloads/.temp/timestamp_guid.tmp` names derived from message time and stable account/message/media identity. Never generate a new path per retry or use channel titles in new staging paths. Keep exact staging paths in shared download records for deletion. Old part/sequential checkpoint formats are unsupported and must be preserved with an error until explicitly removed; never import or infer their progress.
 - Write ranges into one preallocated staging `.temp` file, never separate `.part` files or a merge copy. Use `pwrite` where available and independent binary file handles otherwise; loop over short writes and drain in-flight disk operations before closing, reassigning ranges, publishing or deleting.
-- Save version-three part plans and committed range prefixes in `.parts/manifest.json`. Synchronize data before atomically committing metadata. Preallocated length is never progress. Publish through same-filesystem atomic renames and acknowledge completion only after the final output exists; preserve checkpoints on storage errors and do not reconnect Telegram for them.
+- Save version-three part plans and committed range prefixes in `.parts/manifest.json`. Synchronize data before atomically committing metadata. Commit after 8 MiB of new data or one second, and force commits on range completion and orderly stop when bytes have changed. Preallocated length is never progress. Publish through same-filesystem atomic renames and acknowledge completion only after the final output exists; preserve checkpoints on storage errors and do not reconnect Telegram for them.
 - Pauses, retries, and restarts reuse saved version-three ranges and worker counts; configuration changes must not repartition existing downloads or download completed parts again.
 - Aggregate progress across parts into one file record. Bytes restored from checkpoints do not contribute to new transfer speed. Keep one progress row per file in WebUI.
 - Pauses, network failures, and process shutdown preserve checkpoints. Explicit user cancellation first stops writers and closes connections; Web/API/MCP deletion removes that file's staging data and `.parts/` only with `delete_file=true` (Bot cancellation keeps its cleanup default). Do not affect other downloads or completed files.
@@ -115,8 +180,9 @@ This project downloads, forwards, and listens for Telegram media. It uses Python
 ## Documentation Synchronization
 
 - When a change affects documented features, configuration, installation, deployment or supported usage, update the relevant content in `README.md`, Chinese `DEPLOY_CN.md` and English `DEPLOY.md` together. Keep the overview and both deployment guides consistent. Internal refactors, visual consistency fixes and agent-guideline updates do not require changes to these user documents unless their documented instructions or behavior change.
-- User documentation should explain capabilities, setup and usage. Keep code-reuse rules, controller/template/CSS structure and routine animation/layout details in `AGENTS.md` or focused developer documentation; do not add them to README or deployment guides merely to describe an implementation change.
-- `README.md` owns the project overview, features, architecture, Bot commands, Web API and short startup summaries. Deployment entries must link to the guide for the corresponding language.
+- `AGENTS.md` is the authoritative home for project architecture, module responsibilities, internal design details, engineering requirements and developer/test/release workflows. Keep these out of README and deployment guides. Supporting reference or test resources may remain under `docs/`, but must not establish separate architecture or implementation requirements.
+- README and both deployment guides are user manuals only: describe supported capabilities, installation, configuration, commands/API usage, upgrades, backups and troubleshooting. Include operational effects and compatibility limits when users need them to act; do not explain internal queues, event loops, storage algorithms, controller/template/CSS reuse or routine layout/animation choices.
+- `README.md` owns the user-facing feature overview, Bot commands, Web API usage and short startup instructions. Deployment entries must link to the guide for the corresponding language. Architecture diagrams, source-module comparisons, inherited implementation history and regression-test instructions belong here, not in README.
 - `DEPLOY_CN.md` (Chinese) and `DEPLOY.md` (English) own prerequisites, credentials, complete installation and login steps, configuration examples and defaults, parallel-download settings and checkpoints, image updates, local builds, persistence, proxies and troubleshooting.
 - Maintain both language sections in `README.md` and keep the two deployment guides synchronized. Use the display name `TG Porter`, repository name `TGPorter`, and lowercase image/service/container name `tgporter`.
 - Keep summaries and links aligned with the detailed guide instead of duplicating complete commands, configuration blocks or persistence tables in README.
@@ -152,15 +218,29 @@ python -B -m unittest discover -s tests -p 'test_download_connections.py' -v
 python -B -m unittest discover -s tests -p 'test_web*.py' -v
 python -B -m unittest discover -s tests -p 'test_mcp*.py' -v
 
-# Mock UI development.
-python run_local.py
-
 # Real application; use /configuration for initial setup and Telegram login.
 python media_downloader.py
 ```
 
 - Follow `docs/parallel-download-testing.md` for real download acceptance checks. Use isolated directories and compare SHA-256 values. File length, Mock progress, or part counts alone do not prove file integrity or network speed improvements.
 - Distinguish static checks, offline tests, published-image Mock deployments, and real Telegram acceptance checks in reports. Clearly identify checks that were not run.
+
+### Dashboard Preview and Local Skill Builds
+
+Use an isolated Python environment for dashboard-only work. Install `Flask` and `Werkzeug`, then run `python run_local.py`; `TGPORTER_MOCK_PORT` selects the port (default 5088). Mock mode uses example data, does not connect to Telegram and does not save settings. It does not validate production Configuration, authentication, APIs or Telegram login; use the real application and production-route tests for those paths.
+
+```bash
+python -m pip install Flask Werkzeug
+python run_local.py
+```
+
+After installing the full requirements, generate a local skill preview without publishing a Release:
+
+```bash
+python tools/build_skill.py --tag v1.2.3 --commit "$(git rev-parse HEAD)" --output-dir dist
+```
+
+The tag is an example for this local preview. Validate packaging with `tests/test_skill_release.py`. Keep the published deployment guide suitable for users and for the unchanged copy bundled in the release ZIP.
 
 ## Docker and Publishing
 
@@ -177,3 +257,49 @@ python media_downloader.py
 - Release builds also generate `TGPorterSkills.zip` after image publication and upload it to the same Release. Reruns replace the same asset and update its link in the managed Release notes section. Run `tests/test_skill_release.py` for packaging changes; verify bundled links, image/source version pinning and file integrity without publishing a real Release.
 
 - Publishable PR, main and manual CI runs also upload `TGPorterSkills.zip` as a 14-day Actions artifact after image publication. CI metadata must use the actual SHA image/digest and commit-based source URLs, link to the Actions run instead of an invented Release, and identify the bundle as a CI preview. Keep fork/Dependabot image and preview publication disabled.
+
+## Historical Upstream Context
+
+The following comparison was inherited from the upstream README and is retained for attribution and historical context. It is not a current specification. Use the source map and design constraints above for current requirements, especially pause, cancellation and task-recovery behavior.
+
+<details>
+<summary>View inherited changes</summary>
+
+The following content is retained from the README of [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader). It describes that project's changes relative to tangyoha, inherited by this fork.
+
+Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) v2.2.6, heavily modified.
+
+#### New Modules
+
+| Module | Description |
+|--------|-------------|
+| `module/task_store.py` | Task persistence + crash recovery, JSON storage, atomic writes, thread-safe |
+| `run_local.py` | Local dev mode with mock data, no Telegram needed |
+
+#### Core Changes
+
+| Change | tangyoha v2.2.6 | MangoIsIllegal's Changes |
+|--------|---------|--------------|
+| **Task persistence** | None (lost on restart) | `bot_tasks.json` + `task_counter.json`, auto-recovery |
+| **Download history** | None | `download_history.json`, completed/failed records |
+| **Task ID** | Incrementing int | `MMDD-N` format, daily reset, persistent counter |
+| **Web UI** | layui framework | Pure HTML/CSS/JS, light theme, responsive |
+| **WebUI features** | Basic list | 5 tabs + pause/resume + delete + retry + search + infinite scroll |
+| **Pending queue** | None | Restart tasks enter pending, consumed one by one, prevents FLOOD_WAIT storm |
+| **FLOOD_WAIT** | Blocking sleep | Non-blocking cooldown timestamp |
+| **Silent throttle** | Not detected | Speed < 200 KB/s for 120s → WebUI banner + TG notification (trigger & recovery) |
+| **Worker count** | Fixed (config) | WebUI dropdown 1-6, applies and saves immediately; survives restarts |
+| **Progress notification** | Timed polling | Updates about every 10s + immediate completion + FLOOD_WAIT countdown |
+| **Failure handling** | Log only | Failed list persisted + error reason + source link + WebUI retry |
+| **Stop task** | Direct stop | Incomplete files recorded as failed (manually stopped) |
+| **TCP timeout** | 10s (default) | 900s, prevents reconnect storm during throttling |
+| **Download retry** | 3x 5s interval | Surviving connections take over parts; only the last worker failing 3 consecutive attempts fails the download |
+| **Size mismatch** | Overwrite | Backup .bak, re-download, delete backup on success |
+| **File reference** | Log only | Auto fetch_message to refresh |
+| **Queue init** | Module import time | After event loop starts, avoids loop mismatch |
+| **Logging** | Single file | Unified `tdl.log`, 10MB rotation, 30-day retention |
+| **Bot notifications** | Simple status | Progress + completed file list + failure reasons + rate limit + recovery |
+| **Docker** | Single stage | Multi-stage build (alpine), rclone built-in |
+| **Version** | v2.2.6 | v1.0.0 (independent line) |
+
+</details>

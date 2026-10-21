@@ -22,9 +22,7 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="./DEPLOY_CN.md">部署指南</a> ·
   <a href="#bot-命令">Bot 命令</a> ·
-  <a href="#web-api">Web API</a> ·
-  <a href="#架构设计">架构设计</a> ·
-  <a href="#相比上游的改动">相比上游的改动</a>
+  <a href="#web-api">Web API</a>
 </p>
 
 ## 界面预览
@@ -35,7 +33,7 @@
 
 ### 下载
 
-- **单文件多流并行下载** — 预分配单个临时文件，各连接按 offset 写入，无需合并；文件并发、每文件连接数和分片大小独立设置
+- **单文件多流并行下载** — 可分别设置同时下载的文件数、每文件连接数和分片大小
 - **多类型媒体** — audio / document / photo / video / voice / animation / video_note
 - **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
 - **单条下载** — 发送 `t.me` 链接或转发媒体消息给 Bot
@@ -45,7 +43,7 @@
 
 ### WebUI
 
-- **交互式配置页面** — 通过网页管理 Telegram 登录、下载、网页访问和 MCP，下拉框与单行输入框等高。[配置指南](./DEPLOY_CN.md#webui-登录)。
+- **交互式配置页面** — 通过网页管理 Telegram 登录、下载、网页访问和 MCP。[配置指南](./DEPLOY_CN.md#webui-登录)。
 - **响应式界面** — 浅色主题，适配桌面和手机；桌面标签与移动端底部导航使用一致的顺序和线框图标
 - **任务搜索** — 按任务 ID 或文件名查找任务
 - **自动加载** — 五个列表均在滚动接近底部时追加更多记录；批量选择仅作用于已显示记录
@@ -105,7 +103,6 @@
 - **多语言** — Bot 与网页支持英语 / 简体中文 / 繁体中文 / 日语 / 西班牙语 / 法语 / 俄语 / 乌克兰语。
 - **rclone 云盘上传** — 下载完成后可选上传到云盘
 - **代理支持** — 支持 HTTP、SOCKS4 和 SOCKS5 代理
-- **本地开发模式** — `run_local.py` 使用 Mock 数据调试 WebUI
 - **Bot 连接状态** — 显示连接状态和延迟。[排错指南](./DEPLOY_CN.md#bot-心跳与消息诊断)
 - **日志** — 在 `data/log/tdl.log` 查看运行记录
 
@@ -132,7 +129,6 @@ docker run -d \
 | Docker 镜像 | 直接运行预构建镜像，适合服务器 / NAS | [镜像部署](./DEPLOY_CN.md#docker-镜像部署) |
 | Docker Compose | 使用仓库中的 Compose 文件管理服务 | [Compose 部署](./DEPLOY_CN.md#docker-compose-部署) |
 | 手动安装 | 使用 Python 3.14 与 Kurigram 运行 | [手动安装](./DEPLOY_CN.md#手动安装) |
-| 本地开发 | 使用 Mock 数据调试 WebUI，无需 Telegram 账号 | [本地开发模式](./DEPLOY_CN.md#本地开发模式) |
 | Agent / MCP | 用 MCP Token 提交和管理下载任务 | [MCP 配置与部署](./DEPLOY_CN.md#mcp-agent-接入) |
 
 ---
@@ -162,7 +158,7 @@ docker run -d \
 | `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
 | `/help` `/start` | 显示帮助 | — |
 
-向 Bot 提交单条消息链接或转发媒体后，任务保存成功才会显示新任务编号，并等待 Pending 消费器按文件并发上限入队。同一消息已有待处理或下载中的任务时，Bot 回复“任务已存在”和原编号，不会创建第二个任务；任务保存失败会明确提示。可用 `/query pending` 查看排队任务，按显示编号在 `data/log/tdl.log` 中追踪提交和入队日志。
+向 Bot 发送消息链接或转发媒体后，可用 `/query pending` 查看排队任务。同一消息已有未完成任务时，Bot 回复“任务已存在”和原编号。保存失败时会显示错误；排查时可按任务编号搜索 `data/log/tdl.log`。
 
 ---
 
@@ -178,10 +174,10 @@ docker run -d \
 | `/api/configuration` | GET / POST | Configuration 设置读取/保存，凭据不回显，需要管理 Session 和 CSRF |
 | `/api/configuration/validate-filter` | POST | 校验 `{"expression": "media_file_size >= 100MB"}`，成功返回规范化 `expression`，无效返回 400 和 `error`；需要管理 Session 和 CSRF，不保存、不访问 Telegram |
 | `/api/setup` | POST | 一次性初始化码与 CSRF 创建管理密码 |
-| `/api/telegram` | POST | 在下载器事件循环提交异步登录、重连、取消与退出操作 |
+| `/api/telegram` | POST | 提交 Telegram 登录、重连、取消与退出操作 |
 | `/submit_download` | POST | 提交单条 HTTPS `t.me` 消息链接（JSON: `{"url": "https://t.me/channel/123"}`）；返回持久化入队结果，非下载完成 |
 | `/get_download_list` | GET | 下载列表（`already_down=true` 已完成，`false` 进行中），每个文件含当前下载流数 `active_streams` |
-| `/get_download_list?offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
+| `/get_download_list?already_down=true&offset=0&limit=50&search=keyword` | GET | 已完成列表（分页 + 搜索） |
 | `/get_pending_list` | GET | 待下载队列（含暂停），支持 `offset` / `limit` 分页、`search` 搜索及 `status=all/pending/paused` 筛选 |
 | `/get_failed_downloads` | GET | 失败列表 |
 | `/get_skipped_downloads` | GET | 已跳过列表及原因，支持 `offset`、`limit`、`search` |
@@ -207,151 +203,6 @@ docker run -d \
 
 ---
 
-## 架构设计
-
-```mermaid
-flowchart TB
-    User["用户<br/>WebUI / 浏览器"]
-    Agent["Agent<br/>MCP 客户端"]
-    Telegram["Telegram"]
-
-    subgraph Container["Docker 容器"]
-        direction TB
-        Bot["Bot 命令与媒体入口<br/>Kurigram"]
-        subgraph HTTP["统一 HTTP 服务<br/>默认端口 5088"]
-            API["页面 / Web API<br/>Flask"]
-            MCP["MCP /mcp<br/>Streamable HTTP"]
-        end
-        Service["下载管理"]
-        Store["任务存储"]
-        Recovery["启动恢复"]
-        Consumer["待处理任务"]
-        Scan["批量扫描 / 实时监听"]
-        Queue["下载队列"]
-        Workers["并行下载"]
-        Clients["按消息身份选择<br/>Bot / User Client"]
-        Stats["下载进度与历史"]
-    end
-
-    Data[("宿主机持久化目录<br/>data / downloads")]
-
-    User --> Bot
-    User -->|Session / CSRF| API
-    Agent -->|Bearer Token| MCP
-    API --> Service
-    MCP --> Service
-    Bot -->|保存任务| Store
-    Service -->|提交 / Pending 查询 / 重试入队| Store
-    Service <-->|状态查询 / 任务控制| Stats
-    Recovery -->|恢复状态与编号| Store
-    Store -->|读取 Pending| Consumer
-    Consumer -->|单条下载| Queue
-    Consumer -->|恢复范围任务| Scan
-    Bot -.->|批量 / 监听| Scan
-    Scan --> Queue
-    Queue --> Workers
-    Workers --> Clients
-    Clients <-->|下载 / 转发| Telegram
-    Workers --> Stats
-    Store -.->|任务与编号| Data
-    Stats -.->|完成 / 失败历史| Data
-    Clients -.->|媒体 / session| Data
-
-    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
-    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
-    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
-    class User,Bot,API,Agent,MCP entry
-    class Service,Consumer,Scan,Queue,Workers,Clients pipeline
-    class Store,Stats,Data storage
-```
-
-Bot、网页和 MCP 共用下载后端。任务与历史记录保存在 `data/`，下载文件保存在下载目录。
-
-### 核心流程
-
-1. 在 Configuration 完成设置和 Telegram 登录。
-2. 通过 Bot、网页或 MCP 提交任务，进入持久化队列。
-3. 按设置的并发数下载或转发，在网页和 Telegram 查看进度。
-4. 保存完成或失败记录；重启后继续未完成任务。
-
----
-
-## 相比上游的改动
-
-本 fork 的直接上游是 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。下面列出相对该项目的新增功能与修复，并保留它基于 tangyoha v2.2.6 的原有改造说明。
-
-### 本 fork 的新增功能
-
-- **单文件多流并行下载** — 单文件预分配、按 offset 写入，支持新版断点续传。[下载配置](./DEPLOY_CN.md#配置参数说明)
-- **MCP Agent 接入** — 通过 Agent 提交和管理下载任务。[MCP 部署](./DEPLOY_CN.md#mcp-agent-接入)
-- **多架构镜像** — 提供 amd64 和 arm64 镜像。[镜像部署](./DEPLOY_CN.md#docker-镜像部署)
-
-### 本 fork 的修复
-
-- 修复空任务启动后无法消费新任务的问题。
-- 改善重启恢复、批量转发和任务排队，避免任务重复或丢失。
-- 修复并发任务计数和重试问题。
-- 修复 Bot 媒体下载身份和文件引用刷新问题。
-
-#### 回归测试
-
-使用临时数据和模拟 Telegram 响应进行离线测试；工作流脚本测试还需 Node.js 24。
-
-```bash
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
-```
-
-CI 自动运行测试并检查 amd64、arm64 镜像构建。
-
-CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afcd8`；镜像标签仍使用完整的 `sha-提交号`。[镜像更新说明](./DEPLOY_CN.md#docker-管理)。
-
-### MangoIsIllegal 的原有改造（相比 tangyoha v2.2.6）
-
-<details>
-<summary>查看上游历史改动</summary>
-
-以下内容保留自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader) 的 README，说明其相对 tangyoha 的改造；这些功能由本 fork 继承。
-
-基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) v2.2.6 深度改造。
-
-#### 新增模块
-
-| 模块 | 说明 |
-|------|------|
-| `module/task_store.py` | 任务持久化 + 崩溃恢复，JSON 存储，原子写入，线程安全 |
-| `run_local.py` | 本地开发模式，Mock 数据，无需 Telegram |
-
-#### 核心改动
-
-| 改动 | tangyoha v2.2.6 | MangoIsIllegal 的改造 |
-|------|------|--------|
-| **任务持久化** | 无（重启丢任务） | `bot_tasks.json` + `task_counter.json`，崩溃后自动恢复 |
-| **下载历史** | 无 | `download_history.json`，完成/失败记录持久化 |
-| **任务 ID** | 纯递增整数 | `MMDD-序号` 格式，每日重置，持久化计数器 |
-| **Web UI** | layui 框架 | 纯原生 HTML/CSS/JS，浅色主题，响应式 |
-| **WebUI 功能** | 基础列表 | 5 标签页 + 暂停/恢复 + 删除 + 重试 + 搜索 + 无限滚动 |
-| **Pending 队列** | 无 | 重启任务统一入 pending，逐个消费，防 FLOOD_WAIT 风暴 |
-| **FLOOD_WAIT** | 阻塞 sleep | 非阻塞冷却时间戳，不卡死队列 |
-| **静默限速** | 不检测 | 速度 < 200 KB/s 持续 120 秒 → WebUI 横幅 + TG 通知（触发和解除各一次） |
-| **并发任务数** | 固定（config） | WebUI 下拉框调整 1-6，立即生效并保存到运行数据，重启后保留 |
-| **进度通知** | 定时轮询 | 约 10 秒更新 + 完成立即通知 + FLOOD_WAIT 倒计时 |
-| **失败处理** | 仅日志 | 失败列表持久化 + 错误原因 + 源链接 + WebUI 重试 |
-| **停止任务** | 直接停止 | 未完成文件记入失败列表（手动终止），不留残留 |
-| **TCP 超时** | 10s（默认） | 900s，防止限速时 reconnect 风暴 |
-| **下载重试** | 3 次 5s 间隔 | 分片由剩余连接接管；最后一个连接连续失败 3 次才失败 |
-| **大小不匹配** | 直接覆盖 | 备份 .bak 后重下，成功删备份 |
-| **文件引用过期** | 日志记录 | 自动 fetch_message 刷新引用 |
-| **Queue 初始化** | 模块导入时 | 事件循环启动后，避免 loop 不匹配 |
-| **日志** | 单文件 | `tdl.log` 统一日志，10MB 轮转，30 天保留 |
-| **Bot 通知** | 简单状态 | 下载进度 + 完成文件列表 + 失败原因 + 限速暂停 + 恢复通知 |
-| **Docker** | 单阶段 | 多阶段构建（alpine），rclone 内置 |
-| **版本号** | v2.2.6 | v1.0.0（独立版本线） |
-
-</details>
-
----
-
 ## 作者与维护者
 
 本项目 fork 自 [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader)。
@@ -371,7 +222,7 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 ## 致谢
 
 - 原项目：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
-- Telegram SDK：[Kurigram](https://github.com/kurigram-org/kurigram)（提供 `pyrogram` 导入命名空间）
+- Telegram SDK：[Kurigram](https://github.com/kurigram-org/kurigram)
 
 </details>
 <!-- END CHINESE README -->
@@ -382,9 +233,7 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
   <a href="#quick-start">Quick Start</a> ·
   <a href="./DEPLOY.md#prerequisites">Deployment Guide</a> ·
   <a href="#bot-commands">Bot Commands</a> ·
-  <a href="#web-api-1">Web API</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#changes-from-upstream">Changes from Upstream</a>
+  <a href="#web-api-1">Web API</a>
 </p>
 
 ---
@@ -407,7 +256,7 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 
 ### Download
 
-- **Parallel streams per file** — write ranges directly into one preallocated temporary file without merging; configure files, connections and part size independently
+- **Parallel streams per file** — configure simultaneous files, connections per file and part size independently
 - **Multi-type media** — audio / document / photo / video / voice / animation / video_note
 - **Batch download** — specify a message ID range `[start, end]` with an optional filter
 - **Single download** — send a `t.me` link or forward media to the Bot
@@ -417,7 +266,7 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 
 ### WebUI
 
-- **Interactive configuration page** — manage Telegram login, downloads, web access and MCP in your browser, with matching dropdown and single-line input heights. [Setup guide](./DEPLOY.md#webui-login).
+- **Interactive configuration page** — manage Telegram login, downloads, web access and MCP in your browser. [Setup guide](./DEPLOY.md#webui-login).
 - **Responsive interface** — light theme for desktop and mobile, with matching tab order and outline icons in desktop tabs and mobile bottom navigation
 - **Task search** — find tasks by ID or filename
 - **Automatic loading** — all five lists append more records near the bottom; bulk selection covers displayed records only
@@ -477,7 +326,6 @@ CI 应用版本显示为最近版本标签加短提交号，例如 `v0.3.2+92afc
 - **Multilingual** — Bot and WebUI support English / Simplified Chinese / Traditional Chinese / Japanese / Spanish / French / Russian / Ukrainian.
 - **rclone cloud upload** — optionally upload completed files to a cloud drive
 - **Proxy support** — HTTP, SOCKS4 and SOCKS5
-- **Local dev mode** — preview WebUI with mock data using `run_local.py`
 - **Bot connection status** — view connection health and latency. [Troubleshooting](./DEPLOY.md#bot-heartbeat-and-message-diagnostics)
 - **Logs** — view application logs in `data/log/tdl.log`
 
@@ -504,7 +352,6 @@ For more details, please refer to the following deployment matrix:
 | Docker image | Run a prebuilt image on a server or NAS | [Image deployment](./DEPLOY.md#docker-image-deployment) |
 | Docker Compose | Manage the service with the repository Compose file | [Compose deployment](./DEPLOY.md#docker-compose-deployment) |
 | Manual install | Run with Python 3.14 and Kurigram | [Manual install](./DEPLOY.md#manual-install) |
-| Local development | Debug WebUI with mock data, without a Telegram account | [Local dev mode](./DEPLOY.md#local-dev-mode) |
 | Agent / MCP | Submit and manage downloads through token-authenticated MCP tools | [MCP configuration and deployment](./DEPLOY.md#mcp-agent-integration) |
 
 ---
@@ -534,7 +381,7 @@ For more details, please refer to the following deployment matrix:
 | `/stop` | Stop download/forward/listen (interactive) | `/stop` |
 | `/help` `/start` | Show help | — |
 
-For a single post link or forwarded media, the Bot registers a new task only after persistence succeeds, then the Pending consumer queues it within the file concurrency limit. Submitting the same message while it is pending or downloading returns “Task already exists” with its original ID; persistence failures are reported explicitly. Use `/query pending` to inspect waiting tasks and search `data/log/tdl.log` by the displayed ID for submission and queue handoff logs.
+After sending a post link or forwarding media to the Bot, use `/query pending` to check waiting tasks. Repeating an unfinished submission returns “Task already exists” with its original ID. Check any save error before submitting again, and search `data/log/tdl.log` by task ID when troubleshooting.
 
 ---
 
@@ -550,10 +397,10 @@ For a single post link or forwarded media, the Bot registers a new task only aft
 | `/api/configuration` | GET / POST | Read/save settings without echoing credentials; requires management session and CSRF |
 | `/api/configuration/validate-filter` | POST | Validate `{"expression": "media_file_size >= 100MB"}`; return normalized `expression`, or 400 with `error`; requires management session and CSRF, without saving or Telegram access |
 | `/api/setup` | POST | Claim one-time setup with a code and CSRF; create the management password |
-| `/api/telegram` | POST | Submit async login/reconnect/cancel/logout on the downloader loop |
+| `/api/telegram` | POST | Sign in to Telegram, reconnect, cancel authorization or sign out |
 | `/submit_download` | POST | Submit one HTTPS `t.me` post link (JSON: `{"url": "https://t.me/channel/123"}`); returns durable queue acceptance, not completion |
 | `/get_download_list` | GET | Download list (`already_down=true` completed, `false` active), with per-file `active_streams` |
-| `/get_download_list?offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
+| `/get_download_list?already_down=true&offset=0&limit=50&search=keyword` | GET | Completed list (pagination + search) |
 | `/get_pending_list` | GET | Pending queue including held tasks; `offset` / `limit` pagination, `search` by ID/filename and `status=all/pending/paused` filtering |
 | `/get_failed_downloads` | GET | Failed list |
 | `/get_skipped_downloads` | GET | Skipped records and reasons; supports `offset`, `limit`, `search` |
@@ -579,151 +426,6 @@ For a single post link or forwarded media, the Bot registers a new task only aft
 
 ---
 
-## Architecture
-
-```mermaid
-flowchart TB
-    User["User<br/>WebUI / Browser"]
-    Agent["Agent<br/>MCP Client"]
-    Telegram["Telegram"]
-
-    subgraph Container["Docker Container"]
-        direction TB
-        Bot["Bot commands and media<br/>Kurigram"]
-        subgraph HTTP["Single HTTP service<br/>Default port: 5088"]
-            API["Pages / Web API<br/>Flask"]
-            MCP["MCP /mcp<br/>Streamable HTTP"]
-        end
-        Service["Download management"]
-        Store["Task storage"]
-        Recovery["Startup recovery"]
-        Consumer["Pending tasks"]
-        Scan["History scans / live monitoring"]
-        Queue["Download queue"]
-        Workers["Parallel downloads"]
-        Clients["Select message owner<br/>Bot / User Client"]
-        Stats["Progress and history"]
-    end
-
-    Data[("Persistent host directories<br/>data / downloads")]
-
-    User --> Bot
-    User -->|Session / CSRF| API
-    Agent -->|Bearer Token| MCP
-    API --> Service
-    MCP --> Service
-    Bot -->|Save task| Store
-    Service -->|Submission / Pending queries / retry| Store
-    Service <-->|Status queries / task control| Stats
-    Recovery -->|Restore states and IDs| Store
-    Store -->|Read Pending| Consumer
-    Consumer -->|Single download| Queue
-    Consumer -->|Recover range task| Scan
-    Bot -.->|Batch / monitoring| Scan
-    Scan --> Queue
-    Queue --> Workers
-    Workers --> Clients
-    Clients <-->|Download / forward| Telegram
-    Workers --> Stats
-    Store -.->|Tasks and IDs| Data
-    Stats -.->|Completed / failed history| Data
-    Clients -.->|Media / sessions| Data
-
-    classDef entry fill:#eff6ff,stroke:#2563eb,color:#0f172a
-    classDef pipeline fill:#f0fdf4,stroke:#16a34a,color:#0f172a
-    classDef storage fill:#fffbeb,stroke:#d97706,color:#0f172a
-    class User,Bot,API,Agent,MCP entry
-    class Service,Consumer,Scan,Queue,Workers,Clients pipeline
-    class Store,Stats,Data storage
-```
-
-The Bot, WebUI and MCP share the download backend. Tasks and history are stored in `data/`; media files go to the download directory.
-
-### Core Flow
-
-1. Complete setup and Telegram login in Configuration.
-2. Submit tasks through the Bot, WebUI or MCP to the persistent queue.
-3. Download or forward with the configured concurrency and track progress in WebUI or Telegram.
-4. Save completed or failed results; resume unfinished tasks after restart.
-
----
-
-## Changes from Upstream
-
-This fork is based directly on [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader). The sections below describe added features and fixes relative to that project, followed by its original changes relative to tangyoha v2.2.6.
-
-### Features Added in This Fork
-
-- **Parallel streams per file** — preallocated random-access downloads with resume support for new checkpoints. [Download settings](./DEPLOY.md#parameters)
-- **MCP agent integration** — submit and manage tasks through agents. [MCP setup](./DEPLOY.md#mcp-agent-integration)
-- **Multi-platform images** — prebuilt amd64 and arm64 images. [Image deployment](./DEPLOY.md#docker-image-deployment)
-
-### Fixes in This Fork
-
-- Start task consumption correctly when there are no saved tasks.
-- Improve restart recovery, batch forwarding and queue handling to avoid lost or duplicate tasks.
-- Fix concurrency accounting and retries.
-- Fix Bot media ownership and file-reference refresh.
-
-#### Regression Tests
-
-Offline tests use temporary data and mocked Telegram responses. Workflow script tests also need Node.js 24.
-
-```bash
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
-```
-
-CI runs the tests and checks amd64 and arm64 image builds.
-
-CI application versions show the nearest version tag plus a short commit hash, such as `v0.3.2+92afcd8`; image tags retain the full `sha-COMMIT_SHA`. See [image updates](./DEPLOY.md#docker-management).
-
-### MangoIsIllegal's Original Changes (Compared with tangyoha v2.2.6)
-
-<details>
-<summary>View inherited changes</summary>
-
-The following content is retained from the README of [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader). It describes that project's changes relative to tangyoha, inherited by this fork.
-
-Based on [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) v2.2.6, heavily modified.
-
-#### New Modules
-
-| Module | Description |
-|--------|-------------|
-| `module/task_store.py` | Task persistence + crash recovery, JSON storage, atomic writes, thread-safe |
-| `run_local.py` | Local dev mode with mock data, no Telegram needed |
-
-#### Core Changes
-
-| Change | tangyoha v2.2.6 | MangoIsIllegal's Changes |
-|--------|---------|--------------|
-| **Task persistence** | None (lost on restart) | `bot_tasks.json` + `task_counter.json`, auto-recovery |
-| **Download history** | None | `download_history.json`, completed/failed records |
-| **Task ID** | Incrementing int | `MMDD-N` format, daily reset, persistent counter |
-| **Web UI** | layui framework | Pure HTML/CSS/JS, light theme, responsive |
-| **WebUI features** | Basic list | 5 tabs + pause/resume + delete + retry + search + infinite scroll |
-| **Pending queue** | None | Restart tasks enter pending, consumed one by one, prevents FLOOD_WAIT storm |
-| **FLOOD_WAIT** | Blocking sleep | Non-blocking cooldown timestamp |
-| **Silent throttle** | Not detected | Speed < 200 KB/s for 120s → WebUI banner + TG notification (trigger & recovery) |
-| **Worker count** | Fixed (config) | WebUI dropdown 1-6, applies and saves immediately; survives restarts |
-| **Progress notification** | Timed polling | Updates about every 10s + immediate completion + FLOOD_WAIT countdown |
-| **Failure handling** | Log only | Failed list persisted + error reason + source link + WebUI retry |
-| **Stop task** | Direct stop | Incomplete files recorded as failed (manually stopped) |
-| **TCP timeout** | 10s (default) | 900s, prevents reconnect storm during throttling |
-| **Download retry** | 3x 5s interval | Surviving connections take over parts; only the last worker failing 3 consecutive attempts fails the download |
-| **Size mismatch** | Overwrite | Backup .bak, re-download, delete backup on success |
-| **File reference** | Log only | Auto fetch_message to refresh |
-| **Queue init** | Module import time | After event loop starts, avoids loop mismatch |
-| **Logging** | Single file | Unified `tdl.log`, 10MB rotation, 30-day retention |
-| **Bot notifications** | Simple status | Progress + completed file list + failure reasons + rate limit + recovery |
-| **Docker** | Single stage | Multi-stage build (alpine), rclone built-in |
-| **Version** | v2.2.6 | v1.0.0 (independent line) |
-
-</details>
-
----
-
 ## Authors and Maintainers
 
 This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https://github.com/MangoIsIllegal/hermes-telegram-downloader).
@@ -743,4 +445,4 @@ This repository is forked from [MangoIsIllegal/hermes-telegram-downloader](https
 ## Acknowledgements
 
 - Upstream: [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
-- Telegram SDK: [Kurigram](https://github.com/kurigram-org/kurigram) (provides the `pyrogram` import namespace)
+- Telegram SDK: [Kurigram](https://github.com/kurigram-org/kurigram)
