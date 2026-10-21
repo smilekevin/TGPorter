@@ -234,7 +234,7 @@ Saved Telegram sessions are reused after restart. Use **Test connection** to che
 
 Upgrading from a version with an in-memory signing key requires signing in once more; subsequent service restarts preserve the new login.
 
-The dashboard separates Active and Completed using task status; unfinished files display at most 99.9%. When a task leaves Active or you open Completed, the dashboard refreshes the latest completed records. Failed reads retry on subsequent polls without a page reload. Search and pagination retain the current filter, and history loads on demand.
+The dashboard separates Active and Completed using task status; unfinished files display at most 99.9%. When a task leaves Active or you open Completed, the dashboard refreshes the latest completed records. Failed reads retry on subsequent polls without a page reload. All five task lists append more records automatically when you scroll within 300 pixels of the bottom, retaining the current search and status filter. Short lists continue loading until the viewport is filled or all matches are shown. Bulk selection covers only displayed records.
 
 **Task stages:** Pending tasks show **Queued**; after scheduling, the Downloading tab shows **Preparing**, then **Downloading**, or **Paused** after a manual pause. Queue capacity and Telegram cooldowns appear as separate reasons; zero speed does not move a download back to the queue.
 

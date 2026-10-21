@@ -657,19 +657,6 @@
                     </div>
                 </template>
 
-                <!-- Loading indicator -->
-                <div x-show="completedLoading" class="text-center py-4">
-                    <svg class="animate-spin w-6 h-6 text-blue-500 mx-auto" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                    </svg>
-                    <p class="text-sm text-gray-400 mt-2"><span data-i18n="Loading..." x-text="t('Loading...')">Loading...</span></p>
-                </div>
-
-                <!-- Load more indicator -->
-                <div x-show="!completedHasMore && completedTasks.length > 0" class="text-center py-4">
-                    <p class="text-xs text-gray-400" x-text="t('All {count} items loaded', {count: completedTotal})"></p>
-                </div>
             </div>
         </div>
 
@@ -763,6 +750,11 @@
             </div>
         </div>
         {% include 'skipped_downloads.html' %}
+        <div class="text-center py-4" role="status" aria-live="polite">
+            <p x-show="searchLoading" class="text-sm text-gray-400" x-text="t('Loading...')"></p>
+            <p x-show="!searchLoading && !listHasMore && visibleTaskCount > 0" class="text-xs text-gray-400"
+               x-text="t('All {count} items loaded', {count: visibleTaskCount})"></p>
+        </div>
     </main>
 
     <!-- Delete Confirmation Modal -->
@@ -937,6 +929,9 @@
             },
             floodWait: { active: false, remaining: 0, reason: '' },
             throttle: { active: false, elapsed: 0 },
+            listPageSize: 100,
+            activeVisibleLimit: 100,
+            failedVisibleLimit: 100,
             activeTasks: [],
             completedTasks: [],
             completedTotal: 0,
@@ -948,6 +943,8 @@
             skippedTasks: [],
             skippedTotal: 0,
             skippedOffset: 0,
+            skippedLimit: 100,
+            skippedHasMore: true,
             skippedLoading: false,
             skippedRequestId: 0,
             skippedBusy: [],
@@ -971,6 +968,7 @@
             completedRefreshPending: false,
             completedRefreshVersion: 0,
             scrollListener: null,
+            scrollCheckQueued: false,
             navigationCollapsed: false,
             navigationObserver: null,
             navigationResizeListener: null,
@@ -1005,6 +1003,8 @@
 
             chooseActiveStatus(status) {
                 this.activeStatusFilter = status;
+                this.activeVisibleLimit = this.listPageSize;
+                this.queueScrollCheck();
                 this.selectedTasks = [];
                 this.$refs.statusFilter.open = false;
                 this.$refs.statusFilterButton.focus();
@@ -1088,14 +1088,23 @@
                 return this.selectedActiveTasks.some(task => task.status === 'paused') &&
                     this.selectedActiveTasks.some(task => task.status !== 'paused');
             },
-            get filteredActiveTasks() {
+            get matchingActiveTasks() {
                 return this.activeTasks.filter(task => this.matchesSearch(task) &&
                     (this.activeStatusFilter === 'all' ||
                      (this.activeStatusFilter === 'preparing' ? task.status === 'active' && task.phase === 'preparing' :
                       this.activeStatusFilter === 'active' ? task.status === 'active' && task.phase !== 'preparing' :
                       task.status === this.activeStatusFilter)));
             },
-            get filteredFailedTasks() { return this.failedTasks.filter(task => this.matchesSearch(task)); },
+            // Live snapshots retain all rows for status transitions and search; render them in pages.
+            get filteredActiveTasks() { return this.matchingActiveTasks.slice(0, this.activeVisibleLimit); },
+            get matchingFailedTasks() { return this.failedTasks.filter(task => this.matchesSearch(task)); },
+            get filteredFailedTasks() { return this.matchingFailedTasks.slice(0, this.failedVisibleLimit); },
+            get listHasMore() {
+                return {active: this.filteredActiveTasks.length < this.matchingActiveTasks.length,
+                    failed: this.filteredFailedTasks.length < this.matchingFailedTasks.length,
+                    pending: this.pendingHasMore, completed: this.completedHasMore,
+                    skipped: this.skippedHasMore}[this.activeTab];
+            },
             get visibleTasks() {
                 if (this.activeTab === 'skipped') return this.skippedTasks;
                 if (this.activeTab === 'active') return this.filteredActiveTasks;
@@ -1113,8 +1122,8 @@
                     skipped: this.skippedTotal}[this.activeTab];
             },
             get searchLoading() {
-                return this.activeTab === 'completed' ? this.completedLoading :
-                    this.activeTab === 'pending' && this.pendingLoading;
+                return {completed: this.completedLoading, pending: this.pendingLoading,
+                    skipped: this.skippedLoading}[this.activeTab] || false;
             },
 
             get completedCountDisplay() {
@@ -1127,6 +1136,8 @@
                 this.initialized = true;
                 this.scrollListener = () => this.onScroll();
                 window.addEventListener('scroll', this.scrollListener, { passive: true });
+                window.addEventListener('resize', this.scrollListener);
+                this.$watch?.('activeTab', () => this.queueScrollCheck());
                 this.$nextTick(() => this.observeNavigation());
                 await Promise.allSettled([
                     this.fetchVersion(), this.fetchActive(),
@@ -1141,7 +1152,8 @@
                     const requests = [this.fetchDownloadStatus(), this.fetchFloodWait(), this.fetchActive(), this.fetchBotStatus()];
                     if (now - lastPending >= 5000) {
                         lastPending = now;
-                        requests.push(this.pollPendingRefresh(), this.fetchFailed(), this.fetchSkipped());
+                        requests.push(this.pollPendingRefresh(), this.fetchFailed());
+                        if (!this.skippedLoading) requests.push(this.fetchSkipped());
                     }
                     if (this.completedRefreshPending || now - lastCompleted >= 10000) {
                         lastCompleted = now;
@@ -1156,25 +1168,35 @@
                 if (this.stopPolling) this.stopPolling();
                 clearTimeout(this.taskSearchTimer);
                 window.removeEventListener('scroll', this.scrollListener);
+                window.removeEventListener('resize', this.scrollListener);
                 if (this.navigationObserver) this.navigationObserver.disconnect();
                 window.removeEventListener('resize', this.navigationResizeListener);
             },
 
+            queueScrollCheck() {
+                // Wait for card rendering before checking a short page or a newly opened tab.
+                if (!this.disposed && !this.scrollCheckQueued && this.$nextTick && typeof document !== 'undefined') {
+                    this.scrollCheckQueued = true;
+                    this.$nextTick(() => {
+                        this.scrollCheckQueued = false;
+                        if (!this.disposed) this.onScroll();
+                    });
+                }
+            },
+
             onScroll() {
-                const scrollTop = document.documentElement.scrollTop;
-                const scrollHeight = document.documentElement.scrollHeight;
-                const clientHeight = document.documentElement.clientHeight;
-                if (this.activeTab === 'completed') {
-                    if (this.completedLoading || (!this.taskSearch && this.completedPolling) || !this.completedHasMore) return;
-                    if (scrollTop + clientHeight >= scrollHeight - 300) {
-                        this.loadMoreCompleted();
-                    }
-                } else if (this.activeTab === 'pending') {
-                    // Infinite loading for Pending, matching Completed.
-                    if (this.pendingLoading || !this.pendingHasMore) return;
-                    if (scrollTop + clientHeight >= scrollHeight - 300) {
-                        this.loadMorePending();
-                    }
+                if (this.disposed) return;
+                const page = document.documentElement;
+                if (page.scrollTop + page.clientHeight < page.scrollHeight - 300) return;
+                if (this.activeTab === 'completed') return this.loadMoreCompleted();
+                if (this.activeTab === 'pending') return this.loadMorePending();
+                if (this.activeTab === 'skipped') return this.loadMoreSkipped();
+                if (this.activeTab === 'active' && this.listHasMore) {
+                    this.activeVisibleLimit += this.listPageSize;
+                    this.queueScrollCheck();
+                } else if (this.activeTab === 'failed' && this.listHasMore) {
+                    this.failedVisibleLimit += this.listPageSize;
+                    this.queueScrollCheck();
                 }
             },
 
@@ -1229,6 +1251,7 @@
                     this.completedLastTotal = data2.total;
                     this.completedHasMore = this.completedOffset < this.completedTotal;
                     if (version === this.completedRefreshVersion) this.completedRefreshPending = false;
+                    this.queueScrollCheck();
                 } catch(e) {
                     // Do not acknowledge a new count until its rows are loaded.
                 } finally {
@@ -1242,6 +1265,7 @@
                 const requestId = ++this.completedRequestId;
                 const query = this.taskSearch;
                 const offset = this.completedOffset;
+                let loaded = false;
                 try {
                     const searchParam = query ? `&search=${encodeURIComponent(query)}` : '';
                     const res = await authenticatedFetch(`/get_download_list?already_down=true&offset=${this.completedOffset}&limit=${this.completedLimit}${searchParam}`);
@@ -1257,9 +1281,11 @@
                     this.completedOffset += tasks.length;
                     this.completedTotal = data.total ?? this.completedTasks.length;
                     if (!query && offset === 0) this.completedLastTotal = this.completedTotal;
-                    this.completedHasMore = this.completedOffset < this.completedTotal;
+                    this.completedHasMore = tasks.length > 0 && this.completedOffset < this.completedTotal;
+                    loaded = true;
                 } catch(e) {}
                 if (requestId === this.completedRequestId) this.completedLoading = false;
+                if (loaded) this.queueScrollCheck();
             },
 
             onTaskSearchInput() {
@@ -1268,6 +1294,11 @@
                 // Invalidate in-flight pages before the debounce delay expires.
                 this.completedRequestId++;
                 this.pendingRequestId++;
+                this.skippedRequestId++;
+                this.activeVisibleLimit = this.failedVisibleLimit = this.listPageSize;
+                this.queueScrollCheck();
+                this.skippedTasks = [];
+                this.skippedLoading = true;
                 this.completedTasks = [];
                 this.pendingTasks = [];
                 this.completedLoading = true;
@@ -1276,8 +1307,7 @@
                     this.resetCompletedList();
                     this.pendingLoading = false;
                     this.fetchPending(true);
-                    this.skippedOffset = 0;
-                    this.fetchSkipped();
+                    this.fetchSkipped(true);
                 }, 300);
             },
 
@@ -1371,6 +1401,7 @@
                         }
                     }
                     Object.values(newMap).forEach(t => this.activeTasks.push(t));
+                    this.queueScrollCheck();
                     return true;
                 } catch(e) { return false; }
             },
@@ -1387,26 +1418,65 @@
                 await this.fetchFailed();
             },
 
-            async fetchSkipped() {
+            async fetchSkipped(reset = false) {
+                if (reset) {
+                    this.skippedRequestId++;
+                    this.skippedTasks = [];
+                    this.skippedOffset = 0;
+                    this.skippedHasMore = true;
+                    this.skippedLoading = false;
+                }
+                return this.loadSkipped(false);
+            },
+
+            loadMoreSkipped() {
+                if (!this.skippedHasMore || this.skippedLoading) return;
+                return this.loadSkipped(true);
+            },
+
+            async loadSkipped(append) {
+                // Refreshes supersede pending pages after deletions; a page never interrupts a refresh.
+                if (append && this.skippedLoading) return;
                 const requestId = ++this.skippedRequestId;
+                const query = this.taskSearch.trim();
+                const start = append ? this.skippedOffset : 0;
+                const target = append ? this.skippedLimit : Math.max(this.skippedLimit, this.skippedOffset);
                 this.skippedLoading = true;
+                let loaded = false;
                 try {
-                    const response = await authenticatedFetch('/get_skipped_downloads?offset=' + this.skippedOffset + '&limit=50&search=' + encodeURIComponent(this.taskSearch.trim()));
-                    if (!response.ok) return;
-                    const data = await response.json();
-                    if (requestId !== this.skippedRequestId) return;
-                    this.skippedTasks = data.tasks || [];
-                    this.skippedTotal = data.total || 0;
+                    const rows = [];
+                    let total = 0;
+                    // The production API caps each request at 200 rows. Refresh the loaded
+                    // prefix in bounded chunks to keep loaded pages after insertions and deletions.
+                    while (rows.length < target) {
+                        const limit = Math.min(200, target - rows.length);
+                        const response = await authenticatedFetch('/get_skipped_downloads?offset=' +
+                            (start + rows.length) + '&limit=' + limit + '&search=' + encodeURIComponent(query));
+                        if (response.ok === false) throw new Error('Skipped list request failed');
+                        const data = await response.json();
+                        if (requestId !== this.skippedRequestId || query !== this.taskSearch.trim()) return;
+                        if (!Array.isArray(data.tasks) || !Number.isInteger(data.total) || data.total < 0) {
+                            throw new Error('Invalid skipped list');
+                        }
+                        total = data.total;
+                        rows.push(...data.tasks);
+                        if (!data.tasks.length || start + rows.length >= total) break;
+                    }
+                    const previous = append ? this.skippedTasks : [];
+                    const byId = new Map(previous.map(task => [task.task_id, task]));
+                    rows.forEach(task => byId.set(task.task_id, task));
+                    this.skippedTasks = [...byId.values()];
+                    this.skippedOffset = start + rows.length;
+                    this.skippedTotal = total;
+                    this.skippedHasMore = rows.length > 0 && this.skippedOffset < total;
                     if (this.activeTab === 'skipped' && !this.batchBusy) {
                         const visibleIds = new Set(this.skippedTasks.map(task => task.task_id));
                         this.selectedTasks = this.selectedTasks.filter(id => visibleIds.has(id));
                     }
-                    if (this.skippedOffset >= this.skippedTotal && this.skippedOffset > 0) {
-                        this.skippedOffset = Math.max(0, Math.ceil(this.skippedTotal / 50) - 1) * 50;
-                        await this.fetchSkipped();
-                    }
+                    loaded = true;
                 } catch(e) { this.showToast(this.t('Network error'), 'error'); }
                 finally { if (requestId === this.skippedRequestId) this.skippedLoading = false; }
+                if (loaded) this.queueScrollCheck();
             },
 
             async skippedAction(taskId, action) {
@@ -1427,6 +1497,7 @@
                     const failedRes = await authenticatedFetch('/get_failed_downloads');
                     const failedData = await failedRes.json();
                     this.failedTasks = failedData;
+                    this.queueScrollCheck();
                 } catch(e) {}
             },
 
@@ -1440,8 +1511,10 @@
                 this.pendingLoading = true;
                 const requestId = ++this.pendingRequestId;
                 const query = this.taskSearch;
+                let loaded = false;
                 try {
                     const res = await authenticatedFetch(`/get_pending_list?offset=${this.pendingOffset}&limit=${this.pendingLimit}&search=${encodeURIComponent(query)}`);
+                    if (res.ok === false) throw new Error('Pending list request failed');
                     const data = await res.json();
                     if (query !== this.taskSearch || requestId !== this.pendingRequestId) return;
                     const tasks = data.tasks || data || [];
@@ -1450,16 +1523,16 @@
                     this.pendingTasks = [...this.pendingTasks, ...fresh];
                     this.pendingOffset += tasks.length;
                     this.pendingTotal = data.total ?? this.pendingTasks.length;
-                    if (tasks.length < this.pendingLimit) {
-                        this.pendingHasMore = false;
-                    }
+                    this.pendingHasMore = tasks.length > 0 && this.pendingOffset < this.pendingTotal;
+                    loaded = true;
                 } catch(e) {}
                 if (requestId === this.pendingRequestId) this.pendingLoading = false;
+                if (loaded) this.queueScrollCheck();
             },
 
             loadMorePending() {
                 if (this.activeTab !== 'pending') return;
-                this.fetchPending();  // Append the next page without resetting.
+                return this.fetchPending();  // Append the next page without resetting.
             },
 
             // Refresh loaded task state without clearing the list or changing offset.
@@ -1471,6 +1544,7 @@
                 try {
                     // Refresh the loaded range and check for newly queued tasks.
                     const res = await authenticatedFetch(`/get_pending_list?offset=0&limit=${Math.max(this.pendingOffset, this.pendingLimit)}&search=${encodeURIComponent(query)}`);
+                    if (res.ok === false) throw new Error('Pending list request failed');
                     const data = await res.json();
                     if (query !== this.taskSearch || requestId !== this.pendingRequestId) return;
                     const tasks = data.tasks || data || [];
@@ -1491,9 +1565,11 @@
                     if (freshInView.length) {
                         // Append a newly observed task in the loaded range, preserving created_ts order.
                         this.pendingTasks = [...this.pendingTasks, ...freshInView];
-                        this.pendingOffset += freshInView.length;
                     }
                     this.pendingTotal = total;
+                    this.pendingOffset = tasks.length;
+                    this.pendingHasMore = tasks.length > 0 && this.pendingOffset < total;
+                    this.queueScrollCheck();
                 } catch(e) {}
             },
 
