@@ -206,6 +206,8 @@ Defaults apply to new download tasks without restart. Explicit task/channel expr
 
 `max_download_task` controls simultaneous files (1–6); `file_download_concurrency` controls connections per file (1–32); `download_part_size_mb` sets part size (1–4096 MiB). Defaults are 5 files, 4 connections per file and 64 MiB parts. Leave transport capacity at `0` for automatic sizing.
 
+The low-speed warning uses a shared timer: sustained download speed below 200 KiB/s for 120 seconds triggers a notification. Completion, failure or cancellation resets this timer and clears the warning; new tasks do not inherit the finished task's elapsed time. Restored checkpoint bytes do not start the timer before new data arrives.
+
 Partial files and checkpoints are stored under `downloads/.temp/`. Keep this directory when restarting or upgrading if you want to resume unfinished downloads. Existing downloads retain their saved part settings; changed settings apply to new downloads. An abrupt exit may require downloading a small amount of recent data again.
 
 Older checkpoint formats are not supported. Finish older downloads before upgrading, or explicitly delete the affected task's cache and download again. Unsupported cache is preserved with an error; older application versions cannot resume new checkpoints either.
