@@ -165,7 +165,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
 
         node = TaskNode(
             chat_id=cid,
-            from_user_id=from_user_id or cid,
+            from_user_id=from_user_id,
             reply_message_id=0,
             replay_message="WebUI retry",
             limit=1,
@@ -184,7 +184,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
             end_offset_id=0,
             limit=1,
             download_filter=None,
-            from_user_id=from_user_id or cid,
+            from_user_id=from_user_id,
             task_type="download",
             extra_data={"task_id_display": node.task_id_display, "message_id": msg_id,
                         "message_client": "bot" if owner is _bot.bot else "user"},
@@ -785,7 +785,7 @@ class DownloadService:
                 end_offset_id=0,
                 limit=1,
                 download_filter=None,
-                from_user_id=from_user_id or (int(chat_id) if str(chat_id).lstrip("-").isdigit() else chat_id),
+                from_user_id=from_user_id,
                 task_type="retry",
                 extra_data={"source_task_id": task_id, "message_id": msg_id, "pending": True},
             )

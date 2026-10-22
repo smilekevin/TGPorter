@@ -25,6 +25,18 @@ class SettingsTests(unittest.TestCase):
         app.load_config()
         return app
 
+    def test_requester_directory_setting_survives_restart(self):
+        app = self.load()
+        fields = ["from_user_id", "chat_title", "media_datetime"]
+        app.settings.save({"file_path_prefix": fields})
+        app.apply_settings()
+        restarted = self.load()
+        self.assertEqual(restarted.file_path_prefix, fields)
+        self.assertEqual(Path(restarted.get_file_save_path("video", "channel", "2026_10", 123)),
+                         Path(restarted.save_path) / "123/channel/2026_10")
+        with self.assertRaisesRegex(ValueError, "unsupported directory field"):
+            app.settings.save({"file_path_prefix": ["sender_id"]})
+
     def test_fresh_start_needs_no_yaml_and_creates_defaults(self):
         app = self.load()
         self.assertFalse(self.legacy.exists())

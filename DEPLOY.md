@@ -126,7 +126,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `save_path` | File save path | `"./downloads"` |
 | `media_types` | Media types to download | `["audio", "document", "photo", "video", "voice", "animation"]` |
 | `file_formats` | Extension lists for audio/document/video; all accepts every format | `{"audio": ["all"], "document": ["pdf", "epub"], "video": ["mp4"]}` |
-| `file_path_prefix` | Ordered directory-name fields; an empty list adds none | `["chat_title", "media_datetime"]` |
+| `file_path_prefix` | Ordered directory fields: `from_user_id`, `chat_title`, `media_datetime`, `media_type`; an empty list adds none | `["chat_title", "media_datetime"]` |
 | `download_filters` | Default download expressions, combined with OR; at most 32 rules of 4096 characters each | `[]` |
 | `file_name_prefix` | Ordered filename fields; an empty list uses the message-ID fallback | `["file_name"]` |
 | `file_name_prefix_split` | Separator between filename fields | `" - "` |
@@ -153,6 +153,18 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `max_concurrent_transmissions` | 0 calculates capacity automatically; nonzero overrides SDK transport capacity | `0` |
 | `upload_drive` | Optional cloud-upload configuration; nested fields are below | `{}` |
 | `debug_web` | Flask debug state and ASGI debug logging | `false` |
+
+#### Download directories
+
+In Configuration → Downloads → Directory name fields, select the fields and arrange their order. Each selected field creates a separate directory level. To group files by the person who submitted the Bot task, select **Requester user ID** and move it before Chat title and Media date:
+
+```text
+downloads/123456/channel/2026_10/file.mp4
+```
+
+The requester is the person who submitted the Bot task, not the source message sender or the downloader account. WebUI/MCP submissions and automatic scans without a requester use `shared` at that level. Media and text downloads use the same directory rules. Retries and recovered tasks retain their original requester.
+
+This field is optional; the default remains Chat title → Media date. Saving directory settings applies without restarting and does not move existing files.
 
 #### Nested settings
 

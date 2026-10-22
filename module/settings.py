@@ -9,6 +9,9 @@ import threading
 from lang import parse_language
 
 
+FILE_PATH_FIELDS = {"from_user_id", "chat_title", "media_datetime", "media_type"}
+
+
 # One schema drives persistence and the native Configuration form.
 FIELDS = {
     "api_id": (0, "Basic configuration", "API ID"),
@@ -94,6 +97,8 @@ def validate_settings(values):
                 "filter_advertisement_list", "replace_advertisement_list"):
         if not all(isinstance(item, str) for item in result[key]):
             raise ValueError(f"{key}: expected a list of strings")
+    if not set(result["file_path_prefix"]) <= FILE_PATH_FIELDS:
+        raise ValueError("file_path_prefix: unsupported directory field")
     if not set(result["media_types"]) <= {"audio", "document", "photo", "video", "voice", "animation", "video_note", "sticker"}:
         raise ValueError("media_types: unsupported media type")
     from module.filter import MAX_DOWNLOAD_FILTERS, validate_download_filter

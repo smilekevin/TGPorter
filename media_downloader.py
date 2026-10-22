@@ -456,6 +456,7 @@ async def _get_media_meta(
     message: pyrogram.types.Message,
     media_obj: Union[Audio, Document, Photo, Video, VideoNote, Voice],
     _type: str,
+    from_user_id: Union[int, str, None] = None,
 ) -> Tuple[str, str, Optional[str]]:
     """Extract file name and file id from media object."""
     if _type in ["audio", "document", "video"]:
@@ -476,7 +477,7 @@ async def _get_media_meta(
 
     if _type in ["voice", "video_note"]:
         file_format = media_obj.mime_type.split("/")[-1]
-        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name)
+        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name, from_user_id)
         file_name = "{} - {}_{}.{}".format(
             message.id, _type, media_obj.date.isoformat(), file_format,
         )
@@ -515,7 +516,7 @@ async def _get_media_meta(
         gen_file_name = (
             app.get_file_name(message.id, file_name, caption) + file_name_suffix
         )
-        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name)
+        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name, from_user_id)
         temp_file_name = os.path.join(app.temp_save_path, dirname, gen_file_name)
         file_name = os.path.join(file_save_path, gen_file_name)
     media_identity = getattr(media_obj, "file_unique_id", None)
@@ -604,13 +605,16 @@ async def add_download_task(message: pyrogram.types.Message, node: TaskNode):
     return True
 
 
-async def save_msg_to_file(app, chat_id: Union[int, str], message: pyrogram.types.Message):
+async def save_msg_to_file(
+    app, chat_id: Union[int, str], message: pyrogram.types.Message,
+    from_user_id: Union[int, str, None] = None,
+):
     """Write message text into file"""
     dirname = validate_title(
         message.chat.title if message.chat and message.chat.title else str(chat_id)
     )
     datetime_dir_name = message.date.strftime(app.date_format) if message.date else "0"
-    file_save_path = app.get_file_save_path("msg", dirname, datetime_dir_name)
+    file_save_path = app.get_file_save_path("msg", dirname, datetime_dir_name, from_user_id)
     file_name = os.path.join(
         app.temp_save_path, file_save_path,
         f"{app.get_file_name(message.id, None, None)}.txt",
@@ -650,7 +654,7 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
         if cached:
             node.source_chat_title = cached
     if matches_filter and app.enable_download_txt and message.text and not message.media:
-        download_status, file_name = await save_msg_to_file(app, node.chat_id, message)
+        download_status, file_name = await save_msg_to_file(app, node.chat_id, message, node.from_user_id)
     file_size = os.path.getsize(file_name) if file_name else 0
     if download_status is DownloadStatus.SuccessDownload:
         remove_skipped_download(f"{node.chat_id}_{message.id}")
@@ -809,7 +813,7 @@ async def download_media(
             if _media is None:
                 continue
             file_name, temp_file_name, file_format = await _get_media_meta(
-                node.chat_id, message, _media, _type
+                node.chat_id, message, _media, _type, from_user_id=node.from_user_id
             )
             # Keep the exact staging path for active checks and failed-task cleanup.
             node.download_temp_paths[message.id] = temp_file_name

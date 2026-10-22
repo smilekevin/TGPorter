@@ -741,7 +741,8 @@ class Application:
         return ret
 
     def get_file_save_path(
-        self, media_type: str, chat_title: str, media_datetime: str
+        self, media_type: str, chat_title: str, media_datetime: str,
+        from_user_id: Union[int, str, None] = None,
     ) -> str:
         """Get file save path prefix.
 
@@ -756,15 +757,24 @@ class Application:
         media_datetime: str
             media datetime
 
+        from_user_id: int or str, optional
+            Task requester, not the source message sender; absent IDs use shared.
+
         Returns
         -------
         str
             file save path prefix
         """
 
+        # Only a positive Telegram requester ID may become a directory component.
+        requester = str(from_user_id or "")
+        requester = (requester if requester.isascii() and requester.isdecimal()
+                     and int(requester) > 0 else "shared")
         res: str = self.save_path
         for prefix in self.file_path_prefix:
-            if prefix == "chat_title":
+            if prefix == "from_user_id":
+                res = os.path.join(res, requester)
+            elif prefix == "chat_title":
                 res = os.path.join(res, chat_title)
             elif prefix == "media_datetime":
                 res = os.path.join(res, media_datetime)

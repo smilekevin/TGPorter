@@ -142,7 +142,7 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `save_path` | 文件保存路径 | `"./downloads"` |
 | `media_types` | 下载的媒体类型列表 | `["audio", "document", "photo", "video", "voice", "animation"]` |
 | `file_formats` | audio/document/video 的扩展名列表，all 接受全部格式 | `{"audio": ["all"], "document": ["pdf", "epub"], "video": ["mp4"]}` |
-| `file_path_prefix` | 目录命名字段，空列表不添加目录字段 | `["chat_title", "media_datetime"]` |
+| `file_path_prefix` | 有序目录字段：`from_user_id`、`chat_title`、`media_datetime`、`media_type`；空列表不添加目录字段 | `["chat_title", "media_datetime"]` |
 | `download_filters` | 默认下载表达式列表，按 OR 组合；最多 32 条，每条最多 4096 字符 | `[]` |
 | `file_name_prefix` | 文件命名字段，空列表使用消息 ID 回退 | `["file_name"]` |
 | `file_name_prefix_split` | 文件名各字段之间的分隔符 | `" - "` |
@@ -169,6 +169,18 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `max_concurrent_transmissions` | 0 自动计算；非零为 SDK 传输容量覆盖值 | `0` |
 | `upload_drive` | 可选云盘上传设置，嵌套字段见下表 | `{}` |
 | `debug_web` | Flask 调试状态及 ASGI 调试日志 | `false` |
+
+#### 下载目录
+
+在 Configuration → 下载 → 目录命名字段中，勾选需要的字段并调整顺序，每个字段分别生成一层目录。要按 Bot 任务提交者分目录，勾选**提交用户 ID**，并移到聊天名称、媒体日期之前：
+
+```text
+downloads/123456/频道/2026_10/文件.mp4
+```
+
+提交用户是发起 Bot 任务的人，不是源消息发送者或下载账号。网页、MCP 提交及自动扫描等没有提交者的任务，在这一层使用 `shared`。媒体和文本下载使用相同的目录规则，重试和恢复任务保留原提交者。
+
+此字段为可选项，默认仍按聊天名称 → 媒体日期分目录。保存目录设置无需重启，不会搬迁已有文件。
 
 #### 嵌套配置
 
