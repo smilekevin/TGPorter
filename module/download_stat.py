@@ -44,8 +44,8 @@ _task_heartbeat: dict = {}  # composite_key → last progress timestamp
 _TASK_HEARTBEAT_TIMEOUT = 300
 
 # Silent-throttle state machine: low speed enters SLOW_PENDING, sustained low speed notifies
-# THROTTLED, and recovery returns to IDLE. Completed downloads preserve the baseline for the
-# next task. Do not repeat notifications while notified; send a clear notification once normal
+# THROTTLED, and recovery returns to IDLE. Task termination resets the shared baseline.
+# Do not repeat notifications while notified; send a clear notification once normal
 # speed returns.
 _throttle_state: dict = {
     "since": 0.0,             # Low-speed start time.
@@ -63,6 +63,12 @@ _SLOW_CLEAR_SUSTAIN_SEC = 15       # Clear after 15 seconds of sustained recover
 # pattern via _sync_lock.
 _sync_lock = __import__('threading').RLock()  # History snapshots can nest inside synchronous writes.
 _download_streams: dict = {}  # Runtime-only tokens; never restore stream counts from history.
+
+
+def _reset_throttle_state():
+    """Do not carry a finished task's low-speed interval into later downloads."""
+    with _sync_lock:
+        _throttle_state.update(since=0.0, notified=False, last_active_time=0.0, recovery_since=0.0)
 
 
 def prepare_download(message_id, node, *, filename="", reason="Fetching file information..."):
@@ -190,6 +196,7 @@ def is_task_paused(task_id) -> bool:
 def clear_task_heartbeat(composite_key: str):
     """Clear a task heartbeat when the task completes, fails or is cancelled."""
     _task_heartbeat.pop(composite_key, None)
+    _reset_throttle_state()
 
 
 def touch_task_heartbeat(composite_key: str):
@@ -250,6 +257,7 @@ def delete_task(task_id, *, discard_partial=True) -> bool:
                         del _download_result[chat_id]
                     found = True
         if found:
+            _reset_throttle_state()
             save_downloads()
     return found
 
@@ -272,6 +280,7 @@ def delete_download_result_entry(chat_id, msg_id) -> bool:
             if not messages:
                 _download_result.pop(chat_key, None)
         if found:
+            _reset_throttle_state()
             save_downloads()
     return found
 
@@ -298,6 +307,7 @@ def add_failed_download(chat_id, msg_id, task_id, file_name, error_message, tota
             "from_user_id": from_user_id,
             "timestamp": time.time(),
         })
+        _reset_throttle_state()
     save_downloads()  # Persist failures immediately.
 
 
@@ -605,8 +615,8 @@ async def update_download_status(
             cur_speed = dl_entry.get("download_speed", 0)
             dl_total = dl_entry.get("total_size", 0)
             dl_down = dl_entry.get("down_byte", 0)
-            # Check only incomplete downloads with actual progress.
-            if dl_total > 0 and 0 < dl_down < dl_total:
+            # Restored checkpoint bytes are not a live low-speed sample.
+            if not initial and dl_total > 0 and 0 < dl_down < dl_total:
                 if cur_speed < _SLOW_THRESHOLD_BPS:
                     # Reset the recovery timer while speed remains low.
                     _throttle_state["recovery_since"] = 0.0
@@ -631,7 +641,8 @@ async def update_download_status(
                         _throttle_state["since"] = 0
                         _throttle_state["notified"] = False
                         _throttle_state["recovery_since"] = 0.0
-            # Keep the baseline for the next task while idle or complete.
+            elif dl_total > 0 and dl_down >= dl_total:
+                _reset_throttle_state()
 
     # Send silent-throttle notifications outside the lock to avoid awaiting while locked.
     if _throttle_action == "notify" and node.bot and getattr(node, "from_user_id", ""):

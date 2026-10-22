@@ -84,7 +84,7 @@
 
 - **自动等待** — Telegram 限流后等待冷却结束，再继续请求
 - **保留任务** — 等待期间保留下载进度和排队任务
-- **限速提示** — 在网页和 Telegram 提示限流与恢复状态
+- **限速提示** — 在网页和 Telegram 提示限流与恢复状态；任务结束后重新计时，避免新任务继承旧的低速时间
 
 ### Agent 接入
 
@@ -308,7 +308,7 @@ docker run -d \
 
 - **Automatic waiting** — wait for Telegram's cooldown before continuing requests
 - **Preserved tasks** — keep download progress and queued tasks while waiting
-- **Throttle notifications** — show rate-limit and recovery status in the WebUI and Telegram
+- **Throttle notifications** — show rate-limit and recovery status in the WebUI and Telegram; reset the timer when a task ends so new tasks do not inherit an earlier low-speed interval
 
 ### Agent Integration
 
