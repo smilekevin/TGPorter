@@ -76,6 +76,7 @@ def prepare_download(message_id, node, *, filename="", reason="Fetching file inf
                 "file_name": "", "display_filename": filename, "start_time": time.time(), "end_time": 0,
                 "download_speed": 0, "each_second_total_download": 0,
                 "task_id": node.task_id, "task_id_display": node.task_id_display,
+                "from_user_id": node.from_user_id,
                 "source_chat_title": node.source_chat_title,
                 "source_chat_id": node.source_chat_id,
                 "source_message_id": node.source_message_id,
@@ -502,6 +503,7 @@ async def update_download_status(
             _download_result[chat_id] = {}
 
         if _download_result[chat_id].get(message_id):
+            _download_result[chat_id][message_id]["from_user_id"] = node.from_user_id
             _download_result[chat_id][message_id].pop("completion_reason", None)
             last_download_byte = _download_result[chat_id][message_id]["down_byte"]
             last_time = _download_result[chat_id][message_id]["end_time"]
@@ -575,6 +577,7 @@ async def update_download_status(
                 "download_speed": 0 if initial else down_byte / max(cur_time - start_time, 0.001),
                 "each_second_total_download": each_second_total_download,
                 "task_id": node.task_id,
+                "from_user_id": node.from_user_id,
                 "task_id_display": getattr(node, "task_id_display", ""),
                 "source_chat_title": getattr(node, "source_chat_title", ""),
                 "source_chat_id": getattr(node, "source_chat_id", 0),
@@ -703,6 +706,7 @@ def _save_downloads():
                 if value["down_byte"] == value["total_size"] and value["total_size"] > 0:
                     completed.append({
                         "task_id": str(value.get("task_id", "")),
+                        "from_user_id": value.get("from_user_id", ""),
                         "chat_id": str(chat_id),
                         "msg_id": str(msg_id),
                         "file_name": value.get("file_name", ""),
@@ -763,6 +767,7 @@ def load_downloads():
                     "download_speed": 0,
                     "each_second_total_download": 0,
                     "task_id": item.get("task_id", ""),
+                    "from_user_id": item.get("from_user_id", ""),
                     "task_id_display": item.get("task_id_display", ""),
                     "source_chat_title": item.get("chat_title", ""),
                     "completion_reason": item.get("completion_reason", ""),

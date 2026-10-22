@@ -33,13 +33,15 @@ def _text(value, limit=80):
     return html.escape(value if len(value) <= limit else value[:limit - 1] + "…")
 
 
-def build_task_query(service, status="all", page=1):
-    """Return one bounded page with category counts and read-only navigation."""
+def build_task_query(service, status="all", page=1, *, user_id):
+    """Count and paginate only tasks submitted by this Telegram user."""
+    if type(user_id) is not int or user_id <= 0:
+        raise ValueError("A Telegram user ID is required")
     groups = {
-        "active": service.get_download_list(already_down="false"),
-        "pending": service.web_get_pending_list(limit=0)["tasks"],
-        "completed": service.get_download_list(already_down="true")["tasks"],
-        "failed": service.web_get_failed_downloads(),
+        "active": service.get_download_list(already_down="false", from_user_id=user_id),
+        "pending": service.web_get_pending_list(limit=0, from_user_id=user_id)["tasks"],
+        "completed": service.get_download_list(already_down="true", from_user_id=user_id)["tasks"],
+        "failed": service.web_get_failed_downloads(from_user_id=user_id),
     }
     rows = [(kind, task) for kind, tasks in groups.items()
             if status in ("all", kind) for task in tasks]
@@ -67,14 +69,14 @@ def build_task_query(service, status="all", page=1):
     if not rows:
         lines.append(_t("No tasks"))
     lines.extend(["", _t("Page {page}/{pages} ({total} tasks)", page=page, pages=pages, total=len(rows))])
-    tabs = [InlineKeyboardButton(_t(label), callback_data=f"tasks:{kind}:1")
+    tabs = [InlineKeyboardButton(_t(label), callback_data=f"tasks:{user_id}:{kind}:1")
             for kind, label in _STATUS_LABELS.items()]
     navigation = []
     if page > 1:
-        navigation.append(InlineKeyboardButton(_t("Previous"), callback_data=f"tasks:{status}:{page - 1}"))
-    navigation.append(InlineKeyboardButton(_t("Refresh"), callback_data=f"tasks:{status}:{page}"))
+        navigation.append(InlineKeyboardButton(_t("Previous"), callback_data=f"tasks:{user_id}:{status}:{page - 1}"))
+    navigation.append(InlineKeyboardButton(_t("Refresh"), callback_data=f"tasks:{user_id}:{status}:{page}"))
     if page < pages:
-        navigation.append(InlineKeyboardButton(_t("Next"), callback_data=f"tasks:{status}:{page + 1}"))
+        navigation.append(InlineKeyboardButton(_t("Next"), callback_data=f"tasks:{user_id}:{status}:{page + 1}"))
     return "\n".join(lines), InlineKeyboardMarkup([tabs[:3], tabs[3:], navigation])
 
 
@@ -90,7 +92,7 @@ async def query_tasks(client, message):
         await client.send_message(message.chat.id, _t("Usage: /query [all|active|pending|completed|failed] [page]"))
         return
     from module.bot import _bot
-    text, keyboard = build_task_query(DownloadService(_bot.app), status, page)
+    text, keyboard = build_task_query(DownloadService(_bot.app), status, page, user_id=message.from_user.id)
     await client.send_message(message.chat.id, text, reply_parameters=ReplyParameters(message_id=message.id),
                               reply_markup=keyboard, parse_mode=pyrogram.enums.ParseMode.HTML)
 
@@ -98,16 +100,19 @@ async def query_tasks(client, message):
 async def query_tasks_callback(client, query):
     """Refresh or paginate the existing query message without changing tasks."""
     try:
-        prefix, status, page = query.data.split(":")
+        prefix, owner_id, status, page = query.data.split(":")
         if prefix != "tasks":
             raise ValueError("Invalid task query callback")
         status, page = _parse_query(status, page)
     except (ValueError, AttributeError):
         await query.answer(_t("Usage: /query [all|active|pending|completed|failed] [page]"), show_alert=True)
         return
+    if owner_id != str(query.from_user.id):
+        await query.answer(_t("This task query belongs to another user."), show_alert=True)
+        return
     await query.answer()
     from module.bot import _bot
-    text, keyboard = build_task_query(DownloadService(_bot.app), status, page)
+    text, keyboard = build_task_query(DownloadService(_bot.app), status, page, user_id=query.from_user.id)
     try:
         await client.edit_message_text(query.message.chat.id, query.message.id, text,
                                        reply_markup=keyboard, parse_mode=pyrogram.enums.ParseMode.HTML)

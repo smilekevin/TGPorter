@@ -357,6 +357,7 @@
     "Next": "Suivant",
     "Refresh": "Actualiser",
     "Usage: /query [all|active|pending|completed|failed] [page]": "Utilisation : /query [all|active|pending|completed|failed] [page]",
+    "This task query belongs to another user.": "Cette requête de tâches appartient à un autre utilisateur.",
     "Telegram Bot": "Bot Telegram",
     "Not configured": "Non configuré",
     "Connecting": "Connexion en cours",

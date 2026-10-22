@@ -220,6 +220,7 @@
     "Next": "Далі",
     "Refresh": "Оновити",
     "Usage: /query [all|active|pending|completed|failed] [page]": "Використання: /query [all|active|pending|completed|failed] [сторінка]",
+    "This task query belongs to another user.": "Цей запит завдань належить іншому користувачеві.",
     "Telegram Bot": "Бот Telegram",
     "Not configured": "Не налаштовано",
     "Connecting": "Підключення",

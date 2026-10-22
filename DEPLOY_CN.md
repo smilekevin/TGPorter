@@ -111,6 +111,8 @@ python media_downloader.py
 
 向 Bot 发送消息链接或转发媒体后，可通过 `/query pending` 或下载页待下载标签查看任务；任务会等待空闲下载名额。重复提交未完成的消息会返回原任务编号。遇到保存错误时先检查错误提示，排查时可按显示编号搜索 `data/log/tdl.log`。入队成功不代表下载完成。
 
+Bot `/query` 仅展示和统计当前 Telegram 用户自己提交的任务，分类、翻页和刷新按钮也仅限该用户使用。Web/MCP 提交的任务及未保存提交者的旧记录不会出现在 Bot 查询中；WebUI 和 MCP 管理视图仍可查看全部任务。升级后请重新执行 `/query`，替换旧查询按钮。
+
 ### config.yaml (可选)
 
 也可以在首次启动前复制 [config.yaml.example](./config.yaml.example) 为工作目录中的 `config.yaml`，按下方参数表填写 API 凭据、账号模式、下载设置及所需代理：

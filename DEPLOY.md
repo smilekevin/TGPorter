@@ -95,6 +95,8 @@ The dashboard **Skipped** tab keeps reasons and saved filters across restarts. D
 
 Send a post link or forward media to the Bot, then check `/query pending` or the dashboard Pending tab. Tasks wait for an available download slot. Repeating an unfinished submission returns the existing task ID. Check any save error before submitting again, and search `data/log/tdl.log` by the displayed task ID when troubleshooting. Queue acceptance does not mean the download has completed.
 
+Bot `/query` lists and counts only tasks submitted by the requesting Telegram user. Category, page and refresh buttons are limited to that user. Web/MCP submissions and older records without a saved submitter are not shown in Bot queries; the WebUI and MCP management views still list all tasks. After an upgrade, run `/query` again to replace old query buttons.
+
 ### config.yaml (optional)
 
 Optionally copy [config.yaml.example](https://github.com/smilekevin/TGPorter/blob/main/config.yaml.example) to `config.yaml` in the working directory before the first start. Fill in API credentials, account mode, download settings and any required proxy using the parameter table below:

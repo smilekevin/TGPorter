@@ -361,6 +361,7 @@
     "Next": "下一页",
     "Refresh": "刷新",
     "Usage: /query [all|active|pending|completed|failed] [page]": "用法：/query [all|active|pending|completed|failed] [页码]",
+    "This task query belongs to another user.": "此任务查询属于其他用户。",
     "Telegram Bot": "Telegram Bot",
     "Not configured": "未配置",
     "Connecting": "连接中",
