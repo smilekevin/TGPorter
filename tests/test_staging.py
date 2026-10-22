@@ -1,4 +1,4 @@
-"""Staging identity remains stable independently of user-controlled names."""
+"""New caches follow the final filename while existing checkpoints remain usable."""
 
 import tempfile
 import unittest
@@ -74,3 +74,35 @@ class StagingTests(unittest.TestCase):
         self.assertFalse(is_staging_name("movie.tmp"))
         self.assertFalse(is_staging_name(self.path().name + ".temp"))
         self.assertFalse(is_staging_name(self.path().name + ".parts"))
+
+    def test_new_download_uses_the_final_directory_and_basename(self):
+        final = self.root / 'downloads' / '123' / '频道' / '飞，一.mov'
+        self.assertEqual(self.path(final_path=str(final)), final)
+        self.assertEqual(Path(str(self.path(final_path=str(final))) + '.temp'),
+                         final.with_name('飞，一.mov.temp'))
+        self.assertFalse(final.parent.exists())
+
+    def test_old_uuid_checkpoint_is_reused_after_switching_to_final_paths(self):
+        old = self.path()
+        Path(str(old) + '.parts').mkdir()
+        Path(str(old) + '.temp').write_bytes(b'old progress')
+        final = self.root / 'downloads' / 'video.mp4'
+        self.assertEqual(self.path(final_path=str(final)), old)
+        self.assertEqual(Path(str(old) + '.temp').read_bytes(), b'old progress')
+
+    def test_existing_final_path_checkpoint_takes_precedence_over_old_cache(self):
+        old = self.path()
+        Path(str(old) + '.parts').mkdir()
+        final = self.root / 'downloads' / 'video.mp4'
+        final.parent.mkdir()
+        Path(str(final) + '.temp').write_bytes(b'new progress')
+        self.assertEqual(self.path(final_path=str(final)), final)
+        self.assertTrue(Path(str(old) + '.parts').exists())
+
+    def test_final_name_changes_preserve_the_previous_cache(self):
+        final = self.root / 'original.mp4'
+        checkpoint = Path(str(final) + '.temp')
+        checkpoint.write_bytes(b'keep')
+        renamed = self.root / 'renamed.mp4'
+        self.assertEqual(self.path(final_path=str(renamed)), renamed)
+        self.assertEqual(checkpoint.read_bytes(), b'keep')

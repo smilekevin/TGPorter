@@ -57,7 +57,8 @@ class DownloadPathTests(unittest.IsolatedAsyncioTestCase):
                     directory = str(requester) if requester else "shared"
                     self.assertEqual(Path(output).parent,
                                      self.root / "downloads" / directory / "Source channel/2026_10")
-                    self.assertEqual(Path(staging).parent, Path(self.app.temp_save_path))
+                    self.assertEqual(staging, output)
+                    self.assertEqual(Path(staging + '.temp'), Path(str(output) + '.temp'))
 
     async def test_text_files_use_requester_and_shared_fallback(self):
         for requester in (123, "456", None):
@@ -69,3 +70,18 @@ class DownloadPathTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(status, DownloadStatus.SuccessDownload)
                 self.assertEqual(Path(output), expected)
                 self.assertEqual(expected.read_text(), "Saved text")
+
+    async def test_long_unicode_name_is_truncated_before_appending_cache_suffixes(self):
+        media = SimpleNamespace(mime_type='video/mp4', file_name='视频' * 100 + '.mp4',
+                                file_unique_id='stable-media', date=self.message.date)
+        with patch.object(downloader, 'app', self.app):
+            output, staging, _ = await downloader._get_media_meta(
+                -10001, self.message, media, 'video', from_user_id=123)
+        self.assertEqual(staging, output)
+        self.assertLessEqual(len(Path(output).name.encode('utf-8')), 230)
+        self.assertTrue(output.endswith('.mp4'))
+        for suffix in ('.temp', '.parts'):
+            path = Path(staging + suffix)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.mkdir() if suffix == '.parts' else path.write_bytes(b'cache')
+            self.assertTrue(path.exists())

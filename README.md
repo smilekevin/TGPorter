@@ -38,7 +38,7 @@
 - **批量下载** — 指定消息 ID 范围 `[start, end]`，支持过滤器
 - **单条下载** — 发送 `t.me` 链接或转发媒体消息给 Bot
 - **按提交者分目录** — 可选 `from_user_id` 目录字段，与频道、日期组合；无提交者时使用 `shared`。[目录配置](./DEPLOY_CN.md#下载目录)
-- **断点续传** — 暂停、断网或重启后继续下载，跳过已完成文件
+- **断点续传** — 暂停、断网或重启后继续下载，跳过已完成文件；新临时文件使用最终路径和文件名加 `.temp` 后缀
 - **异常恢复** — 连接失败或文件引用过期时自动重试
 - **文件清理** — 删除任务时可选择一并删除本地文件和断点
 
@@ -262,7 +262,7 @@ docker run -d \
 - **Batch download** — specify a message ID range `[start, end]` with an optional filter
 - **Single download** — send a `t.me` link or forward media to the Bot
 - **Directories by requester** — optional `from_user_id` field combined with chat/date fields; tasks without a requester use `shared`. [Directory settings](./DEPLOY.md#download-directories)
-- **Resume downloads** — continue after pauses, network interruptions or restarts; skip completed files
+- **Resume downloads** — continue after pauses, network interruptions or restarts; skip completed files; new temporary files use the final path and filename plus `.temp`
 - **Automatic recovery** — retry connection failures and expired file references
 - **File cleanup** — optionally remove local files and partial data when deleting tasks
 
