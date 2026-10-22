@@ -31,7 +31,10 @@ file_formats:
   - mp4
 save_path: /app/downloads
 # Staging defaults to save_path/.temp; no separate temporary directory mount is needed.
+# Ordered directory fields: from_user_id, chat_title, media_datetime, media_type.
+# from_user_id is the task requester; tasks without one use shared.
 file_path_prefix:
+#- from_user_id
 #- chat_title
 #- media_datetime
 #upload_drive:

@@ -103,6 +103,10 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_generated_staging_resumes_with_fresh_task_and_preserves_original_output_name(self):
         from module.staging import is_staging_name
         with self.use_real_media_metadata():
+            self.node.from_user_id = 123
+            self.app.save_path = str(self.path / "downloads")
+            self.app.file_path_prefix = ["from_user_id", "chat_title", "media_datetime"]
+            self.app.get_file_save_path = lambda *args: Application.get_file_save_path(self.app, *args)
             entered = asyncio.Event()
             async def block(index):
                 if index >= 1:
@@ -126,18 +130,37 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.client.before_chunk = None
             self.message.chat.title = "Renamed channel"
             self.message.video.file_name = "renamed.mov"
-            self.node = TaskNode(chat_id=100, task_id=2, limit=1)
+            self.node = TaskNode(chat_id=100, from_user_id=123, task_id=2, limit=1)
             self.app.file_download_concurrency = 1
             self.app.download_part_size_mb = 100
             status, output, _ = await downloader.download_media(
                 self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
             self.assertEqual(status, DownloadStatus.SuccessDownload)
             self.assertEqual(Path(output).name, "61 - renamed.mov")
+            self.assertEqual(Path(output).relative_to(self.app.save_path).parts[0], "123")
             self.assertEqual(Path(output).read_bytes(), self.data)
             self.assertEqual(self.node.download_temp_paths[61], str(staging))
             self.assertNotIn(0, [offset for offset, _ in self.client.calls])
             self.assertFalse(staging.exists())
             self.assertFalse(parts_path(str(staging)).exists())
+
+    async def test_two_requesters_publish_separate_files_with_identical_source_media(self):
+        with self.use_real_media_metadata():
+            self.app.save_path = str(self.path / "downloads")
+            self.app.file_path_prefix = ["from_user_id", "chat_title", "media_datetime"]
+            self.app.date_format = "%Y_%m"
+            self.app.get_file_save_path = lambda *args: Application.get_file_save_path(self.app, *args)
+            outputs = []
+            for requester in (123, 456):
+                self.node.from_user_id = requester
+                status, output, _ = await downloader.download_media(
+                    self.client, self.message, self.app.media_types, self.app.file_formats, self.node)
+                self.assertIs(status, DownloadStatus.SuccessDownload)
+                self.assertEqual(Path(output).relative_to(self.app.save_path).parts[0], str(requester))
+                self.assertEqual(Path(output).read_bytes(), self.data)
+                outputs.append(output)
+            self.assertNotEqual(outputs[0], outputs[1])
+            self.assertTrue(all(Path(output).exists() for output in outputs))
 
     async def test_existing_staging_path_resumes_through_real_metadata(self):
         with self.use_real_media_metadata():
@@ -622,7 +645,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         blocked = asyncio.Event()
         release = asyncio.Event()
 
-        async def meta(chat_id, message, media, kind):
+        async def meta(chat_id, message, media, kind, from_user_id=None):
             return str(self.path / f"saved-{message.id}.mp4"), str(self.path / f"partial-{message.id}.mp4"), "mp4"
 
         async def before(index):
@@ -680,7 +703,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             if index == 1:
                 await release.wait()
 
-        async def meta(chat_id, message, media, kind):
+        async def meta(chat_id, message, media, kind, from_user_id=None):
             return str(self.path / f"saved-{message.id}.mp4"), str(self.path / f"partial-{message.id}.mp4"), "mp4"
 
         self.client.before_chunk = before

@@ -574,6 +574,40 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         _, node = self.queue.get_nowait()
         self.assertIs(node.client, self.bot.bot)
 
+    async def test_recovered_task_retains_requester_for_directory_naming(self):
+        from module.app import Application
+        store.save_task(1, -10001, "", 0, 0, 1, "", "123",
+                        task_type="download", extra_data={"message_id": 61, "message_client": "user"})
+        await bot._consume_one_pending()
+        _, node = self.queue.get_nowait()
+        self.assertEqual(node.from_user_id, "123")
+        self.app.save_path = str(Path(self.temp.name) / "downloads")
+        self.app.file_path_prefix = ["from_user_id", "chat_title", "media_datetime"]
+        self.assertEqual(Application.get_file_save_path(self.app, "video", "channel", "2026_10", node.from_user_id),
+                         str(Path(self.app.save_path) / "123/channel/2026_10"))
+
+    async def test_batch_retry_placeholder_retains_missing_requester(self):
+        retry = AsyncMock()
+        service = DownloadService(self.app, retry_download=retry)
+        failed = {"task_id": "failed-1", "chat_id": 100, "msg_id": 61, "from_user_id": ""}
+        with patch("module.download_service.get_failed_downloads", return_value=[failed]), \
+                patch("module.download_service.remove_failed_download"):
+            result = service.web_batch_retry({"task_ids": ["failed-1"]})
+        self.assertEqual(result["code"], "1")
+        placeholder = store.get_running_tasks()[0]
+        self.assertEqual(placeholder["from_user_id"], "")
+        await self.until(lambda: retry.await_count == 1)
+        self.assertEqual(retry.await_args.args, (100, 61, ""))
+
+    async def test_web_retry_without_requester_does_not_substitute_chat_id(self):
+        self.bot.bot = self.inbox_gateway()
+        await web._async_retry_download(100, 61)
+        task = store.get_running_tasks()[0]
+        self.assertEqual(task["from_user_id"], "")
+        node = self.bot.task_node[task["task_id"]]
+        self.assertEqual(node.from_user_id, "")
+        self.bot.bot.send_message.assert_not_awaited()
+
     async def test_web_retry_restores_bot_inbox_identity_and_caches_message(self):
         self.bot.bot = self.inbox_gateway()
         await web._async_retry_download(100, 61, from_user_id="100")
