@@ -357,6 +357,7 @@
     "Next",
     "Refresh",
     "Usage: /query [all|active|pending|completed|failed] [page]",
+    "This task query belongs to another user.",
     "Telegram Bot",
     "Not configured",
     "Connecting",

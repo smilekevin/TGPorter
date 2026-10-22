@@ -154,7 +154,7 @@ docker run -d \
 | `/remove_replace_ad <msg_link> <keyword>` | 移除替换规则 | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | 设置群组追加广告（空文本删除） | `/set_ad https://t.me/c/123 关注我` |
 | `/set_language <lang>` | 设置语言（en/zh-cn/zh-tw/ja/es/fr/ru/uk，兼容 zh/ua） | `/set_language zh-cn` |
-| `/query [all\|active\|pending\|completed\|failed] [page]` | 查询所有、下载中、待下载（含暂停）、已完成或失败任务；支持分类、翻页和刷新按钮 | `/query pending`、`/query completed 2` |
+| `/query [all\|active\|pending\|completed\|failed] [page]` | 仅查询自己提交的任务，可选所有状态、下载中、待下载（含暂停）、已完成或失败；支持分类、翻页和刷新按钮 | `/query pending`、`/query completed 2` |
 | `/stop` | 停止下载/转发/监听（交互式按钮） | `/stop` |
 | `/help` `/start` | 显示帮助 | — |
 
@@ -377,7 +377,7 @@ For more details, please refer to the following deployment matrix:
 | `/remove_replace_ad <msg_link> <keyword>` | Remove replacement rule | `/remove_replace_ad https://t.me/c/123/456 广告` |
 | `/set_ad <msg_link> <ad_text>` | Set group append ad (empty to delete) | `/set_ad https://t.me/c/123 关注我` |
 | `/set_language <lang>` | Set language (en/zh-cn/zh-tw/ja/es/fr/ru/uk; zh/ua remain compatible) | `/set_language zh-cn` |
-| `/query [all\|active\|pending\|completed\|failed] [page]` | Query all, active, pending (including paused), completed or failed tasks; category, paging and refresh buttons | `/query pending`, `/query completed 2` |
+| `/query [all\|active\|pending\|completed\|failed] [page]` | Query only your own submissions across all statuses, or active, pending (including paused), completed or failed tasks; category, paging and refresh buttons | `/query pending`, `/query completed 2` |
 | `/stop` | Stop download/forward/listen (interactive) | `/stop` |
 | `/help` `/start` | Show help | — |
 

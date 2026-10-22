@@ -357,6 +357,7 @@
     "Next": "次へ",
     "Refresh": "更新",
     "Usage: /query [all|active|pending|completed|failed] [page]": "使い方：/query [all|active|pending|completed|failed] [ページ]",
+    "This task query belongs to another user.": "このタスク照会は別のユーザーのものです。",
     "Telegram Bot": "Telegram Bot",
     "Not configured": "未設定",
     "Connecting": "接続中",

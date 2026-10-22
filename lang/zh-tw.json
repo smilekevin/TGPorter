@@ -361,6 +361,7 @@
     "Next": "下一頁",
     "Refresh": "重新整理",
     "Usage: /query [all|active|pending|completed|failed] [page]": "用法：/query [all|active|pending|completed|failed] [頁碼]",
+    "This task query belongs to another user.": "此任務查詢屬於其他使用者。",
     "Telegram Bot": "Telegram Bot",
     "Not configured": "尚未設定",
     "Connecting": "連線中",

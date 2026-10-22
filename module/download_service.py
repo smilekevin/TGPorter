@@ -165,7 +165,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
 
         node = TaskNode(
             chat_id=cid,
-            from_user_id=from_user_id or cid,
+            from_user_id=from_user_id or "",
             reply_message_id=0,
             replay_message="WebUI retry",
             limit=1,
@@ -184,7 +184,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
             end_offset_id=0,
             limit=1,
             download_filter=None,
-            from_user_id=from_user_id or cid,
+            from_user_id=from_user_id or "",
             task_type="download",
             extra_data={"task_id_display": node.task_id_display, "message_id": msg_id,
                         "message_client": "bot" if owner is _bot.bot else "user"},
@@ -229,6 +229,12 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
     except Exception as e:
         logger.error(f"Retry failed for chat={chat_id} msg={msg_id}: {e}", exc_info=True)
         _restore_failed(f'Retry failed: {e}')
+
+
+def _submitted_by(task, from_user_id):
+    """Keep unscoped management queries, but never infer a Bot task's submitter."""
+    return from_user_id is None or (
+        bool(from_user_id) and str(task.get("from_user_id") or "") == str(from_user_id))
 
 
 class DownloadService:
@@ -411,7 +417,7 @@ class DownloadService:
             logger.warning(f"set_max_workers: worker pool adjust failed: {e}")
         return {'max_workers': n}
 
-    def get_download_list(self, already_down=None, offset=0, limit=0, search=""):
+    def get_download_list(self, already_down=None, offset=0, limit=0, search="", *, from_user_id=None):
         """Get download list with task_id and status"""
         from module.download_stat import get_download_result
         # Removed: load_downloads() on empty result — it overwrites runtime data
@@ -430,6 +436,8 @@ class DownloadService:
         cooldown = self.get_flood_wait() if not already_down else {"active": False}
         for chat_id, messages in list(download_result.items()):
             for idx, value in list(messages.items()):
+                if not _submitted_by(value, from_user_id):
+                    continue
                 is_already_down = value["down_byte"] == value["total_size"] and value["total_size"] > 0
 
                 if already_down and not is_already_down:
@@ -565,13 +573,15 @@ class DownloadService:
             "limit": limit,
         }
 
-    def web_get_failed_downloads(self):
+    def web_get_failed_downloads(self, *, from_user_id=None):
         """Get list of failed downloads"""
         failed = get_failed_downloads()
         # Sort by failure timestamp, newest first
         failed = sorted(failed, key=lambda f: f.get("timestamp", 0), reverse=True)
         result = []
         for f in failed:
+            if not _submitted_by(f, from_user_id):
+                continue
             chat_id = f.get("chat_id", "")
             chat_title = get_chat_title(chat_id)
             failed_time = ""
@@ -785,7 +795,7 @@ class DownloadService:
                 end_offset_id=0,
                 limit=1,
                 download_filter=None,
-                from_user_id=from_user_id or (int(chat_id) if str(chat_id).lstrip("-").isdigit() else chat_id),
+                from_user_id=from_user_id or "",
                 task_type="retry",
                 extra_data={"source_task_id": task_id, "message_id": msg_id, "pending": True},
             )
@@ -811,7 +821,7 @@ class DownloadService:
             "errors": errors,
         }
 
-    def web_get_pending_list(self, offset=0, limit=100, search="", status="all"):
+    def web_get_pending_list(self, offset=0, limit=100, search="", status="all", *, from_user_id=None):
         """Get list of pending tasks (received but not started downloading)"""
         import time as _time
         pending = get_pending_tasks(include_paused=True)
@@ -823,6 +833,8 @@ class DownloadService:
 
         result = []
         for task in pending:
+            if not _submitted_by(task, from_user_id):
+                continue
             # Exclude tasks already represented by _download_result placeholders from Pending;
             # they are about to appear in Active.
             _cid = task.get("chat_id")
