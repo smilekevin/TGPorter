@@ -73,6 +73,19 @@ class MessageRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.bot.get_messages.assert_awaited_once_with(chat_id=100, message_ids=61)
         self.user.get_messages.assert_not_awaited()
 
+    async def test_text_download_passes_task_requester_to_path_builder(self):
+        self.app.enable_download_txt = True
+        self.message.text = "message text"
+        self.message.media = None
+        self.message.from_user = SimpleNamespace(id=999)
+        self.node.from_user_id = 123
+        with patch.object(downloader, "download_media", AsyncMock(
+                return_value=(DownloadStatus.SkipDownload, None, ""))), \
+                patch.object(downloader, "save_msg_to_file", AsyncMock(
+                    return_value=(DownloadStatus.SkipDownload, None))) as save_text:
+            await downloader.download_task(self.user, self.message, self.node)
+        save_text.assert_awaited_once_with(self.app, self.node.chat_id, self.message, 123)
+
     async def test_filter_rejection_skips_network_text_saving_and_failure_history(self):
         self.node.download_filter = "media_file_size >= 100MB"
         self.app.get_caption_name = Mock(return_value="")

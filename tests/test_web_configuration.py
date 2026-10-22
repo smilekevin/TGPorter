@@ -385,6 +385,16 @@ class WebConfigurationTests(unittest.TestCase):
         self.app.telegram_login.submit.assert_awaited_once()
         self.assertEqual(self.app.telegram_login.submit.await_args.args[0], "send_code")
 
+    def test_requester_directory_field_saves_and_applies_through_real_route(self):
+        self.setup()
+        fields = ["from_user_id", "chat_title", "media_datetime"]
+        response = self.save({"file_path_prefix": fields})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.app.file_path_prefix, fields)
+        self.assertEqual(self.app.settings.values["file_path_prefix"], fields)
+        self.assertEqual(Path(self.app.get_file_save_path("video", "channel", "2026_10", 123)),
+                         self.root / "downloads/123/channel/2026_10")
+
     def test_public_mode_keeps_configuration_private(self):
         self.setup()
         self.assertEqual(self.save({"public_web": True}).status_code, 200)
