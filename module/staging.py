@@ -1,4 +1,4 @@
-"""Stable ASCII staging names that survive retries without a separate index."""
+"""Destination-based download cache paths with legacy checkpoint compatibility."""
 
 import json
 import os
@@ -20,13 +20,15 @@ def _has_checkpoint(path):
 
 
 def get_staging_path(directory, account, chat_id, message_id, media_identity,
-                     timestamp, legacy_path):
-    """Use a reproducible UUID so task retries and restarts keep the same data.
+                     timestamp, legacy_path, final_path=None):
+    """Use the final path as the base for SDK/parallel .temp files.
 
-    The timestamp comes from the message rather than the current attempt.
-    Existing checkpoint paths are reused without moving writers or plans.
-    The storage layer validates checkpoint versions before writing any data.
+    Reuse existing UUID/title checkpoints without moving active writers or plans.
+    The storage layer validates checkpoint versions and identities before writing.
+    Calls without a final path retain the legacy UUID lookup behavior.
     """
+    if final_path and any(Path(final_path + suffix).exists() for suffix in (".temp", ".parts")):
+        return final_path
     identity = json.dumps([str(account), str(chat_id), str(message_id), str(media_identity)],
                           ensure_ascii=True, separators=(",", ":"))
     name = f"{max(0, int(timestamp))}_{uuid5(NAMESPACE_URL, identity)}.tmp"
@@ -44,4 +46,4 @@ def get_staging_path(directory, account, chat_id, message_id, media_identity,
         except (OSError, ValueError):
             # Invalid or overlong legacy names must not prevent safe staging.
             pass
-    return path
+    return final_path or path

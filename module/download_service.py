@@ -658,7 +658,7 @@ class DownloadService:
         cache_paths = []
         if staging:
             cache_paths = [path for path in (staging, staging + ".temp", staging + ".parts")
-                           if os.path.exists(path)]
+                           if os.path.exists(path) and (not output or os.path.abspath(path) != os.path.abspath(output))]
         # Show paths that actually exist, rather than a missing final destination.
         path = output if output_exists else (cache_paths[0] if cache_paths else output or staging)
         return {"code": "1", "exists": output_exists or bool(cache_paths),

@@ -190,6 +190,8 @@ def _check_download_finish(media_size: int, download_path: str, ui_file_name: st
 
 def _move_to_download_path(temp_download_path: str, download_path: str):
     """Move file to download path"""
+    if os.path.abspath(temp_download_path) == os.path.abspath(download_path):
+        return
     directory, _ = os.path.split(download_path)
     os.makedirs(directory, exist_ok=True)
     shutil.move(temp_download_path, download_path)
@@ -312,9 +314,8 @@ async def _resume_download_from_temp(
 
     if not temp_file_name:
         return False
-    # Pyrogram writes to <temp_file_name>.temp; temp_file_name itself has no suffix. Check the
-    # actual checkpoint path.
-    real_temp = temp_file_name if temp_file_name.endswith(".temp") else temp_file_name + ".temp"
+    # The SDK always appends .temp, including when the final filename ends in .temp.
+    real_temp = temp_file_name + ".temp"
     if not os.path.exists(real_temp):
         return False
 
@@ -527,11 +528,12 @@ async def _get_media_meta(
     account = getattr(getattr(message, "_client", None), "name", "")
     date = message.date or getattr(media_obj, "date", None)
     timestamp = int(date.timestamp()) if date else 0
+    file_name = truncate_filename(file_name)
     temp_file_name = get_staging_path(
         app.temp_save_path, account, chat_id, message.id, media_identity,
-        timestamp, truncate_filename(temp_file_name),
+        timestamp, truncate_filename(temp_file_name), final_path=file_name,
     )
-    return truncate_filename(file_name), temp_file_name, file_format
+    return file_name, temp_file_name, file_format
 
 
 def _move_task_to_failed(node, message, error_message):

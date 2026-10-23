@@ -249,6 +249,26 @@ class WebTaskTests(unittest.TestCase):
         self.assertTrue(result['cache_exists'])
         self.assertEqual(result['cache_paths'], [str(self.parts)])
 
+    def test_final_output_is_not_reported_as_its_own_cache(self):
+        download_stat._download_result[1][2]['temp_file_name'] = str(self.file)
+        result = self.post('/check_file_exists?task_id=task-1').json
+        self.assertTrue(result['output_exists'])
+        self.assertFalse(result['cache_exists'])
+        self.assertEqual(result['cache_paths'], [])
+
+    def test_partial_next_to_final_path_is_reported_and_preserved_without_file_deletion(self):
+        record = download_stat._download_result[1][2]
+        record['temp_file_name'] = str(self.file)
+        self.file.unlink()
+        partial = Path(str(self.file) + '.temp')
+        partial.write_bytes(b'checkpoint')
+        result = self.post('/check_file_exists?task_id=task-1').json
+        self.assertFalse(result['output_exists'])
+        self.assertTrue(result['cache_exists'])
+        self.assertEqual(result['cache_paths'], [str(partial)])
+        self.assertEqual(self.post('/delete_task?task_id=task-1').json['code'], '1')
+        self.assertEqual(partial.read_bytes(), b'checkpoint')
+
     def test_no_files_reports_no_cache(self):
         self.file.unlink()
         shutil.rmtree(self.parts)

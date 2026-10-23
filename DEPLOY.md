@@ -14,7 +14,7 @@ The Docker image includes MCP and all runtime dependencies. Manual installations
 
 Images at `ghcr.io/smilekevin/tgporter` support amd64 and arm64.
 
-Before upgrading, stop the service and back up `data/` and `downloads/`, including `.temp/`. Kurigram upgrades old session databases in place; restore the pre-upgrade session backup when rolling back the SDK. Never run two instances against the same session and task files.
+Before upgrading, stop the service and back up `data/` and `downloads/`, including adjacent `.temp` files, `.parts/` directories and the legacy `.temp/` directory. Kurigram upgrades old session databases in place; restore the pre-upgrade session backup when rolling back the SDK. Never run two instances against the same session and task files.
 
 ## Quick Start
 
@@ -208,11 +208,11 @@ Defaults apply to new download tasks without restart. Explicit task/channel expr
 
 The low-speed warning uses a shared timer: sustained download speed below 200 KiB/s for 120 seconds triggers a notification. Completion, failure or cancellation resets this timer and clears the warning; new tasks do not inherit the finished task's elapsed time. Restored checkpoint bytes do not start the timer before new data arrives.
 
-Partial files and checkpoints are stored under `downloads/.temp/`. Keep this directory when restarting or upgrading if you want to resume unfinished downloads. Existing downloads retain their saved part settings; changed settings apply to new downloads. An abrupt exit may require downloading a small amount of recent data again.
+New partial files use the final directory and filename with `.temp` appended, for example `downloads/channel/video.mp4.temp`; checkpoints are stored beside them in `video.mp4.parts/manifest.json`. Keep these files and directories when restarting or upgrading. Existing checkpoints under `downloads/.temp/` continue to be reused until their downloads finish. Changing the final directory or filename selects a new cache path and preserves the previous partial file. Existing downloads retain their saved part settings; changed settings apply to new downloads. An abrupt exit may require downloading a small amount of recent data again.
 
 Older checkpoint formats are not supported. Finish older downloads before upgrading, or explicitly delete the affected task's cache and download again. Unsupported cache is preserved with an error; older application versions cannot resume new checkpoints either.
 
-Allow disk space for each complete file and its checkpoint data. The size of a temporary file is not download progress; use the dashboard to check progress. Check free space and NAS quotas if writes fail. Keep the download directory and its `.temp/` subdirectory on the same filesystem; avoid separate mounts within the download tree.
+Allow disk space for each complete file and its checkpoint data. The size of a temporary file is not download progress; use the dashboard to check progress. Check free space and NAS quotas if writes fail. Partial files stay on the same filesystem as the final file so completion can use an atomic rename. Keep legacy staging and output directories on the same filesystem while finishing old downloads.
 
 When deleting a task, select file deletion only if you also want to remove local files and partial data. Otherwise they are preserved.
 
@@ -361,9 +361,10 @@ Set the Compose image to `tgporter:local`, then run `docker compose up -d`. Keep
 | `data/task_counter.json` | Daily task sequence numbers |
 | `data/download_history.json` | Completed and failed downloads |
 | `downloads/` | Completed files |
-| `downloads/.temp/` | Staging data and `.parts/manifest.json` checkpoints |
+| `<final file>.temp`, `<final file>.parts/` | Partial data and `manifest.json` checkpoints beside the final file |
+| `downloads/.temp/` | Existing legacy staging data and checkpoints |
 
-Mount writable `data/` and download directories. The application creates its runtime files and keeps partial downloads under `.temp/`; no separate temporary-data mount is needed. Recreating the container preserves host-mounted data. Keep backups private because they contain credentials and Telegram authorization. JSON data files are stored directly in `data/`; `data/log/` contains logs only. For older installations, stop the service and move JSON files from `data/log/` to `data/` before restarting; the old location is no longer read.
+Mount writable `data/` and download directories. The application creates its runtime files and keeps new partial downloads beside their final files; no separate temporary-data mount is needed. Recreating the container preserves host-mounted data. Keep backups private because they contain credentials and Telegram authorization. JSON data files are stored directly in `data/`; `data/log/` contains logs only. For older installations, stop the service and move JSON files from `data/log/` to `data/` before restarting; the old location is no longer read.
 
 Keep `data/bot_processed_messages.json` during updates so recently handled Bot messages are not processed again after reconnection. Protection covers the most recent 1,000 handled messages; earlier messages and messages handled before the file was created are outside that window. An interrupted operation can still be repeated, so check the task list before resubmitting.
 
