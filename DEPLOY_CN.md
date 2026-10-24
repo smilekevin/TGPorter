@@ -404,6 +404,8 @@ docker build --build-arg APP_VERSION="$(git describe --tags --always --dirty)" -
 
 网页显示 Bot 连接状态、延迟和最近检查时间；没有 Bot Token 时显示未配置。此状态仅说明 Bot 连接，不代表下载账号有访问权限或 Bot 命令已获授权。服务会定期检查并在连续失败后尝试重连，遇到 Telegram 限流时等待。
 
+网络中断后，Bot 会持续监控恢复过程，无需重启服务。重连较慢时会保持**重连中**；日志中的 `Bot reconnect still running` 表示服务仍在等待本次重连。失败后会再次尝试，新的心跳成功后才显示**已连接**。如果持续失败，请检查网络和代理是否可达。
+
 查看近期日志：
 
 ```bash
