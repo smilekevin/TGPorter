@@ -13,6 +13,167 @@ from module.telegram import pyrogram
 from pyrogram.session import Session
 
 
+class BotReconnectLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.backend = bot.DownloadBot()
+        self.backend.app = SimpleNamespace(loop=asyncio.get_running_loop())
+        self.release = asyncio.Event()
+        self.client = pyrogram.Client("offline-reconnect", api_id=1, api_hash="offline", in_memory=True)
+        self.addCleanup(self.client.executor.shutdown)
+        self.backend.bot = self.client
+        self.client.is_connected = self.client.is_initialized = True
+        self.client.storage = SimpleNamespace(save=AsyncMock(), close=AsyncMock())
+        self.client.session = SimpleNamespace(stop=AsyncMock())
+        self.client.start = AsyncMock(side_effect=self.start_client)
+        self.backend._register_bot_handlers = Mock()
+        timeout = patch.object(bot, "_BOT_RECONNECT_TIMEOUT", 0.01, create=True)
+        timeout.start()
+        self.addCleanup(timeout.stop)
+        self.addAsyncCleanup(self.cleanup_tasks)
+
+    async def cleanup_tasks(self):
+        self.release.set()
+        tasks = [getattr(self.backend, "_bot_reconnect_task", None),
+                 self.backend.heartbeat_task, *self.client.dispatcher.handler_worker_tasks]
+        tasks = [task for task in tasks if task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def start_client(self):
+        self.client.session = SimpleNamespace(stop=AsyncMock())
+        self.client.is_connected = self.client.is_initialized = True
+
+    async def reconnect(self):
+        return await asyncio.wait_for(self.backend._reconnect_bot(), 0.5)
+
+    async def test_slow_sdk_stop_keeps_worker_alive_and_never_overlaps_start(self):
+        async def worker():
+            await self.release.wait()
+            self.assertIsNone(await self.client.dispatcher.updates_queue.get())
+
+        task = asyncio.create_task(worker())
+        self.client.dispatcher.handler_worker_tasks.append(task)
+        self.assertFalse(await self.reconnect())
+        self.assertFalse(await self.reconnect())
+        self.assertFalse(task.done())
+        self.assertEqual(self.client.dispatcher.updates_queue.qsize(), self.client.workers)
+        self.client.start.assert_not_awaited()
+        self.assertTrue(self.client.is_connected)
+        self.release.set()
+        self.assertTrue(await self.reconnect())
+        self.assertFalse(task.cancelled())
+        self.client.start.assert_awaited_once()
+        self.backend._register_bot_handlers.assert_called_once()
+
+    async def test_slow_start_is_joined_and_can_complete_when_network_recovers(self):
+        async def start():
+            await self.release.wait()
+            await self.start_client()
+
+        self.client.start.side_effect = start
+        self.assertFalse(await self.reconnect())
+        self.assertFalse(await self.reconnect())
+        self.client.start.assert_awaited_once()
+        self.backend._register_bot_handlers.assert_called_once()
+        self.release.set()
+        self.assertTrue(await self.reconnect())
+        self.assertTrue(self.client.is_initialized)
+
+    async def test_failed_stop_does_not_start_over_unclean_client(self):
+        self.client.stop = AsyncMock(side_effect=OSError("offline"))
+        self.assertFalse(await self.reconnect())
+        self.client.start.assert_not_awaited()
+        self.assertTrue(self.client.is_initialized)
+        self.client.stop.side_effect = None
+        self.assertTrue(await self.reconnect())
+
+    async def test_cancelled_sdk_dependency_does_not_cancel_heartbeat_caller(self):
+        task = asyncio.create_task(asyncio.sleep(10))
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        self.client.dispatcher.handler_worker_tasks.append(task)
+        self.assertFalse(await self.reconnect())
+        self.assertEqual(asyncio.current_task().cancelling(), 0)
+        self.client.start.assert_not_awaited()
+
+    async def test_network_failure_retries_without_duplicate_handlers(self):
+        self.client.start.side_effect = ConnectionError("offline")
+        self.assertFalse(await self.reconnect())
+        self.assertFalse(await self.reconnect())
+        self.client.start.side_effect = self.start_client
+        self.assertTrue(await self.reconnect())
+        self.assertEqual(self.client.start.await_count, 3)
+        self.backend._register_bot_handlers.assert_called_once()
+
+    async def test_monitor_survives_slow_reconnect_and_confirms_recovery_with_pong(self):
+        self.client.invoke = AsyncMock(side_effect=ConnectionError("offline"))
+
+        async def start():
+            await self.release.wait()
+            await self.start_client()
+            self.client.invoke.side_effect = BotHeartbeatTests.pong
+
+        self.client.start.side_effect = start
+        with patch.object(bot, "_BOT_HEARTBEAT_INTERVAL", 0.01):
+            monitor = self.backend._ensure_heartbeat()
+
+            async def until(condition):
+                while not condition():
+                    self.assertFalse(monitor.done())
+                    await asyncio.sleep(0.001)
+
+            await asyncio.wait_for(until(lambda: self.client.start.await_count == 1), 1)
+            await asyncio.sleep(0.05)
+            self.assertFalse(monitor.done())
+            self.assertEqual(self.backend.get_connection_status()["status"], "reconnecting")
+            self.assertEqual(self.client.invoke.await_count, 3)
+            self.release.set()
+            await asyncio.wait_for(until(
+                lambda: self.backend.get_connection_status()["status"] == "connected"), 1)
+            self.assertEqual(self.backend._heartbeat_failures, 0)
+            self.client.start.assert_awaited_once()
+
+    async def test_shutdown_joins_reconnect_and_does_not_start_after_slow_stop(self):
+        async def stop():
+            await self.release.wait()
+            self.client.is_initialized = self.client.is_connected = False
+
+        self.client.stop = AsyncMock(side_effect=stop)
+        self.assertFalse(await self.reconnect())
+        with patch.object(bot, "_bot", self.backend), \
+                patch.object(self.backend, "update_config"), \
+                patch.object(self.backend, "stop_task"):
+            shutdown = asyncio.create_task(bot.stop_download_bot())
+            await asyncio.sleep(0)
+            self.assertFalse(shutdown.done())
+            self.assertFalse(self.backend.is_running)
+            self.release.set()
+            await asyncio.wait_for(shutdown, 1)
+        self.client.stop.assert_awaited_once()
+        self.client.start.assert_not_awaited()
+        self.assertIsNone(self.backend._bot_reconnect_task)
+
+    async def test_shutdown_waits_for_start_then_closes_reconnected_client(self):
+        async def start():
+            await self.release.wait()
+            await self.start_client()
+
+        self.client.start.side_effect = start
+        self.assertFalse(await self.reconnect())
+        with patch.object(bot, "_bot", self.backend), \
+                patch.object(self.backend, "update_config"), \
+                patch.object(self.backend, "stop_task"):
+            shutdown = asyncio.create_task(bot.stop_download_bot())
+            await asyncio.sleep(0)
+            self.assertFalse(shutdown.done())
+            self.release.set()
+            await asyncio.wait_for(shutdown, 1)
+        self.assertFalse(self.client.is_connected)
+        self.assertFalse(self.client.is_initialized)
+        self.assertIsNone(self.backend._bot_reconnect_task)
+
+
 class BotHeartbeatTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = bot.DownloadBot()

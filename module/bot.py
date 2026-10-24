@@ -62,6 +62,7 @@ _BOT_HEARTBEAT_INTERVAL = 60
 _BOT_HEARTBEAT_TIMEOUT = 10
 _BOT_HEARTBEAT_FAILURES = 3
 _BOT_RECONNECT_COOLDOWN = 300
+_BOT_RECONNECT_TIMEOUT = 30
 
 
 def _cleanup_stopped_task(node):
@@ -214,6 +215,7 @@ class DownloadBot:
         self._commands_queue = asyncio.Queue(maxsize=1)
         self._heartbeat_failures = 0
         self._bot_reconnect_after = 0.0
+        self._bot_reconnect_task = None
         self._last_message_at = None
         self._active_handlers = {}
         self._message_store = None
@@ -319,6 +321,11 @@ class DownloadBot:
         if remaining > 0:
             logger.info("Bot heartbeat deferred: FLOOD_WAIT remaining={:.0f}s", remaining)
             return
+        if self._bot_reconnect_task is not None:
+            # Lifecycle operations may outlive a probe interval. Join their owner
+            # before probing or starting another stop/start on the same client.
+            await self._attempt_bot_reconnect()
+            return
         started = time.monotonic()
         ping_id = time.monotonic_ns() & ((1 << 63) - 1)
         try:
@@ -367,24 +374,33 @@ class DownloadBot:
         # This loop owns reconnects so slow progress reports cannot prevent recovery.
         if (self._heartbeat_failures >= _BOT_HEARTBEAT_FAILURES
                 or _bot_conn_errors["count"] >= _BOT_RECONNECT_THRESHOLD):
-            now = time.monotonic()
-            if now < self._bot_reconnect_after:
-                logger.warning("Bot reconnect deferred: cooldown_remaining_s={:.0f}",
-                               self._bot_reconnect_after - now)
-                return
-            self._bot_reconnect_after = now + _BOT_RECONNECT_COOLDOWN
-            logger.warning("Bot heartbeat triggering reconnect: heartbeat_failures={} report_errors={}",
-                           self._heartbeat_failures, _bot_conn_errors["count"])
-            _bot_conn_errors["count"] = 0
-            self._publish_connection_status("reconnecting")
-            success = False
-            try:
-                success = await self._reconnect_bot()
-            finally:
-                # A restarted transport still needs a Pong before it is healthy.
-                self._publish_connection_status("connecting" if success else "disconnected")
-            cooldown = _BOT_RECONNECT_COOLDOWN if success else _BOT_HEARTBEAT_INTERVAL
-            self._bot_reconnect_after = time.monotonic() + cooldown
+            await self._attempt_bot_reconnect()
+
+    async def _attempt_bot_reconnect(self):
+        """Keep monitoring one reconnect until it finishes, respecting retry cooldowns."""
+        from module.pyrogram_extension import _bot_conn_errors
+
+        now = time.monotonic()
+        if now < self._bot_reconnect_after:
+            logger.warning("Bot reconnect deferred: cooldown_remaining_s={:.0f}",
+                           self._bot_reconnect_after - now)
+            return
+        self._bot_reconnect_after = now + _BOT_RECONNECT_COOLDOWN
+        logger.warning("Bot heartbeat triggering reconnect: heartbeat_failures={} report_errors={}",
+                       self._heartbeat_failures, _bot_conn_errors["count"])
+        _bot_conn_errors["count"] = 0
+        self._publish_connection_status("reconnecting")
+        success = False
+        try:
+            success = await self._reconnect_bot()
+        finally:
+            # A restarted transport still needs a Pong before it is healthy.
+            status = "connecting" if success else "disconnected"
+            if self._bot_reconnect_task is not None:
+                status = "reconnecting"
+            self._publish_connection_status(status)
+        cooldown = _BOT_RECONNECT_COOLDOWN if success else _BOT_HEARTBEAT_INTERVAL
+        self._bot_reconnect_after = time.monotonic() + cooldown
 
     async def _observe_bot_message(self, client, message):
         """Log receipt before authorization without recording message content."""
@@ -1335,44 +1351,66 @@ class DownloadBot:
         )
 
     async def _reconnect_bot(self):
-        """Restart the Bot client after persistent connection loss.
+        """Wait a bounded interval without cancelling SDK workers on timeout."""
+        if self._bot_reconnect_task is None:
+            self._bot_reconnect_task = asyncio.create_task(self._restart_bot())
+        task = self._bot_reconnect_task
+        # wait_for(stop()) cancels the dispatch worker stop() is awaiting. The
+        # next stop then raises that worker's CancelledError into the heartbeat.
+        # asyncio.wait leaves the SDK operation alive and keeps a strong owner.
+        done, _ = await asyncio.wait({task}, timeout=_BOT_RECONNECT_TIMEOUT)
+        if not done:
+            logger.warning("Bot reconnect still running after {}s; heartbeat will check again",
+                           _BOT_RECONNECT_TIMEOUT)
+            return False
+        self._bot_reconnect_task = None
+        if task.cancelled():
+            logger.warning("Bot reconnect interrupted by a cancelled SDK task; heartbeat will retry")
+            return False
+        return task.result()
 
-        Reuse the existing session without authentication. Return whether reconnect
-        succeeded. Bound stop/start operations so half-dead TCP cannot permanently
-        block update_reply_message and all subsequent progress reports."""
+    async def _restart_bot(self):
+        """Serialize the complete lifecycle; never start over an unfinished stop."""
+        stage = "stop"
         try:
             logger.warning("Attempting bot reconnect: stop()...")
-            try:
-                await asyncio.wait_for(self.bot.stop(), timeout=30)
-            except asyncio.TimeoutError:
-                logger.error("bot.stop() timed out after 30s, force disconnect")
-                try:
-                    await asyncio.wait_for(self.bot.disconnect(), timeout=10)
-                except Exception:
-                    pass
-                self.bot.is_connected = False
-            except Exception as e:
-                logger.warning(f"bot.stop() during reconnect failed (continuing): {e}")
-                self.bot.is_connected = False
-        except Exception as e:
-            logger.warning(f"bot.stop() outer error (continuing): {e}")
-            self.bot.is_connected = False
-
-        try:
-            # stop() clears handlers; reinstall them before offline update replay.
-            self._register_bot_handlers()
-            await asyncio.sleep(0)
-            logger.warning("Attempting bot reconnect: start()...")
-            try:
-                await asyncio.wait_for(self.bot.start(), timeout=30)
-            except asyncio.TimeoutError:
-                logger.error("bot.start() timed out after 30s, reconnect failed")
+            handlers_cleared = await self._stop_bot_client()
+            if not self.is_running:
                 return False
+            # stop() clears handlers; reinstall them before offline update replay.
+            # Failed connection attempts leave the installed handlers intact.
+            if handlers_cleared:
+                self._register_bot_handlers()
+            await asyncio.sleep(0)
+            stage = "start"
+            logger.warning("Attempting bot reconnect: start()...")
+            await self.bot.start()
             logger.success("Bot reconnected successfully — handlers re-registered")
             return True
         except Exception as e:
-            logger.error(f"bot.start() during reconnect failed: {e}")
+            logger.error("Bot reconnect failed: stage={} error={}", stage, type(e).__name__)
             return False
+
+    async def _stop_bot_client(self):
+        """Close initialized and partially started clients without faking SDK state."""
+        if getattr(self.bot, "is_initialized", True):
+            await self.bot.stop()
+            return True
+        # initialize() starts dispatcher workers before setting is_initialized.
+        # A failed gap replay can leave those workers alive after start() fails.
+        dispatcher = getattr(self.bot, "dispatcher", None)
+        handlers_cleared = bool(getattr(dispatcher, "handler_worker_tasks", []))
+        if handlers_cleared:
+            await dispatcher.stop()
+        if self.bot.is_connected:
+            await self.bot.disconnect()
+        else:
+            session = getattr(self.bot, "session", None)
+            if session is not None:
+                await session.stop()
+            if getattr(self.bot.storage, "conn", None) is not None:
+                await self.bot.storage.close()
+        return handlers_cleared
 
 
 # Track consecutive Pending-consumer timeouts for retry backoff.
@@ -1454,17 +1492,12 @@ async def stop_download_bot():
         _bot._commands_queue.get_nowait()
         _bot._commands_queue.task_done()
     if _bot.bot:
-        if getattr(_bot.bot, "is_initialized", True):
-            await _bot.bot.stop()
-        elif _bot.bot.is_connected:
-            await _bot.bot.disconnect()
-        else:
-            # A failed startup may own a transport/storage before initialization.
-            transport_session = getattr(_bot.bot, "session", None)
-            if transport_session is not None:
-                await transport_session.stop()
-            if getattr(_bot.bot.storage, "conn", None) is not None:
-                await _bot.bot.storage.close()
+        if _bot._bot_reconnect_task is not None:
+            # Do not cancel a stop while it awaits SDK workers, or race a late
+            # start with shutdown. _restart_bot checks is_running before start.
+            await asyncio.gather(_bot._bot_reconnect_task, return_exceptions=True)
+            _bot._bot_reconnect_task = None
+        await _bot._stop_bot_client()
         executor = getattr(_bot.bot, "executor", None)
         if executor is not None:
             executor.shutdown(wait=False)

@@ -104,7 +104,7 @@
 - **多语言** — Bot 与网页支持英语 / 简体中文 / 繁体中文 / 日语 / 西班牙语 / 法语 / 俄语 / 乌克兰语。
 - **rclone 云盘上传** — 下载完成后可选上传到云盘
 - **代理支持** — 支持 HTTP、SOCKS4 和 SOCKS5 代理
-- **Bot 连接状态** — 显示连接状态和延迟。[排错指南](./DEPLOY_CN.md#bot-心跳与消息诊断)
+- **Bot 连接状态** — 显示连接状态和延迟，网络中断后自动尝试恢复连接。[排错指南](./DEPLOY_CN.md#bot-心跳与消息诊断)
 - **日志** — 在 `data/log/tdl.log` 查看运行记录
 
 ---
@@ -328,7 +328,7 @@ docker run -d \
 - **Multilingual** — Bot and WebUI support English / Simplified Chinese / Traditional Chinese / Japanese / Spanish / French / Russian / Ukrainian.
 - **rclone cloud upload** — optionally upload completed files to a cloud drive
 - **Proxy support** — HTTP, SOCKS4 and SOCKS5
-- **Bot connection status** — view connection health and latency. [Troubleshooting](./DEPLOY.md#bot-heartbeat-and-message-diagnostics)
+- **Bot connection status** — view connection health and latency, with automatic recovery attempts after network outages. [Troubleshooting](./DEPLOY.md#bot-heartbeat-and-message-diagnostics)
 - **Logs** — view application logs in `data/log/tdl.log`
 
 ---

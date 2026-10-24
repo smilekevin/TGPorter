@@ -388,6 +388,8 @@ Container `127.0.0.1` refers to the container itself. Docker Desktop may use `ho
 
 The dashboard shows Bot connection status, latency and last check time. Without a Bot Token, it shows not configured. This status describes the Bot connection; it does not confirm download-account access or Bot command permissions. The service checks periodically and tries to reconnect after repeated failures; Telegram rate limits are respected.
 
+After a network outage, the Bot keeps monitoring recovery without requiring a service restart. A slow reconnection remains **reconnecting** until it finishes; `Bot reconnect still running` means the service is waiting for that attempt. Failed attempts are retried, and a fresh heartbeat must succeed before the status returns to **connected**. Check network and proxy reachability if recovery continues to fail.
+
 View recent logs:
 
 ```bash
