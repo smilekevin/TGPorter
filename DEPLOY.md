@@ -130,7 +130,7 @@ YAML does not automatically enable terminal prompts: interactive web login remai
 | `file_formats` | Extension lists for audio/document/video; all accepts every format | `{"audio": ["all"], "document": ["pdf", "epub"], "video": ["mp4"]}` |
 | `file_path_prefix` | Ordered directory fields: `from_user_id`, `chat_title`, `media_datetime`, `media_type`; an empty list adds none | `["chat_title", "media_datetime"]` |
 | `download_filters` | Default download expressions, combined with OR; at most 32 rules of 4096 characters each | `[]` |
-| `file_name_prefix` | Ordered filename fields; an empty list uses the message-ID fallback | `["file_name"]` |
+| `file_name_prefix` | Ordered filename fields (`message_id`, `file_name`, `caption`, `file_size`); an empty list uses the message-ID fallback. `file_size` uses a human-readable size and is omitted when unavailable. Changing filename fields changes the cache path; finish active downloads before changing them | `["file_name"]` |
 | `file_name_prefix_split` | Separator between filename fields | `" - "` |
 | `hide_file_name` | Hide filenames in UI | `false` |
 | `date_format` | Media date directory format; shown when Media date is selected in directory fields, retained when deselected | `"%Y_%m"` |

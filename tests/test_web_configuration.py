@@ -442,7 +442,7 @@ class WebConfigurationTests(unittest.TestCase):
         channel = [{"chat_id": -1001, "last_read_message_id": 42}]
         self.app.settings.save({"chat": channel})
         changes = {"media_types": ["video", "document"], "file_formats": {"video": ["mkv", "mp4"], "document": ["all"]},
-                   "file_path_prefix": ["media_datetime", "chat_title"], "file_name_prefix": ["caption", "message_id"],
+                   "file_path_prefix": ["media_datetime", "chat_title"], "file_name_prefix": ["caption", "file_size", "message_id"],
                    "allowed_user_ids": ["me", 12345, "@tester"], "use_user_account": True}
         response = self.save(changes)
         self.assertEqual(response.status_code, 200, response.json)

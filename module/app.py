@@ -22,7 +22,7 @@ from module.cloud_drive import CloudDrive, CloudDriveConfig
 from module.filter import Filter
 from module.language import Language, parse_language, set_language
 from module.runtime_paths import APP_DATA_FILE
-from utils.format import replace_date_time, validate_title
+from utils.format import format_byte, replace_date_time, validate_title
 from utils.meta_data import MetaData
 
 _yaml = yaml.YAML()
@@ -783,7 +783,8 @@ class Application:
         return res
 
     def get_file_name(
-        self, message_id: int, file_name: Optional[str], caption: Optional[str]
+        self, message_id: int, file_name: Optional[str], caption: Optional[str],
+        file_size: Optional[int] = None,
     ) -> str:
         """Get file save path prefix.
 
@@ -797,6 +798,9 @@ class Application:
 
         caption: Optional[str]
             Message caption
+
+        file_size: Optional[int]
+            Media size in bytes, when known
 
         Returns
         -------
@@ -814,6 +818,10 @@ class Application:
                 if res != "":
                     res += self.file_name_prefix_split
                 res += f"{file_name}"
+            elif prefix == "file_size" and file_size is not None and file_size > 0:
+                if res != "":
+                    res += self.file_name_prefix_split
+                res += format_byte(file_size)
             elif prefix == "caption" and caption:
                 if res != "":
                     res += self.file_name_prefix_split

@@ -483,6 +483,12 @@ async def _get_media_meta(
             message.id, _type, media_obj.date.isoformat(), file_format,
         )
         file_name = validate_title(file_name)
+        if "file_size" in app.file_name_prefix:
+            stem, suffix = os.path.splitext(file_name)
+            file_name = app.get_file_name(
+                message.id, stem, getattr(message, "caption", None),
+                getattr(media_obj, "file_size", None),
+            ) + suffix
         temp_file_name = os.path.join(app.temp_save_path, dirname, file_name)
         file_name = os.path.join(file_save_path, file_name)
     else:
@@ -515,7 +521,9 @@ async def _get_media_meta(
             file_name = f"{message.photo.file_unique_id}"
 
         gen_file_name = (
-            app.get_file_name(message.id, file_name, caption) + file_name_suffix
+            app.get_file_name(
+                message.id, file_name, caption, getattr(media_obj, "file_size", None)
+            ) + file_name_suffix
         )
         file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name, from_user_id)
         temp_file_name = os.path.join(app.temp_save_path, dirname, gen_file_name)

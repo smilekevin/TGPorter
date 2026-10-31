@@ -151,7 +151,7 @@
         ['voice', 'Voice messages'], ['animation', 'Animations'], ['video_note', 'Video messages'], ['sticker', 'Stickers']];
     const naming = {
         file_path_prefix: [['from_user_id', 'Requester user ID'], ['chat_title', 'Chat title'], ['media_datetime', 'Media date'], ['media_type', 'Media type']],
-        file_name_prefix: [['message_id', 'Message ID'], ['file_name', 'Original file name'], ['caption', 'Caption']]
+        file_name_prefix: [['message_id', 'Message ID'], ['file_name', 'Original file name'], ['caption', 'Caption'], ['file_size', 'File size']]
     };
     function choiceEditor(key, values, options, ordered = false) {
         const host = byId(`setting-${key}`), selected = [...values];

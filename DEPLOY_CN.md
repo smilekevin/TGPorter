@@ -146,7 +146,7 @@ Docker 默认不挂载 YAML。如需首次导入，在现有 `docker run` 命令
 | `file_formats` | audio/document/video 的扩展名列表，all 接受全部格式 | `{"audio": ["all"], "document": ["pdf", "epub"], "video": ["mp4"]}` |
 | `file_path_prefix` | 有序目录字段：`from_user_id`、`chat_title`、`media_datetime`、`media_type`；空列表不添加目录字段 | `["chat_title", "media_datetime"]` |
 | `download_filters` | 默认下载表达式列表，按 OR 组合；最多 32 条，每条最多 4096 字符 | `[]` |
-| `file_name_prefix` | 文件命名字段，空列表使用消息 ID 回退 | `["file_name"]` |
+| `file_name_prefix` | 文件命名字段（`message_id`、`file_name`、`caption`、`file_size`），空列表使用消息 ID 回退。`file_size` 使用易读大小，未知时省略。更改文件命名字段会改变缓存路径，请先完成正在下载的任务 | `["file_name"]` |
 | `file_name_prefix_split` | 文件名各字段之间的分隔符 | `" - "` |
 | `hide_file_name` | 隐藏文件名（UI 显示 `****.mp4`） | `false` |
 | `date_format` | 媒体日期目录格式；仅勾选目录命名中的“媒体日期”后显示，取消勾选保留格式 | `"%Y_%m"` |
