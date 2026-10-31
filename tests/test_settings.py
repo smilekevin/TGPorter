@@ -37,6 +37,15 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported directory field"):
             app.settings.save({"file_path_prefix": ["sender_id"]})
 
+    def test_filename_size_field_uses_selected_order_and_omits_unknown_size(self):
+        app = self.load()
+        app.settings.save({"file_name_prefix": ["file_size", "file_name", "message_id"]})
+        app.load_config()
+        self.assertEqual(app.get_file_name(42, "video", None, 1572864), "1.5MB - video - 42")
+        self.assertEqual(app.get_file_name(42, "video", None, None), "video - 42")
+        self.assertEqual(app.get_file_name(42, "video", None, 0), "video - 42")
+        self.assertEqual(self.load().get_file_name(42, "video", None, 1024), "1.0KB - video - 42")
+
     def test_fresh_start_needs_no_yaml_and_creates_defaults(self):
         app = self.load()
         self.assertFalse(self.legacy.exists())

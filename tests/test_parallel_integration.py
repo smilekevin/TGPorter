@@ -92,7 +92,7 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.app.temp_save_path = str(self.path / "temp")
         self.app.date_format = ""
         self.app.get_file_save_path = Mock(return_value=str(self.path / "downloads"))
-        self.app.get_file_name = lambda message_id, name, caption: f"{message_id} - {name}"
+        self.app.get_file_name = lambda message_id, name, caption, file_size=None: f"{message_id} - {name}"
         self.app.get_caption_name = Mock(return_value=None)
         self.message.chat.title = "摄影交流频道 ｜测试🐝"
         self.message.date = datetime(2026, 10, 16, 11, 2, 57)
@@ -255,6 +255,21 @@ class ParallelIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(Path(output).read_bytes(), self.data)
             self.assertNotIn(0, [offset for offset, _ in self.client.calls])
             self.assertFalse(parts_path(legacy).exists())
+
+    async def test_media_metadata_includes_selected_size_before_extension(self):
+        with self.use_real_media_metadata():
+            self.app.file_name_prefix = ["file_name", "file_size"]
+            self.app.file_name_prefix_split = " - "
+            self.app.get_file_name = lambda *args: Application.get_file_name(self.app, *args)
+            output, staging, _ = await downloader._get_media_meta(
+                100, self.message, self.message.video, "video")
+            self.assertEqual(Path(output).name, "飞，一 - 6.0MB.mov")
+            self.app.file_name_prefix = ["file_name"]
+            unchanged, same_staging, _ = await downloader._get_media_meta(
+                100, self.message, self.message.video, "video")
+            self.assertEqual(Path(unchanged).name, "飞，一.mov")
+            self.assertEqual(staging, output)
+            self.assertEqual(same_staging, unchanged)
 
     async def test_metadata_identity_without_unique_id_survives_reference_refresh(self):
         with self.use_real_media_metadata():
