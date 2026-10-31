@@ -21,7 +21,8 @@ class DownloadPathTests(unittest.IsolatedAsyncioTestCase):
         self.app.temp_save_path = str(self.root / "downloads/.temp")
         self.app.file_path_prefix = ["from_user_id", "chat_title", "media_datetime"]
         self.app.date_format = "%Y_%m"
-        self.app.get_file_name = lambda mid, name, caption: name or str(mid)
+        self.app.file_name_prefix = ["file_name"]
+        self.app.file_name_prefix_split = " - "
         self.app.get_caption_name = lambda *args: None
         self.message = SimpleNamespace(
             id=61, chat=SimpleNamespace(id=-10001, title="Source channel"),
