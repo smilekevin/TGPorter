@@ -70,7 +70,7 @@
             </div></section>
             {% endfor %}
             </div></div>
-            <div class="save-bar"><div class="page-container save-bar-inner"><span id="save-status" data-i18n="Changes are saved to this server.">Changes are saved to this server.</span><button type="submit" data-i18n="Save settings">Save settings</button></div></div>
+            <div class="save-bar"><div class="page-container save-bar-inner"><span id="save-status" role="status" aria-live="polite"></span><button id="save-settings" type="submit" class="save-idle" data-i18n="Save settings">Save settings</button></div></div>
         </form>
         {% endif %}
     </main>

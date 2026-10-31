@@ -44,7 +44,7 @@
 
 ### WebUI
 
-- **交互式配置页面** — 通过网页管理 Telegram 登录、下载、网页访问和 MCP。[配置指南](./DEPLOY_CN.md#webui-登录)。
+- **交互式配置页面** — 通过网页管理 Telegram 登录、下载、网页访问和 MCP，底部保存按钮显示修改和保存状态。[配置指南](./DEPLOY_CN.md#webui-登录)。
 - **响应式界面** — 浅色主题，适配桌面和手机；桌面标签与移动端底部导航使用一致的顺序和线框图标
 - **文件命名** — 可选择并排序原文件名、消息 ID、说明和文件大小；详见 [中文部署指南](DEPLOY_CN.md)。
 - **任务搜索** — 按任务 ID 或文件名查找任务
@@ -269,7 +269,7 @@ docker run -d \
 
 ### WebUI
 
-- **Interactive configuration page** — manage Telegram login, downloads, web access and MCP in your browser. [Setup guide](./DEPLOY.md#webui-login).
+- **Interactive configuration page** — manage Telegram login, downloads, web access and MCP in your browser, with a save button that shows the save state. [Setup guide](./DEPLOY.md#webui-login).
 - **Responsive interface** — light theme for desktop and mobile, with matching tab order and outline icons in desktop tabs and mobile bottom navigation
 - **File naming** — select and order the original filename, message ID, caption, and file size; see the [English deployment guide](DEPLOY.md).
 - **Task search** — find tasks by ID or filename
