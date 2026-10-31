@@ -37,7 +37,17 @@
         });
         return;
     }
-    function changed(key) { dirty.add(key); renderTelegram(telegram); }
+    function saveState(state, message = '') {
+        const button = byId('save-settings'), status = byId('save-status');
+        button.classList.remove('save-idle', 'save-success', 'save-error');
+        if (state !== 'dirty' && state !== 'saving') button.classList.add(`save-${state}`);
+        const label = state === 'success' ? 'Settings saved' : state === 'saving' ? 'Saving...' : 'Save settings';
+        button.dataset.i18n = label;
+        button.textContent = t(label);
+        status.textContent = t(message);
+        status.classList.toggle('error', state === 'error');
+    }
+    function changed(key) { dirty.add(key); saveState('dirty'); renderTelegram(telegram); }
     function node(tag, text, className) {
         const result = document.createElement(tag);
         if (text !== undefined) result.textContent = t(text);
@@ -348,11 +358,19 @@
         }
         const data = await request('/api/configuration', {settings});
         renderSettings(data, preserveCredentials);
+        saveState('success');
         return data;
     }
     byId('settings-form').addEventListener('submit', event => {
         event.preventDefault();
-        withButton(event.submitter, async () => { await saveSettings(); notice('Settings saved'); });
+        const button = event.submitter;
+        button.disabled = true;
+        saveState('saving');
+        notice('');
+        saveSettings().catch(error => saveState('error', error.message)).finally(() => {
+            button.disabled = false;
+            renderTelegram(telegram);
+        });
     });
     async function action(name, values = {}) {
         telegram = await request('/api/telegram', {action: name, ...values});

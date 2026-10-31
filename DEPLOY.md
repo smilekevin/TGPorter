@@ -89,7 +89,7 @@ Open `http://localhost:5088/configuration`, claim setup using the code from star
 
 Use the header icons to switch between downloads and Configuration. **Sign out** ends your web login. See the [mobile and desktop screenshots in README](https://github.com/smilekevin/TGPorter/blob/main/README.md#webui-preview).
 
-Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved.
+Use **Configuration** to manage Telegram login, downloads, web access and MCP. Settings are saved in `data/settings.json`; avoid editing it while the service is running. Leave saved password and Token fields blank to keep their current values. Telegram verification codes and two-step passwords are not saved. The fixed save button changes from gray to blue when settings are edited, green when saved, and red on failure; error details appear beside it.
 
 The dashboard **Skipped** tab keeps reasons and saved filters across restarts. Desktop tabs and mobile bottom navigation share the same order (Downloading, Pending, Completed, Skipped, Failed) and outline icons. **Download** bypasses download filters, media types and formats; **Delete** removes only the record. Bot replies include skip reasons; verified existing files count as **Skipped**, without increasing successful downloads.
 

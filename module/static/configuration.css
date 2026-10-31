@@ -43,7 +43,11 @@ aside a:hover { color: #2563eb; background: #eaf0fc; }
 .wide { grid-column: 1 / -1; }
 .save-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #ffffffed; border-top: 1px solid #dce3ed; z-index: 3; backdrop-filter: blur(12px); }
 .save-bar-inner { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 14px; padding-bottom: 14px; }
-.save-bar span { color: #65748b; font-size: 12px; }
+.save-bar span { color: #65748b; font-size: 12px; overflow-wrap: anywhere; }
+.save-bar span.error { color: #b63838; }
+#save-settings.save-idle { background: #68778a; border-color: #68778a; }
+#save-settings.save-success { background: #13704f; border-color: #13704f; }
+#save-settings.save-error { background: #b63838; border-color: #b63838; }
 #notice, .restart { padding: 16px 20px; border-radius: 10px; border: 1px solid #c9ddff; color: #235aaa; background: #edf4ff; overflow-wrap: anywhere; }
 #notice.error { border-color: #f2caca; color: #a83232; background: #fff1f1; }
 .restart { margin-bottom: 24px; border-color: #f1dcad; background: #fff9eb; color: #88601a; }
