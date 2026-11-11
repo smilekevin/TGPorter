@@ -2117,62 +2117,44 @@ async def download_forward_media(
             source_message_id = getattr(origin, "message_id", None) or 0
             source_chat_title = source_chat.title or ""
 
-            download_message = None
-            if source_message_id:
-                source_msg = await retry(
-                    _bot.client.get_messages,
-                    args=(source_chat_id, source_message_id),
-                )
-                if source_msg and source_msg.media:
+            if source_message_id and not is_flood_wait_active():
+                source_client = _bot.client
+                lookup_chat_id = source_chat_id
+                download_message = None
+                try:
+                    # Kurigram already retries transport errors. Let a timeout
+                    # fall through to the copy in the Bot inbox.
+                    try:
+                        download_message = await source_client.get_messages(source_chat_id, source_message_id)
+                    except (pyrogram.errors.BadRequest, pyrogram.errors.Forbidden, ValueError):
+                        # A public username can resolve a peer missing from the local cache.
+                        pass
+                    if (not download_message or not download_message.media) and not is_flood_wait_active():
+                        if source_chat.username:
+                            link_path = source_chat.username
+                        else:
+                            link_path = f"c/{str(source_chat_id).removeprefix('-100')}"
+                        link = f"https://t.me/{link_path}/{source_message_id}"
+                        link_chat_id, link_msg_id, _ = await parse_link(source_client, link)
+                        if link_chat_id and link_msg_id:
+                            lookup_chat_id = link_chat_id
+                            download_message = await source_client.get_messages(link_chat_id, link_msg_id)
+                except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
+                    from module.pyrogram_extension import _unified_flood_wait
+                    _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + error.value + 5)
+                    _unified_flood_wait["reason"] = f"Forwarded source lookup FLOOD_WAIT {error.value}s"
+                    logger.warning("Forwarded source lookup deferred: FLOOD_WAIT {}s", error.value)
+                except (OSError, pyrogram.errors.RPCError, ValueError) as error:
+                    logger.warning("Forwarded source lookup failed: error={}", type(error).__name__)
+                if download_message and download_message.media:
                     return await direct_download(
-                        _bot, source_chat_id, message, source_msg, client,
+                        _bot, lookup_chat_id, message, download_message, client,
                         source_chat_id=source_chat_id,
                         source_message_id=source_message_id,
                         source_chat_title=source_chat_title,
                     )
-                # Source message deleted or no media — try link-based fetch
-                # The forwarded message's file reference may be stale. Construct
-                # a link and use parse_link → get_messages to get a fresh copy.
-                logger.info(
-                    f"Forward: source msg {source_message_id} has no media, "
-                    f"trying link-based fetch"
-                )
-                try:
-                    from module.pyrogram_extension import parse_link
-                    # Build source link: private channels use /c/, public use /username/
-                    fwd_chat = source_chat
-                    if fwd_chat.username:
-                        link_str = f"https://t.me/{fwd_chat.username}/{source_message_id}"
-                    else:
-                        link_id = str(source_chat_id)
-                        if link_id.startswith("-100"):
-                            link_id = link_id[4:]
-                        link_str = f"https://t.me/c/{link_id}/{source_message_id}"
-                    link_chat_id, link_msg_id, _ = await parse_link(_bot.client, link_str)
-                    if link_chat_id and link_msg_id:
-                        download_message = await retry(
-                            _bot.client.get_messages,
-                            args=(link_chat_id, link_msg_id),
-                        )
-                        if download_message and download_message.media:
-                            logger.info(
-                                f"Forward: link-based fetch succeeded for "
-                                f"{link_chat_id}/{link_msg_id}"
-                            )
-                            return await direct_download(
-                                _bot, link_chat_id, message, download_message, client,
-                                source_chat_id=source_chat_id,
-                                source_message_id=source_message_id,
-                                source_chat_title=source_chat_title,
-                            )
-                except Exception as e:
-                    logger.warning(f"Forward: link-based fetch failed: {e}")
 
-            # All fallbacks failed — fall through to direct download with the
-            # original forwarded message (last resort)
-            return await direct_download(_bot, message.from_user.id, message, message, client)
-
-        # Direct upload or forward from user (no source channel info)
+        # Use the Bot inbox for direct uploads and forwards without usable source media.
         return await direct_download(_bot, message.from_user.id, message, message, client)
 
     await client.send_message(
