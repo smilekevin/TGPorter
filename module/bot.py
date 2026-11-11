@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime
 from functools import wraps
-from typing import Callable, List, Union
+from typing import Callable, List, Optional, Union
 
 from module.telegram import pyrogram
 from loguru import logger
@@ -1994,20 +1994,23 @@ async def direct_download(
     download_bot: DownloadBot,
     chat_id: Union[str, int],
     message: pyrogram.types.Message,
-    download_message: pyrogram.types.Message,
+    download_message: Optional[pyrogram.types.Message],
     client: pyrogram.Client = None,
     source_chat_id: int = 0,
     source_message_id: int = 0,
     source_chat_title: str = "",
+    *,
+    topic_id: int = 0,
 ):
     """Direct Download
 
     Args:
         source_chat_id: Original source channel ID (for forwarded messages recovery)
-        source_message_id: Original source message ID (for forwarded messages recovery)
+        source_message_id: Original post ID, also used for a link with no cached message.
         source_chat_title: Source channel title (for web display)
     """
 
+    message_id = download_message.id if download_message is not None else source_message_id
     replay_message = _t("Added to download queue")
     last_reply_message = await download_bot.bot.send_message(
         message.from_user.id, _t("Submitting..."), reply_parameters=types.ReplyParameters(message_id=message.id)
@@ -2018,10 +2021,10 @@ async def direct_download(
     # of awaits so concurrent Bot submissions cannot create orphan live nodes.
     for task in get_running_tasks():
         if (str(task.get("chat_id")) == str(chat_id)
-                and str((task.get("extra_data") or {}).get("message_id")) == str(download_message.id)):
+                and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
             display = (task.get("extra_data") or {}).get("task_id_display") or str(task["task_id"])
             logger.info("Bot submission reused task {} (id={}, chat={}, message={})",
-                        display, task["task_id"], chat_id, download_message.id)
+                        display, task["task_id"], chat_id, message_id)
             await download_bot.bot.edit_message_text(
                 message.from_user.id, last_reply_message.id,
                 f"{_t('Task already exists')}\n{_t('Task')}: {display}",
@@ -2036,6 +2039,7 @@ async def direct_download(
         limit=1,
         bot=download_bot.bot,
         task_id=download_bot.gen_task_id(),
+        topic_id=topic_id,
         download_filter=download_bot.app.resolve_download_filter(),
     )
 
@@ -2046,11 +2050,14 @@ async def direct_download(
     node.source_message_id = source_message_id
 
     extra_data = {
-        "message_id": download_message.id,
+        "message_id": message_id,
         "task_id_display": node.task_id_display,
     }
-    owner = getattr(download_message, "_client", None) or download_bot.get_message_client(
-        chat_id, message.from_user.id
+    if topic_id:
+        extra_data["topic_id"] = topic_id
+    owner = download_bot.client if download_message is None else (
+        getattr(download_message, "_client", None)
+        or download_bot.get_message_client(chat_id, message.from_user.id)
     )
     extra_data["message_client"] = "bot" if owner is download_bot.bot else "user"
     if source_chat_id and source_message_id:
@@ -2073,7 +2080,7 @@ async def direct_download(
     )
     if not saved:
         logger.error("Bot submission not accepted: task {} (id={}, chat={}, message={})",
-                     node.task_id_display, node.task_id, chat_id, download_message.id)
+                     node.task_id_display, node.task_id, chat_id, message_id)
         await download_bot.bot.edit_message_text(
             message.from_user.id, last_reply_message.id,
             _t("Task could not be persisted; submission was not accepted."),
@@ -2083,11 +2090,12 @@ async def direct_download(
     download_bot.add_task_node(node)
     # Cache the message so consumer can skip get_messages.
     # Do NOT queue directly — consumer controls when to feed workers.
-    download_bot._cached_messages[node.task_id] = download_message
+    if download_message is not None:
+        download_bot._cached_messages[node.task_id] = download_message
     node.is_running = True
     download_bot._ensure_pending_consumer()
     logger.info("Bot submission accepted: task {} (id={}, chat={}, message={}) stays pending until a slot is available",
-                node.task_id_display, node.task_id, chat_id, download_message.id)
+                node.task_id_display, node.task_id, chat_id, message_id)
 
     # Do NOT trigger _consume_one_pending directly — let the periodic
     # _pending_consumer_loop (every 2s) pick it up. This ensures the
@@ -2190,7 +2198,7 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
             message.from_user.id, msg, parse_mode=pyrogram.enums.ParseMode.HTML
         )
 
-    chat_id, message_id, _ = await parse_link(_bot.client, text[0])
+    chat_id, message_id, topic_id = await parse_link(_bot.client, text[0])
 
     entity = None
     if chat_id:
@@ -2199,17 +2207,13 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
         title = entity.title or entity.first_name or str(entity.id)
         set_chat_title(entity.id, title)
         if message_id:
-            download_message = await retry(
-                _bot.client.get_messages, args=(chat_id, message_id)
+            # Persist the post before fetching it so the consumer can retry
+            # temporary Telegram failures with the same account and post ID.
+            return await direct_download(
+                _bot, entity.id, message, None,
+                source_chat_id=entity.id, source_message_id=message_id,
+                source_chat_title=title, topic_id=topic_id,
             )
-            if download_message:
-                return await direct_download(_bot, entity.id, message, download_message)
-            else:
-                await client.send_message(
-                    message.from_user.id,
-                    f"{_t('From')} {entity.title} {_t('download')} {message_id} {_t('error')}!",
-                    reply_parameters=types.ReplyParameters(message_id=message.id),
-                )
         return
 
     await client.send_message(

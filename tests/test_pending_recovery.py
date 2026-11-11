@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import media_downloader as downloader
 from module import bot, download_stat, task_store as store
@@ -310,6 +310,40 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await first
         self.assertEqual(self.queue.qsize(), 1)
         self.assertFalse(self.bot._consuming)
+
+    async def test_bot_post_link_retries_original_message_after_timeout(self):
+        self.bot.bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(id=5)))
+        self.client.get_chat.return_value = SimpleNamespace(id=-10001, title="Source")
+        source = self.message(mid=101)
+        self.client.get_messages.side_effect = [TimeoutError(), source]
+        command = SimpleNamespace(
+            id=12, from_user=SimpleNamespace(id=100), text="https://t.me/c/1/101")
+
+        from module import pyrogram_extension
+        cooldown = {"until": 0, "reason": ""}
+        with patch.object(bot, "_pending_timeout_counts", {}), \
+                patch.object(pyrogram_extension, "_unified_flood_wait", cooldown), \
+                patch.object(bot, "is_flood_wait_active", pyrogram_extension.is_flood_wait_active), \
+                patch.object(self.bot, "_ensure_pending_consumer"):
+            await bot.download_from_link(self.bot.bot, command)
+            task, = store.get_pending_tasks()
+            self.assertEqual(task["chat_id"], -10001)
+            self.assertEqual(task["extra_data"]["message_id"], 101)
+            self.client.get_messages.assert_not_awaited()
+
+            await bot._consume_one_pending()
+            self.assertEqual(store.get_pending_tasks(), [task])
+            self.assertFalse(self.bot._consuming)
+            self.assertEqual(self.queue.qsize(), 0)
+            self.assertTrue(bot.is_flood_wait_active())
+            await bot._consume_one_pending()
+            self.client.get_messages.assert_awaited_once_with(-10001, 101)
+
+            cooldown["until"] = 0
+            await bot._consume_one_pending()
+            self.assertEqual(self.client.get_messages.await_args_list,
+                             [call(-10001, 101), call(-10001, 101)])
+            self.assertEqual(self.queue.qsize(), 1)
 
     async def test_failed_queue_handoff_keeps_task_retryable(self):
         for result in (False, RuntimeError("queue unavailable")):

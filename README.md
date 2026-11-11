@@ -162,6 +162,8 @@ docker run -d \
 
 向 Bot 发送消息链接或转发媒体后，可用 `/query pending` 查看排队任务。同一消息已有未完成任务时，Bot 回复“任务已存在”和原编号。保存失败时会显示错误；排查时可按任务编号搜索 `data/log/tdl.log`。
 
+通过 Bot 提交消息链接后，原帖查询遇到临时网络错误或限流时，任务会留在待下载队列，稍后重试同一原帖。
+
 ---
 
 ## Web API
@@ -386,6 +388,8 @@ For more details, please refer to the following deployment matrix:
 | `/help` `/start` | Show help | — |
 
 After sending a post link or forwarding media to the Bot, use `/query pending` to check waiting tasks. Repeating an unfinished submission returns “Task already exists” with its original ID. Check any save error before submitting again, and search `data/log/tdl.log` by task ID when troubleshooting.
+
+If a post submitted by link to the Bot hits a temporary network error or rate limit during the message lookup, the task stays pending and retries the same post.
 
 ---
 
