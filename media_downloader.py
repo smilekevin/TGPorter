@@ -71,6 +71,7 @@ _CLIENT_RECONNECT_THRESHOLD = 10
 _client_reconnecting = {"active": False}
 _client_last_reconnect = {"time": 0.0}
 _CLIENT_RECONNECT_COOLDOWN = 300  # 5 min between reconnect attempts
+_SOURCE_TRANSPORT_RECONNECT_TIMEOUT = 45
 _MAX_WATCHDOG_RETRIES = 2  # Maximum retries after watchdog cancellation.
 _watchdog_retry_count = {}  # Retry counts by task_id.
 _main_client_ref = {"client": None}  # set in start_server()
@@ -1698,6 +1699,8 @@ async def _reconnect_client():
     Bound all operations so a 900-second TCP timeout cannot permanently hold the
     reconnect guard. If stop times out while SQLite retains an exclusive lock,
     clean up journal files and internal session references before restarting."""
+    if _client_reconnecting["active"]:
+        return False
     client = _main_client_ref["client"]
     if client is None:
         logger.error("Cannot reconnect: no client reference")
@@ -1788,6 +1791,29 @@ async def _reconnect_client():
                 "abandoning reconnect, returning False"
             )
             return False
+    finally:
+        _client_reconnecting["active"] = False
+
+
+async def _reconnect_download_session(client):
+    """Recover the download account's RPC transport without stopping media workers."""
+    if client is not _main_client_ref["client"] or _client_reconnecting["active"]:
+        return False
+    if not client.is_connected:
+        return await _reconnect_client()
+    session = client.session
+    if session.restart_lock.locked():
+        # Kurigram is already recovering this transport.
+        return False
+
+    _client_reconnecting["active"] = True
+    try:
+        logger.warning("Reconnecting download session after source lookup failures")
+        async with asyncio.timeout(_SOURCE_TRANSPORT_RECONNECT_TIMEOUT):
+            await session.restart()
+            await session.is_started.wait()
+        logger.info("Download session transport reconnected")
+        return True
     finally:
         _client_reconnecting["active"] = False
 
@@ -2071,12 +2097,14 @@ def main(terminal_login=False):
         app.save_app_data()
 
     async def start_backend(client):
+        from module.bot import _bot
         global queue
         try:
             app.cloud_drive_config.pre_run()
             set_max_concurrent_transmissions(client, app.max_concurrent_transmissions)
             await start_server(client)
             queue = _DownloadQueue(client)
+            _bot.reconnect_download_session = _reconnect_download_session
             if app.bot_token:
                 await start_download_bot(app, client, add_download_task, download_chat_task)
             else:

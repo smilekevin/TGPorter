@@ -315,7 +315,8 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.bot.bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(id=5)))
         self.client.get_chat.return_value = SimpleNamespace(id=-10001, title="Source")
         source = self.message(mid=101)
-        self.client.get_messages.side_effect = [TimeoutError(), source]
+        self.client.get_messages.side_effect = [TimeoutError(), TimeoutError(), source]
+        self.bot.reconnect_download_session = AsyncMock(return_value=True)
         command = SimpleNamespace(
             id=12, from_user=SimpleNamespace(id=100), text="https://t.me/c/1/101")
 
@@ -338,12 +339,80 @@ class PendingRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(bot.is_flood_wait_active())
             await bot._consume_one_pending()
             self.client.get_messages.assert_awaited_once_with(-10001, 101)
+            self.bot.reconnect_download_session.assert_not_awaited()
+
+            cooldown["until"] = 0
+            await bot._consume_one_pending()
+            await self.bot._source_reconnect_task
+            self.bot.reconnect_download_session.assert_awaited_once_with(self.client)
+            self.assertEqual(store.get_pending_tasks(), [task])
 
             cooldown["until"] = 0
             await bot._consume_one_pending()
             self.assertEqual(self.client.get_messages.await_args_list,
-                             [call(-10001, 101), call(-10001, 101)])
+                             [call(-10001, 101)] * 3)
             self.assertEqual(self.queue.qsize(), 1)
+
+    async def test_inbox_lookup_and_flood_wait_do_not_reconnect_download_session(self):
+        inbox_client = SimpleNamespace(get_messages=AsyncMock(side_effect=ConnectionError("offline")))
+        self.bot.bot = inbox_client
+        self.bot.reconnect_download_session = AsyncMock(return_value=True)
+        from module import pyrogram_extension
+        with patch.object(bot, "_pending_timeout_counts", {}), \
+                patch.object(pyrogram_extension, "_unified_flood_wait", {"until": 0, "reason": ""}):
+            self.save(extra={"message_client": "bot"})
+            await bot._consume_one_pending()
+            await bot._consume_one_pending()
+            self.assertIsNone(self.bot._source_reconnect_task)
+            store.complete_task(1)
+
+            self.save(tid=2, extra={"message_client": "user"})
+            self.client.get_messages.side_effect = pyrogram_extension.pyrogram.errors.FloodWait(30)
+            await bot._consume_one_pending()
+            self.assertIsNone(self.bot._source_reconnect_task)
+            self.bot.reconnect_download_session.assert_not_awaited()
+
+    async def test_source_reconnect_only_restarts_download_rpc_transport(self):
+        started = asyncio.Event()
+        session = SimpleNamespace(restart_lock=asyncio.Lock(), is_started=started)
+
+        async def restart():
+            started.set()
+
+        session.restart = AsyncMock(side_effect=restart)
+        self.client.is_connected = True
+        self.client.session = session
+        with patch.object(downloader, "_main_client_ref", {"client": self.client}), \
+                patch.object(downloader, "_client_reconnecting", {"active": False}), \
+                patch.object(downloader, "_reconnect_client", AsyncMock()) as full_reconnect:
+            self.assertTrue(await downloader._reconnect_download_session(self.client))
+            async with session.restart_lock:
+                self.assertFalse(await downloader._reconnect_download_session(self.client))
+        session.restart.assert_awaited_once()
+        full_reconnect.assert_not_awaited()
+
+    async def test_source_reconnect_is_single_flight_and_respects_cooldown(self):
+        release = asyncio.Event()
+
+        async def recover(client):
+            await release.wait()
+            return False
+
+        self.bot.reconnect_download_session = AsyncMock(side_effect=recover)
+        error = TimeoutError()
+        self.bot._record_source_lookup_failure(self.client, error)
+        self.assertIsNone(self.bot._source_reconnect_task)
+        self.bot._record_source_lookup_failure(self.client, error)
+        reconnect = self.bot._source_reconnect_task
+        try:
+            self.bot._record_source_lookup_failure(self.client, error)
+            self.assertIs(self.bot._source_reconnect_task, reconnect)
+        finally:
+            release.set()
+            await reconnect
+        self.bot._record_source_lookup_failure(self.client, error)
+        self.assertIs(self.bot._source_reconnect_task, reconnect)
+        self.bot.reconnect_download_session.assert_awaited_once_with(self.client)
 
     async def test_failed_queue_handoff_keeps_task_retryable(self):
         for result in (False, RuntimeError("queue unavailable")):
