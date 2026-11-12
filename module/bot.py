@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime
 from functools import wraps
-from typing import Callable, List, Union
+from typing import Callable, List, Optional, Union
 
 from module.telegram import pyrogram
 from loguru import logger
@@ -58,6 +58,8 @@ from module.runtime_paths import BOT_CONFIG_FILE
 # pylint: disable = C0301, R0902
 
 _BOT_COMMANDS_TIMEOUT = 10
+_SOURCE_LOOKUP_RECONNECT_FAILURES = 2
+_SOURCE_LOOKUP_RECONNECT_COOLDOWN = 300
 _BOT_HEARTBEAT_INTERVAL = 60
 _BOT_HEARTBEAT_TIMEOUT = 10
 _BOT_HEARTBEAT_FAILURES = 3
@@ -236,7 +238,38 @@ class DownloadBot:
         self._consuming: set = set()
         self._active_downloads = 0
         self._pending_consumer_task = None
+        self.reconnect_download_session = None
+        self._source_reconnect_task = None
+        self._source_lookup_failures = 0
+        self._source_reconnect_after = 0.0
         self._range_tasks: dict = {}
+
+    def _record_source_lookup_failure(self, client, error):
+        """Schedule one download-session recovery after repeated transport errors."""
+        if client is not self.client or client is self.bot or not self.reconnect_download_session:
+            return
+        self._source_lookup_failures += 1
+        if self._source_lookup_failures < _SOURCE_LOOKUP_RECONNECT_FAILURES and getattr(client, "is_connected", True):
+            return
+        if self._source_reconnect_task is not None and not self._source_reconnect_task.done():
+            return
+        now = time.monotonic()
+        if now < self._source_reconnect_after or is_flood_wait_active():
+            return
+        self._source_reconnect_after = now + _SOURCE_LOOKUP_RECONNECT_COOLDOWN
+        logger.warning("Download session recovery requested: lookup_failures={} error={}",
+                       self._source_lookup_failures, type(error).__name__)
+        self._source_reconnect_task = asyncio.create_task(self._recover_source_session(client))
+
+    async def _recover_source_session(self, client):
+        """Run recovery outside a download task's pause and cancellation scope."""
+        if not self._source_lookup_failures or not self.is_running:
+            return
+        try:
+            if await self.reconnect_download_session(client):
+                self._source_lookup_failures = 0
+        except Exception as error:
+            logger.warning("Download session recovery failed: error={}", type(error).__name__)
 
     def get_connection_status(self):
         """Read a heartbeat snapshot from Flask threads without sending Telegram RPCs."""
@@ -1486,6 +1519,13 @@ async def stop_download_bot():
         task.cancel()
     await asyncio.gather(*background_tasks, return_exceptions=True)
     _bot._pending_consumer_task = None
+    if _bot._source_reconnect_task is not None:
+        # Let a bounded reconnect finish before the backend closes the client.
+        await asyncio.gather(_bot._source_reconnect_task, return_exceptions=True)
+    _bot._source_reconnect_task = None
+    _bot._source_lookup_failures = 0
+    _bot._source_reconnect_after = 0.0
+    _bot.reconnect_download_session = None
     _bot.heartbeat_task = None
     _bot._commands_refresh_task = None
     while not _bot._commands_queue.empty():
@@ -1994,20 +2034,23 @@ async def direct_download(
     download_bot: DownloadBot,
     chat_id: Union[str, int],
     message: pyrogram.types.Message,
-    download_message: pyrogram.types.Message,
+    download_message: Optional[pyrogram.types.Message],
     client: pyrogram.Client = None,
     source_chat_id: int = 0,
     source_message_id: int = 0,
     source_chat_title: str = "",
+    *,
+    topic_id: int = 0,
 ):
     """Direct Download
 
     Args:
         source_chat_id: Original source channel ID (for forwarded messages recovery)
-        source_message_id: Original source message ID (for forwarded messages recovery)
+        source_message_id: Original post ID, also used for a link with no cached message.
         source_chat_title: Source channel title (for web display)
     """
 
+    message_id = download_message.id if download_message is not None else source_message_id
     replay_message = _t("Added to download queue")
     last_reply_message = await download_bot.bot.send_message(
         message.from_user.id, _t("Submitting..."), reply_parameters=types.ReplyParameters(message_id=message.id)
@@ -2018,10 +2061,10 @@ async def direct_download(
     # of awaits so concurrent Bot submissions cannot create orphan live nodes.
     for task in get_running_tasks():
         if (str(task.get("chat_id")) == str(chat_id)
-                and str((task.get("extra_data") or {}).get("message_id")) == str(download_message.id)):
+                and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
             display = (task.get("extra_data") or {}).get("task_id_display") or str(task["task_id"])
             logger.info("Bot submission reused task {} (id={}, chat={}, message={})",
-                        display, task["task_id"], chat_id, download_message.id)
+                        display, task["task_id"], chat_id, message_id)
             await download_bot.bot.edit_message_text(
                 message.from_user.id, last_reply_message.id,
                 f"{_t('Task already exists')}\n{_t('Task')}: {display}",
@@ -2036,6 +2079,7 @@ async def direct_download(
         limit=1,
         bot=download_bot.bot,
         task_id=download_bot.gen_task_id(),
+        topic_id=topic_id,
         download_filter=download_bot.app.resolve_download_filter(),
     )
 
@@ -2046,11 +2090,14 @@ async def direct_download(
     node.source_message_id = source_message_id
 
     extra_data = {
-        "message_id": download_message.id,
+        "message_id": message_id,
         "task_id_display": node.task_id_display,
     }
-    owner = getattr(download_message, "_client", None) or download_bot.get_message_client(
-        chat_id, message.from_user.id
+    if topic_id:
+        extra_data["topic_id"] = topic_id
+    owner = download_bot.client if download_message is None else (
+        getattr(download_message, "_client", None)
+        or download_bot.get_message_client(chat_id, message.from_user.id)
     )
     extra_data["message_client"] = "bot" if owner is download_bot.bot else "user"
     if source_chat_id and source_message_id:
@@ -2073,7 +2120,7 @@ async def direct_download(
     )
     if not saved:
         logger.error("Bot submission not accepted: task {} (id={}, chat={}, message={})",
-                     node.task_id_display, node.task_id, chat_id, download_message.id)
+                     node.task_id_display, node.task_id, chat_id, message_id)
         await download_bot.bot.edit_message_text(
             message.from_user.id, last_reply_message.id,
             _t("Task could not be persisted; submission was not accepted."),
@@ -2083,11 +2130,12 @@ async def direct_download(
     download_bot.add_task_node(node)
     # Cache the message so consumer can skip get_messages.
     # Do NOT queue directly — consumer controls when to feed workers.
-    download_bot._cached_messages[node.task_id] = download_message
+    if download_message is not None:
+        download_bot._cached_messages[node.task_id] = download_message
     node.is_running = True
     download_bot._ensure_pending_consumer()
     logger.info("Bot submission accepted: task {} (id={}, chat={}, message={}) stays pending until a slot is available",
-                node.task_id_display, node.task_id, chat_id, download_message.id)
+                node.task_id_display, node.task_id, chat_id, message_id)
 
     # Do NOT trigger _consume_one_pending directly — let the periodic
     # _pending_consumer_loop (every 2s) pick it up. This ensures the
@@ -2117,62 +2165,49 @@ async def download_forward_media(
             source_message_id = getattr(origin, "message_id", None) or 0
             source_chat_title = source_chat.title or ""
 
-            download_message = None
-            if source_message_id:
-                source_msg = await retry(
-                    _bot.client.get_messages,
-                    args=(source_chat_id, source_message_id),
-                )
-                if source_msg and source_msg.media:
+            if source_message_id and not is_flood_wait_active():
+                source_client = _bot.client
+                lookup_chat_id = source_chat_id
+                download_message = None
+                try:
+                    # Kurigram already retries transport errors. Let a timeout
+                    # fall through to the copy in the Bot inbox.
+                    try:
+                        download_message = await source_client.get_messages(source_chat_id, source_message_id)
+                    except (pyrogram.errors.BadRequest, pyrogram.errors.Forbidden, ValueError):
+                        # A public username can resolve a peer missing from the local cache.
+                        pass
+                    if (not download_message or not download_message.media) and not is_flood_wait_active():
+                        if source_chat.username:
+                            link_path = source_chat.username
+                        else:
+                            link_path = f"c/{str(source_chat_id).removeprefix('-100')}"
+                        link = f"https://t.me/{link_path}/{source_message_id}"
+                        link_chat_id, link_msg_id, _ = await parse_link(source_client, link)
+                        if link_chat_id and link_msg_id:
+                            lookup_chat_id = link_chat_id
+                            download_message = await source_client.get_messages(link_chat_id, link_msg_id)
+                except (pyrogram.errors.FloodWait, pyrogram.errors.FloodPremiumWait) as error:
+                    from module.pyrogram_extension import _unified_flood_wait
+                    _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + error.value + 5)
+                    _unified_flood_wait["reason"] = f"Forwarded source lookup FLOOD_WAIT {error.value}s"
+                    logger.warning("Forwarded source lookup deferred: FLOOD_WAIT {}s", error.value)
+                except OSError as error:
+                    _bot._record_source_lookup_failure(source_client, error)
+                    logger.warning("Forwarded source lookup failed: error={}", type(error).__name__)
+                except (pyrogram.errors.RPCError, ValueError) as error:
+                    logger.warning("Forwarded source lookup failed: error={}", type(error).__name__)
+                else:
+                    _bot._source_lookup_failures = 0
+                if download_message and download_message.media:
                     return await direct_download(
-                        _bot, source_chat_id, message, source_msg, client,
+                        _bot, lookup_chat_id, message, download_message, client,
                         source_chat_id=source_chat_id,
                         source_message_id=source_message_id,
                         source_chat_title=source_chat_title,
                     )
-                # Source message deleted or no media — try link-based fetch
-                # The forwarded message's file reference may be stale. Construct
-                # a link and use parse_link → get_messages to get a fresh copy.
-                logger.info(
-                    f"Forward: source msg {source_message_id} has no media, "
-                    f"trying link-based fetch"
-                )
-                try:
-                    from module.pyrogram_extension import parse_link
-                    # Build source link: private channels use /c/, public use /username/
-                    fwd_chat = source_chat
-                    if fwd_chat.username:
-                        link_str = f"https://t.me/{fwd_chat.username}/{source_message_id}"
-                    else:
-                        link_id = str(source_chat_id)
-                        if link_id.startswith("-100"):
-                            link_id = link_id[4:]
-                        link_str = f"https://t.me/c/{link_id}/{source_message_id}"
-                    link_chat_id, link_msg_id, _ = await parse_link(_bot.client, link_str)
-                    if link_chat_id and link_msg_id:
-                        download_message = await retry(
-                            _bot.client.get_messages,
-                            args=(link_chat_id, link_msg_id),
-                        )
-                        if download_message and download_message.media:
-                            logger.info(
-                                f"Forward: link-based fetch succeeded for "
-                                f"{link_chat_id}/{link_msg_id}"
-                            )
-                            return await direct_download(
-                                _bot, link_chat_id, message, download_message, client,
-                                source_chat_id=source_chat_id,
-                                source_message_id=source_message_id,
-                                source_chat_title=source_chat_title,
-                            )
-                except Exception as e:
-                    logger.warning(f"Forward: link-based fetch failed: {e}")
 
-            # All fallbacks failed — fall through to direct download with the
-            # original forwarded message (last resort)
-            return await direct_download(_bot, message.from_user.id, message, message, client)
-
-        # Direct upload or forward from user (no source channel info)
+        # Use the Bot inbox for direct uploads and forwards without usable source media.
         return await direct_download(_bot, message.from_user.id, message, message, client)
 
     await client.send_message(
@@ -2208,7 +2243,7 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
             message.from_user.id, msg, parse_mode=pyrogram.enums.ParseMode.HTML
         )
 
-    chat_id, message_id, _ = await parse_link(_bot.client, text[0])
+    chat_id, message_id, topic_id = await parse_link(_bot.client, text[0])
 
     entity = None
     if chat_id:
@@ -2217,17 +2252,13 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
         title = entity.title or entity.first_name or str(entity.id)
         set_chat_title(entity.id, title)
         if message_id:
-            download_message = await retry(
-                _bot.client.get_messages, args=(chat_id, message_id)
+            # Persist the post before fetching it so the consumer can retry
+            # temporary Telegram failures with the same account and post ID.
+            return await direct_download(
+                _bot, entity.id, message, None,
+                source_chat_id=entity.id, source_message_id=message_id,
+                source_chat_title=title, topic_id=topic_id,
             )
-            if download_message:
-                return await direct_download(_bot, entity.id, message, download_message)
-            else:
-                await client.send_message(
-                    message.from_user.id,
-                    f"{_t('From')} {entity.title} {_t('download')} {message_id} {_t('error')}!",
-                    reply_parameters=types.ReplyParameters(message_id=message.id),
-                )
         return
 
     await client.send_message(
@@ -2772,19 +2803,20 @@ async def _prepare_one_pending():
         else:
             try:
                 msg = await asyncio.wait_for(client.get_messages(cid, int(msg_id)), timeout=300)
-            except asyncio.TimeoutError:
+            except TimeoutError as error:
                 # A 300-second get_messages timeout may be silent throttling, even for more than
                 # 24 hours. Keep the task pending and back off indefinitely rather than
                 # declaring failure after three timeouts.
                 _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
                 consecutive = _pending_timeout_counts[task_id]
+                _bot._record_source_lookup_failure(client, error)
                 from module.pyrogram_extension import _unified_flood_wait
                 backoff = min(60 * consecutive, 600)  # Increase from 60 seconds up to a 600-second cap.
                 _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + backoff + 5)
                 _unified_flood_wait["reason"] = f'get_messages timeout, possibly rate limited; chat {cid}, message {msg_id}, attempt {consecutive}'
                 if consecutive % 5 == 1:
                     logger.warning(
-                        f"Pending consumer: get_messages TIMEOUT (300s) x{consecutive} for "
+                        f"Pending consumer: get_messages timeout x{consecutive} for "
                         f"chat {cid} msg {msg_id}, backoff {backoff}s. "
                         f"Task stays pending (never fails on network)."
                     )
@@ -2814,33 +2846,21 @@ async def _prepare_one_pending():
                         pass
                 return
             except Exception as e:
-                # Treat timeout-like exceptions as rate limits defensively.
-                if isinstance(e, TimeoutError):
-                    # Network errors only back off; they do not consume a failure budget.
-                    _pending_timeout_counts[task_id] = _pending_timeout_counts.get(task_id, 0) + 1
-                    consecutive = _pending_timeout_counts[task_id]
-                    backoff = min(60 * consecutive, 600)
-                    from module.pyrogram_extension import _unified_flood_wait
-                    _unified_flood_wait["until"] = max(_unified_flood_wait["until"], time.time() + backoff + 5)
-                    _unified_flood_wait["reason"] = f'get_messages connection timeout, possibly rate limited; chat {cid}, message {msg_id}, attempt {consecutive}'
-                    if consecutive % 5 == 1:
-                        logger.warning(
-                            f"Pending consumer: TimeoutError x{consecutive} for chat {cid} msg {msg_id}: {e}, "
-                            f"backoff {backoff}s. Task stays pending (never fails on network)."
-                        )
-                    return  # Keep pending; do not remove_task.
                 # Reuse _pending_timeout_counts for network failures during reconnect. An
                 # unstarted client once caused many recoverable tasks to fail; use cooldowns
                 # while keeping them pending.
                 _net_err_str = str(e)
                 _is_net_err = (
-                    "client has not been started" in _net_err_str.lower()
+                    isinstance(e, OSError)
+                    or "client has not been started" in _net_err_str.lower()
                     or "connectionerror" in _net_err_str.lower()
                     or "connection" in _net_err_str.lower()
                     or "timeout" in _net_err_str.lower()
                     or "flood" in _net_err_str.lower()
                 )
                 if _is_net_err:
+                    if isinstance(e, OSError):
+                        _bot._record_source_lookup_failure(client, e)
                     # Network get_messages failures never exhaust a retry budget. Three consumer
                     # polls can occur within nine seconds, so a three-failure rule incorrectly
                     # kills tasks during outages. Increase backoff to 60, 120 and 180 seconds
@@ -2878,6 +2898,9 @@ async def _prepare_one_pending():
                     pass
                 remove_task(task_id)
                 return
+            else:
+                if client is _bot.client:
+                    _bot._source_lookup_failures = 0
         if is_download_cancelled(int(msg_id), node):
             remove_task(task_id)
             return

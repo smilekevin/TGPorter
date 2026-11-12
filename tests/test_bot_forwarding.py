@@ -79,7 +79,7 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_source_media_uses_public_link_fallback(self):
         self.user_client.get_messages.side_effect = [types.Message(id=61, empty=True), self.source_message]
-        with patch.object(pyrogram_extension, "parse_link", AsyncMock(return_value=(-100123, 61, 0))) as parse:
+        with patch.object(bot, "parse_link", AsyncMock(return_value=(-100123, 61, 0))) as parse:
             task = await self.download(types.MessageOriginChannel(
                 date=self.date, chat=self.source, message_id=61))
         parse.assert_awaited_once_with(self.user_client, "https://t.me/offline_source/61")
@@ -89,7 +89,7 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_channel_fallback_keeps_source_link_identity(self):
         self.source.username = None
         self.user_client.get_messages.side_effect = [types.Message(id=61, empty=True), self.source_message]
-        with patch.object(pyrogram_extension, "parse_link", AsyncMock(return_value=(-100123, 61, 0))) as parse:
+        with patch.object(bot, "parse_link", AsyncMock(return_value=(-100123, 61, 0))) as parse:
             task = await self.download(types.MessageOriginChannel(
                 date=self.date, chat=self.source, message_id=61))
         parse.assert_awaited_once_with(self.user_client, "https://t.me/c/123/61")
@@ -97,11 +97,51 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unavailable_source_falls_back_to_bot_inbox(self):
         self.user_client.get_messages.return_value = types.Message(id=61, empty=True)
-        with patch.object(pyrogram_extension, "parse_link", AsyncMock(return_value=(None, None, None))):
+        with patch.object(bot, "parse_link", AsyncMock(return_value=(None, None, None))):
             task = await self.download(types.MessageOriginChannel(
                 date=self.date, chat=self.source, message_id=61))
         self.assertEqual(task["chat_id"], 100)
         self.assertEqual(task["extra_data"]["message_id"], 2)
+        self.assertEqual(task["extra_data"]["message_client"], "bot")
+
+    async def test_source_timeout_submits_forwarded_copy_without_retrying(self):
+        self.user_client.get_messages.side_effect = TimeoutError(
+            'Failed to invoke "channels.GetMessages" after 10 retries')
+        with patch.object(bot, "parse_link", AsyncMock()) as parse:
+            task = await self.download(types.MessageOriginChannel(
+                date=self.date, chat=self.source, message_id=61))
+        self.user_client.get_messages.assert_awaited_once_with(-100123, 61)
+        parse.assert_not_awaited()
+        self.assertEqual(task["chat_id"], self.inbox.id)
+        self.assertEqual(task["extra_data"]["message_id"], 2)
+        self.assertEqual(task["extra_data"]["message_client"], "bot")
+        self.assertEqual(self.backend._cached_messages[task["task_id"]].id, 2)
+
+    async def test_source_link_timeout_submits_forwarded_copy(self):
+        self.user_client.get_messages.side_effect = [
+            types.Message(id=61, empty=True), TimeoutError()]
+        task = await self.download(types.MessageOriginChannel(
+            date=self.date, chat=self.source, message_id=61))
+        self.assertEqual(self.user_client.get_messages.await_count, 2)
+        self.assertEqual(task["chat_id"], self.inbox.id)
+        self.assertEqual(task["extra_data"]["message_client"], "bot")
+
+    async def test_active_cooldown_skips_source_lookup(self):
+        with patch.object(bot, "is_flood_wait_active", return_value=True):
+            task = await self.download(types.MessageOriginChannel(
+                date=self.date, chat=self.source, message_id=61))
+        self.user_client.get_messages.assert_not_awaited()
+        self.assertEqual(task["extra_data"]["message_client"], "bot")
+
+    async def test_source_flood_wait_records_cooldown_and_uses_forwarded_copy(self):
+        self.user_client.get_messages.side_effect = pyrogram.errors.FloodWait(30)
+        cooldown = {"until": 0, "reason": ""}
+        with patch.object(pyrogram_extension, "_unified_flood_wait", cooldown), \
+                patch.object(bot, "parse_link", AsyncMock()) as parse:
+            task = await self.download(types.MessageOriginChannel(
+                date=self.date, chat=self.source, message_id=61))
+            self.assertTrue(bot.is_flood_wait_active())
+        parse.assert_not_awaited()
         self.assertEqual(task["extra_data"]["message_client"], "bot")
 
     async def test_group_sender_origin_without_post_id_uses_bot_inbox(self):
@@ -140,7 +180,7 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
                 return handler
         return None
 
-    async def test_post_links_with_and_without_previews_resolve_source_message(self):
+    async def test_post_links_with_and_without_previews_queue_the_original_post(self):
         message_id = 289
         for url in ("https://t.me/c/123/61", "https://t.me/offline_source/61",
                     "https://t.me/c/123/50/61"):
@@ -157,13 +197,16 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(handler.callback.__wrapped__, bot.download_from_link)
                     self.user_client.get_chat = AsyncMock(return_value=self.source)
                     self.user_client.get_messages.reset_mock()
-                    with patch.object(bot, "parse_link", AsyncMock(return_value=(-100123, 61, 0))) as parse, \
+                    topic_id = 50 if "/50/" in url else 0
+                    with patch.object(bot, "parse_link", AsyncMock(return_value=(-100123, 61, topic_id))) as parse, \
                             patch.object(bot, "direct_download", AsyncMock()) as direct, \
                             patch.object(bot, "set_chat_title"):
                         await handler.callback(self.telegram, message)
                     parse.assert_awaited_once_with(self.user_client, url)
-                    self.user_client.get_messages.assert_awaited_once_with(-100123, 61)
-                    direct.assert_awaited_once_with(self.backend, -100123, message, self.source_message)
+                    self.user_client.get_messages.assert_not_awaited()
+                    direct.assert_awaited_once_with(
+                        self.backend, -100123, message, None, source_chat_id=-100123,
+                        source_message_id=61, source_chat_title=self.source.title, topic_id=topic_id)
 
     async def test_link_preview_persists_channel_post_instead_of_bot_message(self):
         url = "https://t.me/c/123/61"
@@ -180,7 +223,8 @@ class BotForwardingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["chat_id"], -100123)
         self.assertEqual(task["extra_data"]["message_id"], 61)
         self.assertEqual(task["extra_data"]["message_client"], "user")
-        self.assertIs(self.backend._cached_messages[task["task_id"]], self.source_message)
+        self.assertNotIn(task["task_id"], self.backend._cached_messages)
+        self.user_client.get_messages.assert_not_awaited()
 
     async def test_real_media_with_link_caption_keeps_media_handler(self):
         for origin in (None, types.MessageOriginChannel(
