@@ -559,6 +559,7 @@
             pendingHasMore: true,
             pendingLoading: false,
             pendingTotal: 0,
+            allTasks: [],
             selectedTasks: [],
             taskSearch: '',
             taskSearchExpanded: false,
@@ -596,6 +597,8 @@
                 filePath: '',
                 deleteFile: false,
                 batchCount: 0,
+                batchFilesExist: 0,
+                batchFilesNotFound: 0,
             },
 
             get activeStatusFilterLabel() {
@@ -699,6 +702,10 @@
                     this.selectedPendingTasks.length === this.selectedTasks.length &&
                     this.selectedPendingTasks.every(task => task.status === 'paused');
             },
+            get mixedActiveSelection() {
+                return this.selectedPendingTasks.some(task => task.status === 'paused') &&
+                    this.selectedPendingTasks.some(task => task.status !== 'paused');
+            },
             get matchingActiveTasks() {
                 return this.activeTasks.filter(task => this.matchesSearch(task) &&
                     (this.activeStatusFilter === 'all' ||
@@ -729,6 +736,10 @@
             },
             get searchLoading() {
                 return this.taskListIsLoading(this.activeTab);
+            },
+
+            get completedCountDisplay() {
+                return this.completedTotal;
             },
 
             async init() {
