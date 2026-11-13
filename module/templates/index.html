@@ -283,9 +283,8 @@
             </div>
         </div>
         <div class="task-summary flex items-center justify-between gap-3 mb-3 text-xs text-gray-500"
-             x-show="taskSearch.trim() || ((activeTab === 'active' && activeStatusFilter !== 'all') || (activeTab === 'pending' && pendingStatusFilter !== 'all'))">
-            <span x-show="taskSearch.trim() || ((activeTab === 'active' && activeStatusFilter !== 'all') || (activeTab === 'pending' && pendingStatusFilter !== 'all'))"
-                  x-text="t('Showing {count} of {total} tasks', {count: visibleTaskCount, total: currentTaskTotal})"></span>
+             x-show="taskListIsFiltered(activeTab)">
+            <span x-text="t('Showing {count} of {total} tasks', {count: visibleTaskCount, total: currentTaskTotal})"></span>
         </div>
         {% set active_notices %}
             <!-- Silent throttle banner -->
@@ -1214,14 +1213,7 @@
             },
 
             toggleSelectAll(tab) {
-                let tasks;
-                if (tab === 'active') tasks = this.filteredActiveTasks;
-                else if (tab === 'pending') tasks = this.pendingTasks;
-                else if (tab === 'completed') tasks = this.completedTasks;
-                else if (tab === 'skipped') tasks = this.skippedTasks;
-                else tasks = this.filteredFailedTasks;
-
-                const allIds = tasks.map(t => t.task_id);
+                const allIds = (this.tasksForTab(tab) || []).map(t => t.task_id);
                 if (this.selectedTasks.length === allIds.length && allIds.every(id => this.selectedTasks.includes(id))) {
                     this.selectedTasks = [];
                 } else {

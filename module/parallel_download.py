@@ -308,6 +308,8 @@ async def _download_to_file(client, file_id, size, file_name, identity, parallel
         await disk_operation(_save_plan, directory, plan)
     ranges = plan["ranges"]
     downloaded = list(plan["committed_bytes"])
+    downloaded_total = sum(downloaded)
+    committed_total = downloaded_total
     if plan["phase"] in ("ready", "publishing"):
         return await _publish_file(directory, plan, output, destination, partial.path,
                                    progress, wait_ready)
@@ -320,18 +322,19 @@ async def _download_to_file(client, file_id, size, file_name, identity, parallel
     checkpoint_time = time.monotonic()
 
     async def checkpoint(force=False):
-        nonlocal checkpoint_time
+        nonlocal checkpoint_time, committed_total
         async with checkpoint_lock:
-            snapshot = list(downloaded)
-            delta = sum(snapshot) - sum(plan["committed_bytes"])
+            delta = downloaded_total - committed_total
             if not delta or (not force and delta < 8 * CHUNK_SIZE
                              and time.monotonic() - checkpoint_time < 1):
                 return
+            snapshot = list(downloaded)
             # Snapshot only complete writes, then order durable data before metadata.
             await disk_operation(partial.sync)
             updated = dict(plan, committed_bytes=snapshot)
             await disk_operation(_save_plan, directory, updated)
             plan.update(updated)
+            committed_total = sum(snapshot)
             checkpoint_time = time.monotonic()
 
     report_lock = asyncio.Lock()
@@ -339,7 +342,7 @@ async def _download_to_file(client, file_id, size, file_name, identity, parallel
     async def report():
         async with report_lock:
             # Do not persist a completed download until the output exists.
-            await progress(min(sum(downloaded), size - 1), size)
+            await progress(min(downloaded_total, size - 1), size)
 
     async def stream_progress(*_):
         await wait_ready()
@@ -364,6 +367,7 @@ async def _download_to_file(client, file_id, size, file_name, identity, parallel
                 await stream.aclose()
 
     async def download_range(index, connection):
+        nonlocal downloaded_total
         start, end = ranges[index]
         if downloaded[index] == end - start:
             return
@@ -385,6 +389,7 @@ async def _download_to_file(client, file_id, size, file_name, identity, parallel
                         "Downloaded block has an unexpected length"), requested_id)
                 await disk_operation(partial.write_at, start + downloaded[index], chunk)
                 downloaded[index] += len(chunk)
+                downloaded_total += len(chunk)
                 if gate.finish_start():
                     logger.info("Confirmed independent download startup for {}", connection.label)
                 await checkpoint(force=downloaded[index] == end - start)
@@ -396,7 +401,7 @@ async def _download_to_file(client, file_id, size, file_name, identity, parallel
         finally:
             await stream.aclose()
 
-    if sum(downloaded) < size:
+    if downloaded_total < size:
         await report()
     # Retry earlier unfinished ranges before moving on to later parts.
     queue = asyncio.PriorityQueue()

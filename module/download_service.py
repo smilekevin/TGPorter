@@ -5,6 +5,7 @@ import datetime
 import logging
 import os
 import re
+import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from urllib.parse import urlsplit
 
@@ -96,7 +97,6 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
         # Remove placeholders and task nodes so bot_tasks.json does not retain stale entries.
         try:
             if placeholder_task_id:
-                from module.task_store import remove_task
                 remove_task(placeholder_task_id)
         except Exception:
             pass
@@ -156,7 +156,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
             _restore_failed('Retry failed: message not found or deleted')
             return
 
-        from module.app import TaskNode, TaskType
+        from module.app import TaskNode
 
         # A source-link retry can resolve a different chat/message pair. Persist
         # the actual fetched pair and account so a later restart can refetch it.
@@ -196,8 +196,7 @@ async def _async_retry_download(chat_id, msg_id, from_user_id="", placeholder_ta
         # Clean up the placeholder entry created by batch_retry
         if placeholder_task_id:
             try:
-                from module.task_store import remove_task as _remove_placeholder
-                _remove_placeholder(placeholder_task_id)
+                remove_task(placeholder_task_id)
             except Exception:
                 pass
 
@@ -244,6 +243,25 @@ class DownloadService:
         self.app = app
         self.retry_download = retry_download or _async_retry_download
 
+    def _run_on_loop(self, operation, *, timeout, timeout_message, cancel_on_timeout=True, error_message=None):
+        """Submit a coroutine to the downloader loop from a synchronous request thread."""
+        loop = getattr(self.app, "loop", None)
+        try:
+            future = asyncio.run_coroutine_threadsafe(operation, loop)
+        except RuntimeError:
+            operation.close()
+            return {"code": "0", "message": "Downloader is shutting down."}
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeout:
+            if cancel_on_timeout:
+                future.cancel()
+            return {"code": "0", "message": timeout_message}
+        except Exception:
+            if error_message is not None:
+                return {"code": "0", "message": error_message}
+            raise
+
     def submit_download(self, url):
         """Resolve and persist on the downloader loop; never fetch media in a request thread."""
         try:
@@ -256,17 +274,11 @@ class DownloadService:
                 or _bot.app is not self.app or not _bot.client or not _bot.is_running
                 or not callable(getattr(_bot, "add_download_task", None))):
             return {"code": "0", "message": "Downloader is not ready; try again after Telegram startup."}
-        operation = _bot.submit_download_link(chat_id, message_id, canonical_url, topic_id)
-        try:
-            future = asyncio.run_coroutine_threadsafe(operation, loop)
-        except RuntimeError:
-            operation.close()
-            return {"code": "0", "message": "Downloader is shutting down."}
-        try:
-            return future.result(timeout=15)
-        except FutureTimeout:
-            future.cancel()
-            return {"code": "0", "message": "Submission timed out; check pending tasks before retrying."}
+        return self._run_on_loop(
+            _bot.submit_download_link(chat_id, message_id, canonical_url, topic_id),
+            timeout=15,
+            timeout_message="Submission timed out; check pending tasks before retrying.",
+        )
 
     def get_completed_count(self):
         """Lightweight endpoint: return only the total count of completed downloads.
@@ -312,19 +324,12 @@ class DownloadService:
                 remove_skipped_download(task_id)
             return result
 
-        operation = submit()
-        try:
-            future = asyncio.run_coroutine_threadsafe(operation, loop)
-        except RuntimeError:
-            operation.close()
-            return {"code": "0", "message": "Downloader is shutting down."}
-        try:
-            return future.result(timeout=5)
-        except FutureTimeout:
-            future.cancel()
-            return {"code": "0", "message": "Submission timed out; check pending tasks before retrying."}
-        except Exception:
-            return {"code": "0", "message": "Unable to queue download"}
+        return self._run_on_loop(
+            submit(),
+            timeout=5,
+            timeout_message="Submission timed out; check pending tasks before retrying.",
+            error_message="Unable to queue download",
+        )
 
     def get_download_speed(self):
         """Get download speed and the number of streams currently fetching data."""
@@ -347,8 +352,7 @@ class DownloadService:
         """Get unified FloodWait cooldown status for WebUI display."""
         from module.pyrogram_extension import is_flood_wait_active, get_flood_wait_remaining, _unified_flood_wait
         from module.download_stat import _throttle_state
-        import time as _now
-        now = _now.time()
+        now = time.time()
         # Keep throttling visible while notified is set. Container restart resets
         # _throttle_state automatically.
         throttle_active = _throttle_state["notified"]
@@ -419,10 +423,6 @@ class DownloadService:
 
     def get_download_list(self, already_down=None, offset=0, limit=0, search="", *, from_user_id=None):
         """Get download list with task_id and status"""
-        from module.download_stat import get_download_result
-        # Removed: load_downloads() on empty result — it overwrites runtime data
-        # with stale disk data when all downloads happen to be between states.
-        # load_downloads() is already called at startup; trust the in-memory state.
         if already_down is None:
             return []
 
@@ -434,19 +434,25 @@ class DownloadService:
         download_result = get_download_result()
         result = []
         cooldown = self.get_flood_wait() if not already_down else {"active": False}
+        now = time.time()
+        global_paused = get_download_state() == DownloadState.StopDownload
         for chat_id, messages in list(download_result.items()):
             for idx, value in list(messages.items()):
                 if not _submitted_by(value, from_user_id):
                     continue
                 is_already_down = value["down_byte"] == value["total_size"] and value["total_size"] > 0
 
-                if already_down and not is_already_down:
+                if already_down != is_already_down:
                     continue
-                if not already_down:
-                    # Exclude completed history from active polling. Thousands of resident
-                    # completed rows previously produced multi-megabyte responses every second.
-                    # Completed history uses already_down=true pagination.
-                    if is_already_down:
+
+                # Internal key for operations (stable across restarts)
+                task_id = f"{chat_id}_{idx}"
+                task_id_display = value.get("task_id_display", "") or task_id
+
+                # Server-side search filter (by task_id or filename)
+                if search:
+                    searchable = f"{task_id} {task_id_display} {os.path.basename(value['file_name'])}".lower()
+                    if search not in searchable:
                         continue
 
                 progress = value.get("progress", 0)
@@ -457,11 +463,10 @@ class DownloadService:
                     progress = min(progress, 99.9)
 
                 # Staleness check: if speed hasn't been updated in 3s (no Pyrogram callback), show 0
-                import time as _now
                 raw_speed = value["download_speed"]
                 if raw_speed > 0 and not is_already_down:
                     last_update = value.get("end_time", 0)
-                    if (_now.time() - last_update) > 3.0:
+                    if (now - last_update) > 3.0:
                         raw_speed = 0
                 download_speed = format_byte(raw_speed) + "/s"
 
@@ -478,9 +483,6 @@ class DownloadService:
                     else:
                         eta = f"{eta_seconds}s"
 
-                # Internal key for operations (stable across restarts)
-                task_id = f"{chat_id}_{idx}"
-
                 # Keep category status compatible; phase describes the active execution stage.
                 if is_already_down:
                     status = "completed"
@@ -495,7 +497,7 @@ class DownloadService:
                 wait_reason = ""
                 wait_seconds = 0
                 if not is_already_down and status != "paused":
-                    if get_download_state() == DownloadState.StopDownload:
+                    if global_paused:
                         wait_reason = "All downloads are paused"
                     elif cooldown["active"] and not active_streams:
                         wait_reason = "Waiting for Telegram cooldown: {seconds} seconds"
@@ -521,13 +523,6 @@ class DownloadService:
                     if ts:
                         completed_time = datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M:%S")
 
-                # Server-side search filter (by task_id or filename)
-                if search:
-                    task_id_display = value.get("task_id_display", "") or task_id
-                    searchable = f"{task_id} {task_id_display} {os.path.basename(value['file_name'])}".lower()
-                    if search not in searchable:
-                        continue
-
                 result.append({
                     "task_id": str(task_id),
                     "chat": str(chat_id),
@@ -551,7 +546,7 @@ class DownloadService:
                     "end_time": end_time,
                     "created_at": created_at,
                     "completed_time": completed_time,
-                    "task_id_display": value.get("task_id_display", "") or task_id,
+                    "task_id_display": task_id_display,
                 })
 
         # Sort by time: active by start_time (newest first), completed by end_time (newest first)
@@ -617,18 +612,14 @@ class DownloadService:
                     delete_download_result_entry(record['chat_id'], record['extra_data']['message_id'])
             return {"code": "1" if record else "0",
                     "message": ('paused' if paused else 'resumed') if record else 'Task not found'}
-        operation = download_control.set_paused(task_id, paused)
-        try:
-            future = asyncio.run_coroutine_threadsafe(operation, loop)
-        except RuntimeError:
-            operation.close()
-            return {"code": "0", "message": "Downloader is shutting down."}
-        try:
-            return future.result(timeout=30)
-        except FutureTimeout:
-            # Cleanup owns the writers until it finishes; timing out a request
-            # must not interrupt that cleanup or make the task runnable.
-            return {"code": "0", "message": "Task pause change is still being applied; refresh the task list."}
+        # Cleanup owns the writers until it finishes; timing out a request
+        # must not interrupt that cleanup or make the task runnable.
+        return self._run_on_loop(
+            download_control.set_paused(task_id, paused),
+            timeout=30,
+            timeout_message="Task pause change is still being applied; refresh the task list.",
+            cancel_on_timeout=False,
+        )
 
     def web_pause_task(self, task_id=None):
         """Persist a hold and free the file slot after all writers stop."""
@@ -759,17 +750,14 @@ class DownloadService:
         if not isinstance(task_ids, list):
             return {"code": "0", "message": "Task IDs must be a list"}
 
-        failed_list = get_failed_downloads()
+        failed_by_id = {}
+        for f in get_failed_downloads():
+            failed_by_id.setdefault(str(f.get("task_id", "")), f)
         queued = 0
         errors = []
 
         for task_id in task_ids:
-            target = None
-            for f in failed_list:
-                if str(f.get("task_id", "")) == str(task_id):
-                    target = f
-                    break
-
+            target = failed_by_id.get(str(task_id))
             if not target:
                 errors.append(f"{task_id}: not found")
                 continue
@@ -823,13 +811,14 @@ class DownloadService:
 
     def web_get_pending_list(self, offset=0, limit=100, search="", status="all", *, from_user_id=None):
         """Get list of pending tasks (received but not started downloading)"""
-        import time as _time
+        from module.download_stat import get_download_result as _gdr
         pending = get_pending_tasks(include_paused=True)
         # Preparation records remain visible in Active even before their first progress callback.
         # These will show up in the active download list — no need to duplicate in pending.
-        from module.download_stat import get_download_result as _get_dr
-        _dr = _get_dr()
+        _dr = _gdr()
         cooldown = self.get_flood_wait()
+        now = time.time()
+        global_paused = get_download_state() == DownloadState.StopDownload
 
         result = []
         for task in pending:
@@ -854,7 +843,7 @@ class DownloadService:
             wait_time = ""
             if created_at:
                 created_at_str = datetime.datetime.fromtimestamp(created_at).strftime("%m-%d %H:%M:%S")
-                elapsed = int(_time.time() - created_at)
+                elapsed = int(now - created_at)
                 h, m = divmod(elapsed // 60, 60)
                 wait_time = f"{h}h{m:02d}m" if h > 0 else f"{m}m"
 
@@ -891,7 +880,7 @@ class DownloadService:
             wait_seconds = 0
             if paused:
                 wait_reason = "Paused; resume manually"
-            elif get_download_state() == DownloadState.StopDownload:
+            elif global_paused:
                 wait_reason = "All downloads are paused"
             elif cooldown["active"]:
                 wait_reason = "Waiting for Telegram cooldown: {seconds} seconds"
