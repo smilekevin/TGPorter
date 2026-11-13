@@ -11,6 +11,26 @@ from pyrogram.file_id import FileType
 
 log = logging.getLogger(__name__)
 
+def _to_input_photo(media) -> raw.types.InputMediaPhoto:
+    return raw.types.InputMediaPhoto(
+        id=raw.types.InputPhoto(
+            id=media.photo.id,
+            access_hash=media.photo.access_hash,
+            file_reference=media.photo.file_reference,
+        )
+    )
+
+
+def _to_input_document(media) -> raw.types.InputMediaDocument:
+    return raw.types.InputMediaDocument(
+        id=raw.types.InputDocument(
+            id=media.document.id,
+            access_hash=media.document.access_hash,
+            file_reference=media.document.file_reference,
+        )
+    )
+
+
 # pylint: disable = R0915, R0902, R0912
 async def cache_media(
     client: pyrogram.Client,
@@ -33,49 +53,21 @@ async def cache_media(
     :return: The cached media.
     """
     if isinstance(media_obj, types.InputMediaPhoto):
-        if isinstance(media_obj.media, str):
-            if os.path.isfile(media_obj.media):
-                media = await client.invoke(
-                    raw.functions.messages.UploadMedia(
-                        peer=await client.resolve_peer(chat_id),
-                        media=raw.types.InputMediaUploadedPhoto(
-                            file=await client.save_file(
-                                media_obj.media,
-                                progress=progress,
-                                progress_args=progress_args,
-                            )
-                        ),
-                    )
-                )
-
-                media = raw.types.InputMediaPhoto(
-                    id=raw.types.InputPhoto(
-                        id=media.photo.id,
-                        access_hash=media.photo.access_hash,
-                        file_reference=media.photo.file_reference,
-                    )
-                )
-            elif re.match("^https?://", media_obj.media):
-                media = await client.invoke(
+        if isinstance(media_obj.media, str) and not os.path.isfile(media_obj.media):
+            if re.match("^https?://", media_obj.media):
+                uploaded = await client.invoke(
                     raw.functions.messages.UploadMedia(
                         peer=await client.resolve_peer(chat_id),
                         media=raw.types.InputMediaPhotoExternal(url=media_obj.media),
                     )
                 )
-
-                media = raw.types.InputMediaPhoto(
-                    id=raw.types.InputPhoto(
-                        id=media.photo.id,
-                        access_hash=media.photo.access_hash,
-                        file_reference=media.photo.file_reference,
-                    )
-                )
+                media = _to_input_photo(uploaded)
             else:
                 media = utils.get_input_media_from_file_id(
                     media_obj.media, FileType.PHOTO
                 )
         else:
-            media = await client.invoke(
+            uploaded = await client.invoke(
                 raw.functions.messages.UploadMedia(
                     peer=await client.resolve_peer(chat_id),
                     media=raw.types.InputMediaUploadedPhoto(
@@ -87,74 +79,60 @@ async def cache_media(
                     ),
                 )
             )
+            media = _to_input_photo(uploaded)
+    elif isinstance(
+        media_obj,
+        (types.InputMediaVideo, types.InputMediaAudio, types.InputMediaDocument),
+    ):
+        if isinstance(media_obj, types.InputMediaVideo):
+            file_type = FileType.VIDEO
+            default_name, default_mime = "video.mp4", "video/mp4"
+            extra_attrs = [
+                raw.types.DocumentAttributeVideo(
+                    supports_streaming=media_obj.supports_streaming or None,
+                    duration=media_obj.duration,
+                    w=media_obj.width,
+                    h=media_obj.height,
+                )
+            ]
+            extra_kwargs = {"nosound_video": True}
+        elif isinstance(media_obj, types.InputMediaAudio):
+            file_type = FileType.AUDIO
+            default_name, default_mime = "audio.mp3", "audio/mpeg"
+            extra_attrs = [
+                raw.types.DocumentAttributeAudio(
+                    duration=media_obj.duration,
+                    performer=media_obj.performer,
+                    title=media_obj.title,
+                )
+            ]
+            extra_kwargs = {}
+        else:
+            file_type = FileType.DOCUMENT
+            default_name, default_mime = "file.zip", "application/zip"
+            extra_attrs = []
+            extra_kwargs = {}
 
-            media = raw.types.InputMediaPhoto(
-                id=raw.types.InputPhoto(
-                    id=media.photo.id,
-                    access_hash=media.photo.access_hash,
-                    file_reference=media.photo.file_reference,
-                )
-            )
-    elif isinstance(media_obj, types.InputMediaVideo):
-        if isinstance(media_obj.media, str):
-            if os.path.isfile(media_obj.media):
-                media = await client.invoke(
-                    raw.functions.messages.UploadMedia(
-                        peer=await client.resolve_peer(chat_id),
-                        media=raw.types.InputMediaUploadedDocument(
-                            file=await client.save_file(
-                                media_obj.media,
-                                progress=progress,
-                                progress_args=progress_args,
-                            ),
-                            thumb=await client.save_file(media_obj.thumb),
-                            mime_type=client.guess_mime_type(media_obj.media)
-                            or "video/mp4",
-                            nosound_video=True,
-                            attributes=[
-                                raw.types.DocumentAttributeVideo(
-                                    supports_streaming=media_obj.supports_streaming
-                                    or None,
-                                    duration=media_obj.duration,
-                                    w=media_obj.width,
-                                    h=media_obj.height,
-                                ),
-                                raw.types.DocumentAttributeFilename(
-                                    file_name=os.path.basename(media_obj.media)
-                                ),
-                            ],
-                        ),
-                    )
-                )
-
-                media = raw.types.InputMediaDocument(
-                    id=raw.types.InputDocument(
-                        id=media.document.id,
-                        access_hash=media.document.access_hash,
-                        file_reference=media.document.file_reference,
-                    )
-                )
-            elif re.match("^https?://", media_obj.media):
-                media = await client.invoke(
+        if isinstance(media_obj.media, str) and not os.path.isfile(media_obj.media):
+            if re.match("^https?://", media_obj.media):
+                uploaded = await client.invoke(
                     raw.functions.messages.UploadMedia(
                         peer=await client.resolve_peer(chat_id),
                         media=raw.types.InputMediaDocumentExternal(url=media_obj.media),
                     )
                 )
-
-                media = raw.types.InputMediaDocument(
-                    id=raw.types.InputDocument(
-                        id=media.document.id,
-                        access_hash=media.document.access_hash,
-                        file_reference=media.document.file_reference,
-                    )
-                )
+                media = _to_input_document(uploaded)
             else:
-                media = utils.get_input_media_from_file_id(
-                    media_obj.media, FileType.VIDEO
-                )
+                media = utils.get_input_media_from_file_id(media_obj.media, file_type)
         else:
-            media = await client.invoke(
+            is_local_path = isinstance(media_obj.media, str)
+            file_name = (
+                os.path.basename(media_obj.media)
+                if is_local_path
+                else getattr(media_obj.media, "name", default_name)
+            )
+            mime_source = media_obj.media if is_local_path else file_name
+            uploaded = await client.invoke(
                 raw.functions.messages.UploadMedia(
                     peer=await client.resolve_peer(chat_id),
                     media=raw.types.InputMediaUploadedDocument(
@@ -164,205 +142,16 @@ async def cache_media(
                             progress_args=progress_args,
                         ),
                         thumb=await client.save_file(media_obj.thumb),
-                        mime_type=client.guess_mime_type(
-                            getattr(media_obj.media, "name", "video.mp4")
-                        )
-                        or "video/mp4",
-                        nosound_video=True,
+                        mime_type=client.guess_mime_type(mime_source) or default_mime,
                         attributes=[
-                            raw.types.DocumentAttributeVideo(
-                                supports_streaming=media_obj.supports_streaming or None,
-                                duration=media_obj.duration,
-                                w=media_obj.width,
-                                h=media_obj.height,
-                            ),
-                            raw.types.DocumentAttributeFilename(
-                                file_name=getattr(media_obj.media, "name", "video.mp4")
-                            ),
+                            *extra_attrs,
+                            raw.types.DocumentAttributeFilename(file_name=file_name),
                         ],
+                        **extra_kwargs,
                     ),
                 )
             )
-
-            media = raw.types.InputMediaDocument(
-                id=raw.types.InputDocument(
-                    id=media.document.id,
-                    access_hash=media.document.access_hash,
-                    file_reference=media.document.file_reference,
-                )
-            )
-    elif isinstance(media_obj, types.InputMediaAudio):
-        if isinstance(media_obj.media, str):
-            if os.path.isfile(media_obj.media):
-                media = await client.invoke(
-                    raw.functions.messages.UploadMedia(
-                        peer=await client.resolve_peer(chat_id),
-                        media=raw.types.InputMediaUploadedDocument(
-                            mime_type=client.guess_mime_type(media_obj.media)
-                            or "audio/mpeg",
-                            file=await client.save_file(
-                                media_obj.media,
-                                progress=progress,
-                                progress_args=progress_args,
-                            ),
-                            thumb=await client.save_file(media_obj.thumb),
-                            attributes=[
-                                raw.types.DocumentAttributeAudio(
-                                    duration=media_obj.duration,
-                                    performer=media_obj.performer,
-                                    title=media_obj.title,
-                                ),
-                                raw.types.DocumentAttributeFilename(
-                                    file_name=os.path.basename(media_obj.media)
-                                ),
-                            ],
-                        ),
-                    )
-                )
-
-                media = raw.types.InputMediaDocument(
-                    id=raw.types.InputDocument(
-                        id=media.document.id,
-                        access_hash=media.document.access_hash,
-                        file_reference=media.document.file_reference,
-                    )
-                )
-            elif re.match("^https?://", media_obj.media):
-                media = await client.invoke(
-                    raw.functions.messages.UploadMedia(
-                        peer=await client.resolve_peer(chat_id),
-                        media=raw.types.InputMediaDocumentExternal(url=media_obj.media),
-                    )
-                )
-
-                media = raw.types.InputMediaDocument(
-                    id=raw.types.InputDocument(
-                        id=media.document.id,
-                        access_hash=media.document.access_hash,
-                        file_reference=media.document.file_reference,
-                    )
-                )
-            else:
-                media = utils.get_input_media_from_file_id(
-                    media_obj.media, FileType.AUDIO
-                )
-        else:
-            media = await client.invoke(
-                raw.functions.messages.UploadMedia(
-                    peer=await client.resolve_peer(chat_id),
-                    media=raw.types.InputMediaUploadedDocument(
-                        mime_type=client.guess_mime_type(
-                            getattr(media_obj.media, "name", "audio.mp3")
-                        )
-                        or "audio/mpeg",
-                        file=await client.save_file(
-                            media_obj.media,
-                            progress=progress,
-                            progress_args=progress_args,
-                        ),
-                        thumb=await client.save_file(media_obj.thumb),
-                        attributes=[
-                            raw.types.DocumentAttributeAudio(
-                                duration=media_obj.duration,
-                                performer=media_obj.performer,
-                                title=media_obj.title,
-                            ),
-                            raw.types.DocumentAttributeFilename(
-                                file_name=getattr(media_obj.media, "name", "audio.mp3")
-                            ),
-                        ],
-                    ),
-                )
-            )
-
-            media = raw.types.InputMediaDocument(
-                id=raw.types.InputDocument(
-                    id=media.document.id,
-                    access_hash=media.document.access_hash,
-                    file_reference=media.document.file_reference,
-                )
-            )
-    elif isinstance(media_obj, types.InputMediaDocument):
-        if isinstance(media_obj.media, str):
-            if os.path.isfile(media_obj.media):
-                media = await client.invoke(
-                    raw.functions.messages.UploadMedia(
-                        peer=await client.resolve_peer(chat_id),
-                        media=raw.types.InputMediaUploadedDocument(
-                            mime_type=client.guess_mime_type(media_obj.media)
-                            or "application/zip",
-                            file=await client.save_file(
-                                media_obj.media,
-                                progress=progress,
-                                progress_args=progress_args,
-                            ),
-                            thumb=await client.save_file(media_obj.thumb),
-                            attributes=[
-                                raw.types.DocumentAttributeFilename(
-                                    file_name=os.path.basename(media_obj.media)
-                                )
-                            ],
-                        ),
-                    )
-                )
-
-                media = raw.types.InputMediaDocument(
-                    id=raw.types.InputDocument(
-                        id=media.document.id,
-                        access_hash=media.document.access_hash,
-                        file_reference=media.document.file_reference,
-                    )
-                )
-            elif re.match("^https?://", media_obj.media):
-                media = await client.invoke(
-                    raw.functions.messages.UploadMedia(
-                        peer=await client.resolve_peer(chat_id),
-                        media=raw.types.InputMediaDocumentExternal(url=media_obj.media),
-                    )
-                )
-
-                media = raw.types.InputMediaDocument(
-                    id=raw.types.InputDocument(
-                        id=media.document.id,
-                        access_hash=media.document.access_hash,
-                        file_reference=media.document.file_reference,
-                    )
-                )
-            else:
-                media = utils.get_input_media_from_file_id(
-                    media_obj.media, FileType.DOCUMENT
-                )
-        else:
-            media = await client.invoke(
-                raw.functions.messages.UploadMedia(
-                    peer=await client.resolve_peer(chat_id),
-                    media=raw.types.InputMediaUploadedDocument(
-                        mime_type=client.guess_mime_type(
-                            getattr(media_obj.media, "name", "file.zip")
-                        )
-                        or "application/zip",
-                        file=await client.save_file(
-                            media_obj.media,
-                            progress=progress,
-                            progress_args=progress_args,
-                        ),
-                        thumb=await client.save_file(media_obj.thumb),
-                        attributes=[
-                            raw.types.DocumentAttributeFilename(
-                                file_name=getattr(media_obj.media, "name", "file.zip")
-                            )
-                        ],
-                    ),
-                )
-            )
-
-            media = raw.types.InputMediaDocument(
-                id=raw.types.InputDocument(
-                    id=media.document.id,
-                    access_hash=media.document.access_hash,
-                    file_reference=media.document.file_reference,
-                )
-            )
+            media = _to_input_document(uploaded)
     else:
         raise ValueError(
             f"{media_obj.__class__.__name__}"

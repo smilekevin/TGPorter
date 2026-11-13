@@ -27,7 +27,6 @@ from module.parallel_download import (download_file, has_parts, discard_partial_
                                       DownloadWorkersExhausted)
 from module.language import _t
 from module.pyrogram_extension import (
-    HookClient,
     fetch_message,
     get_extension,
     record_download_status,
@@ -236,6 +235,18 @@ def _cleanup_temp_file(temp_file_name: str):
 
 
 _MB = 1024 * 1024
+_MEDIA_KINDS = ("video", "document", "audio", "photo", "voice", "video_note", "animation")
+
+
+def _extract_message_media(message):
+    """Return the first downloadable media object attached to a message."""
+    if message is None:
+        return None
+    for kind in _MEDIA_KINDS:
+        media = getattr(message, kind, None)
+        if media is not None:
+            return media
+    return None
 
 
 async def _download_parallel_media(client, message, temp_file_name, media_size,
@@ -243,9 +254,7 @@ async def _download_parallel_media(client, message, temp_file_name, media_size,
     from pyrogram.file_id import FileId
     from module.download_stat import wait_download_ready, is_download_discarded
 
-    media = next((getattr(message, kind, None) for kind in (
-        "video", "document", "audio", "photo", "voice", "video_note", "animation"
-    ) if getattr(message, kind, None) is not None), None)
+    media = _extract_message_media(message)
     if media is None:
         raise ValueError("This message doesn't contain any downloadable media")
     file_id = FileId.decode(media.file_id)
@@ -267,9 +276,7 @@ async def _download_parallel_media(client, message, temp_file_name, media_size,
         refreshed = await fetch_message(client, message)
         if refreshed is None:
             raise ValueError("Message missing or inaccessible to this account")
-        fresh_media = next((getattr(refreshed, kind, None) for kind in (
-            "video", "document", "audio", "photo", "voice", "video_note", "animation"
-        ) if getattr(refreshed, kind, None) is not None), None)
+        fresh_media = _extract_message_media(refreshed)
         if fresh_media is None:
             raise ValueError("Refreshed message has no downloadable media")
         fresh_id = FileId.decode(fresh_media.file_id)
@@ -310,8 +317,6 @@ async def _resume_download_from_temp(
     Return True on completion so the caller can validate the file; propagate
     exceptions through the caller's existing retry flow."""
     from pyrogram.file_id import FileId
-    from pyrogram import utils as pyrogram_utils
-    import functools
 
     if not temp_file_name:
         return False
@@ -346,18 +351,13 @@ async def _resume_download_from_temp(
     )
 
     # Extract FileId from the message after fetch_message refreshes its file_reference.
-    media = getattr(message, "video", None) or getattr(message, "document", None) \
-        or getattr(message, "audio", None) or getattr(message, "photo", None) \
-        or getattr(message, "voice", None) or getattr(message, "video_note", None) \
-        or getattr(message, "animation", None)
+    media = _extract_message_media(message)
     if media is None:
         logger.warning("Resume: no downloadable media in refreshed message")
         return False
     file_id_str = media if isinstance(media, str) else media.file_id
     file_id_obj = FileId.decode(file_id_str)
     real_size = getattr(media, "file_size", 0) or media_size
-
-    from module.download_stat import update_download_status
 
     # The outer worker pool limits simultaneous files.
     with track_download_stream(node.chat_id, message.id, node.task_id), open(real_temp, "r+b") as f:
@@ -545,6 +545,22 @@ async def _get_media_meta(
     return file_name, temp_file_name, file_format
 
 
+def _build_source_link(node, message=None) -> str:
+    """Build a Telegram message URL from forwarded source metadata or the message itself."""
+    if getattr(node, "source_chat_id", 0) and getattr(node, "source_message_id", 0):
+        sid = str(node.source_chat_id)
+        link_id = sid[4:] if sid.startswith("-100") else sid
+        return f"https://t.me/c/{link_id}/{node.source_message_id}"
+    if message and getattr(message, "chat", None):
+        username = getattr(message.chat, "username", None)
+        if username:
+            return f"https://t.me/{username}/{message.id}"
+        cid = str(message.chat.id)
+        link_id = cid[4:] if cid.startswith("-100") else cid
+        return f"https://t.me/c/{link_id}/{message.id}"
+    return ""
+
+
 def _move_task_to_failed(node, message, error_message):
     """Move a task to failures, clear its placeholder and remove its stored task."""
     try:
@@ -552,11 +568,6 @@ def _move_task_to_failed(node, message, error_message):
         from module.task_store import complete_task as _ct
         if node and node.task_id:
             msg_id = message.id if message else 0
-            source_link = ""
-            if getattr(node, 'source_chat_id', 0) and getattr(node, 'source_message_id', 0):
-                sid = node.source_chat_id
-                link_id = str(sid)[4:] if str(sid).startswith("-100") else str(sid)
-                source_link = f"https://t.me/c/{link_id}/{node.source_message_id}"
             add_failed_download(
                 chat_id=node.chat_id,
                 msg_id=msg_id,
@@ -564,7 +575,7 @@ def _move_task_to_failed(node, message, error_message):
                 file_name="",
                 error_message=error_message,
                 total_size=0,
-                source_link=source_link,
+                source_link=_build_source_link(node),
                 from_user_id=str(getattr(node, "from_user_id", "")) or "",
             )
             _ddre(node.chat_id, msg_id)
@@ -578,22 +589,22 @@ async def _reset_task_for_retry(node, message):
     """Reset node state before requeueing a download."""
     from module.pyrogram_extension import remove_download_cache
     from module.download_stat import delete_download_result_entry as _ddre
-    import time as _time
     # Clear download_cache so record_download_status cannot short-circuit as Downloading. Cache
     # has no pop(); use remove_download_cache to update its internal store.
     remove_download_cache(node.chat_id, message.id)
     # Clear the _download_result placeholder.
     _ddre(node.chat_id, message.id)
     # Reset the node state.
+    now = time.time()
     node.total_task = 0
     node.total_download_task = 0
     node.success_download_task = 0
     node.failed_download_task = 0
     node.skip_download_task = 0
     node.download_status = {}
-    node.last_reply_time = _time.time()
+    node.last_reply_time = now
     node.last_edit_msg = ""
-    node.last_bot_flood_notice = _time.time()
+    node.last_bot_flood_notice = now
     node.initial_progress_reported = False
 
 
@@ -674,43 +685,21 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
     node.download_status[message.id] = download_status
     # Record failed downloads to the failed list for webui display
     if download_status is DownloadStatus.FailedDownload:
-        # Get task_id_display (format: MMDD-N)
         task_id_display = getattr(node, "task_id_display", "") or str(node.task_id)
-        # Build source link from node or message
-        source_link = ""
-        if getattr(node, 'source_chat_id', 0) and getattr(node, 'source_message_id', 0):
-            # For forwarded messages, use source channel link
-            source_id = node.source_chat_id
-            if str(source_id).startswith("-100"):
-                link_id = str(source_id)[4:]
-            else:
-                link_id = str(source_id)
-            source_link = f"https://t.me/c/{link_id}/{node.source_message_id}"
-        elif message and message.chat:
-            # For direct messages, use current message link
-            chat_id_for_link = message.chat.id
-            if hasattr(message.chat, 'username') and message.chat.username:
-                source_link = f"https://t.me/{message.chat.username}/{message.id}"
-            else:
-                if str(chat_id_for_link).startswith("-100"):
-                    link_id = str(chat_id_for_link)[4:]
-                else:
-                    link_id = str(chat_id_for_link)
-                source_link = f"https://t.me/c/{link_id}/{message.id}"
         _add_failed_download(
             chat_id=node.chat_id,
-            msg_id=message.id if message else message_id,
+            msg_id=message.id,
             task_id=task_id_display,
             file_name=file_name or "",
             temp_file_name=temp_file_name,
             error_message=error_message or 'Download failed',
             total_size=file_size,
-            source_link=source_link,
+            source_link=_build_source_link(node, message),
             from_user_id=getattr(node, "from_user_id", "") or "",
         )
         # Remove from active download list so it doesn't stay in WebUI forever
         from module.download_stat import delete_download_result_entry as _ddre
-        _ddre(node.chat_id, message.id if message else message_id)
+        _ddre(node.chat_id, message.id)
     elif download_status is DownloadStatus.SkipDownload:
         reason = "already download,download skipped" if file_name else error_message
         if reason and not node.is_stop_transmission:
@@ -719,7 +708,7 @@ async def download_task(client: pyrogram.Client, message: pyrogram.types.Message
             reason = reason or "Download cancelled"
             node.skip_reasons[reason] = node.skip_reasons.get(reason, 0) + 1
         from module.download_stat import delete_download_result_entry as _ddre
-        _ddre(node.chat_id, message.id if message else message_id)
+        _ddre(node.chat_id, message.id)
     await upload_telegram_chat(
         client, node.upload_user if node.upload_user else client,
         app, node, message, download_status, file_name,
@@ -871,21 +860,6 @@ async def download_media(
     use_parallel = has_parts(temp_file_name) or (
         media_size > 0 and hasattr(app, "file_download_concurrency")
     )
-    # Build source link from message for failed downloads
-    source_link = ""
-    if message and message.chat:
-        chat_id_for_link = message.chat.id
-        # For private chats (user bot), use username if available
-        if hasattr(message.chat, 'username') and message.chat.username:
-            source_link = f"https://t.me/{message.chat.username}/{message.id}"
-        else:
-            # For channels/supergroups, use c/ prefix
-            # Remove -100 prefix for channels
-            if str(chat_id_for_link).startswith("-100"):
-                link_id = str(chat_id_for_link)[4:]
-            else:
-                link_id = str(chat_id_for_link)
-            source_link = f"https://t.me/c/{link_id}/{message.id}"
 
     message_id = message.id
     total_wait = 0
@@ -897,14 +871,16 @@ async def download_media(
         # Resume existing Pyrogram checkpoint data before each attempt. The on-disk path
         # includes the .temp suffix.
         _pyrogram_temp = (temp_file_name + ".temp") if temp_file_name else None
+        _pre_size = (
+            os.path.getsize(_pyrogram_temp)
+            if (_pyrogram_temp and os.path.exists(_pyrogram_temp))
+            else 0
+        )
         # Never enter client.download_media after a failed resume while .temp holds data:
         # handle_download opens with "wb" and would erase all saved progress.
         _resume_attempted = False
-        if not use_parallel and _pyrogram_temp and os.path.exists(_pyrogram_temp) \
-                and os.path.getsize(_pyrogram_temp) > 0 \
-                and not (media_size > 0 and os.path.getsize(_pyrogram_temp) >= media_size):
+        if not use_parallel and _pre_size > 0 and not (media_size > 0 and _pre_size >= media_size):
             _resume_attempted = True
-            _pre_size = os.path.getsize(_pyrogram_temp) if os.path.exists(_pyrogram_temp) else 0
             if _pre_size > 0:
                 try:
                     # Always refresh message references before resuming. Previous references may
@@ -1020,14 +996,18 @@ async def download_media(
                 await asyncio.sleep(RETRY_TIME_OUT)
                 retry -= 1  # This iteration does not consume a download attempt.
                 continue
-        if _resume_attempted and _pyrogram_temp and os.path.exists(_pyrogram_temp) \
-                and os.path.getsize(_pyrogram_temp) > 0:
+        _post_resume_size = (
+            os.path.getsize(_pyrogram_temp)
+            if (_resume_attempted and _pyrogram_temp and os.path.exists(_pyrogram_temp))
+            else 0
+        )
+        if _post_resume_size > 0:
             # Safety guard: while .temp contains data, never enter client.download_media because
             # it can truncate the checkpoint.
             logger.warning(
                 f"Message[{message_id}] {ui_file_name}: "
                 f"skip download_media to protect .temp "
-                f"({os.path.getsize(_pyrogram_temp)} bytes), retrying"
+                f"({_post_resume_size} bytes), retrying"
             )
             error_message = 'Checkpoint preserved; waiting to resume'
             # Use a separate guard counter instead of consuming download attempts, matching
@@ -1392,7 +1372,6 @@ async def worker(client: pyrogram.client.Client):
                 _bot._active_downloads += 1
                 counted_active = True
                 logger.info(f"Worker picked up message {message.id} from chat {node.chat_id} for task {node.task_id_display} (active={_bot._active_downloads})")
-                _requeued = False  # Track requeue branches without changing counter cleanup in finally.
                 # Mark task as actively downloading (no longer pending/in-queue)
                 if node.task_id:
                     _bot._in_queue.discard(node.task_id)
@@ -1403,12 +1382,22 @@ async def worker(client: pyrogram.client.Client):
                 target_client = node.client if node.client else client
                 composite_key = f"{node.chat_id}_{message.id}"
 
+                async def _requeue_worker_task(delay: float = 0.0):
+                    await _reset_task_for_retry(node, message)
+                    clear_task_heartbeat(f"{node.chat_id}_{message.id}" if message else "")
+                    node.total_task = 1
+                    node.is_running = True
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    if message:
+                        _bot._in_queue.add(node.task_id)
+                        await queue.put((message, node))
+
                 # Run download_task separately so the heartbeat watchdog can observe it.
                 dl_task = asyncio.create_task(
                     download_task(target_client, message, node)
                 )
                 attempt = download_control.register_attempt(asyncio.current_task(), node, message.id)
-                dl_task_start = time.time()
                 # Silent throttling and dead TCP both lack heartbeats. Warn after 300 seconds,
                 # at most once per five minutes; cancel only after 30 minutes without progress
                 # or backoff. Ordinary dead TCP should raise via Pyrogram's 900-second timeout
@@ -1480,13 +1469,7 @@ async def worker(client: pyrogram.client.Client):
                                 f"Worker: requeue task {node.task_id_display} "
                                 f"(retry {retry_count + 1}/{_MAX_WATCHDOG_RETRIES}) after zombie cancel + reconnect"
                             )
-                            await _reset_task_for_retry(node, message)
-                            clear_task_heartbeat(composite_key)
-                            node.total_task = 1
-                            node.is_running = True
-                            _bot._in_queue.add(node.task_id)
-                            await queue.put((message, node))
-                            _requeued = True
+                            await _requeue_worker_task()
                             continue
                         else:
                             # Move to the failed list when reconnect fails or retries are
@@ -1532,14 +1515,7 @@ async def worker(client: pyrogram.client.Client):
                             f"Worker: requeue task {node.task_id_display} "
                             f"after network exception + reconnect"
                         )
-                        await _reset_task_for_retry(node, message)
-                        clear_task_heartbeat(f"{node.chat_id}_{message.id}" if message else "")
-                        node.total_task = 1
-                        node.is_running = True
-                        if message:
-                            _bot._in_queue.add(node.task_id)
-                            await queue.put((message, node))
-                        _requeued = True
+                        await _requeue_worker_task()
                         continue
                     # After reconnect failure, back off and retry within the same worker without
                     # failing the task.
@@ -1547,15 +1523,7 @@ async def worker(client: pyrogram.client.Client):
                         f"Worker: reconnect failed for {node.task_id_display}, "
                         f"backoff 60s then requeue (temp preserved, NOT failing)"
                     )
-                    await _reset_task_for_retry(node, message)
-                    clear_task_heartbeat(f"{node.chat_id}_{message.id}" if message else "")
-                    node.total_task = 1
-                    node.is_running = True
-                    await asyncio.sleep(60)
-                    if message:
-                        _bot._in_queue.add(node.task_id)
-                        await queue.put((message, node))
-                    _requeued = True
+                    await _requeue_worker_task(delay=60)
                     continue
                 # Only non-network logic errors move the task to the failed list.
                 _move_task_to_failed(node, message, f'Worker error: {error_str[:80]}')
@@ -1692,6 +1660,15 @@ async def start_server(client: pyrogram.Client):
     await client.start()
 
 
+async def _await_task_with_hard_timeout(coro, timeout: float = 30.0):
+    """Run a coroutine in a task and wait up to `timeout` seconds via an Event."""
+    done = asyncio.Event()
+    task = asyncio.create_task(coro)
+    task.add_done_callback(lambda _t: done.set())
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+    return task.result()
+
+
 async def _reconnect_client():
     """Reconnect the main Pyrogram client after a half-dead TCP session.
 
@@ -1713,22 +1690,8 @@ async def _reconnect_client():
         # return False and keep workers alive. Never start before stop finishes: a late stop
         # could close the new connection.
         logger.warning("Client auto-reconnect: stop()...")
-        stop_done = asyncio.Event()
-        stop_task = asyncio.create_task(client.stop())
-
-        def _stop_finished(_t=None):
-            stop_done.set()
-
-        stop_task.add_done_callback(_stop_finished)
         try:
-            await asyncio.wait_for(stop_done.wait(), timeout=30)
-            # stop() finished within 30 seconds; the task captures any exception.
-            try:
-                stop_task.result()
-            except Exception as e:
-                logger.warning(f"client.stop() during reconnect failed (continuing): {e}")
-                client.is_connected = False
-                _force_release_session_lock(client)
+            await _await_task_with_hard_timeout(client.stop(), timeout=30)
         except asyncio.TimeoutError:
             logger.error(
                 "client.stop() not finished within 30s (hard timeout) — "
@@ -1739,49 +1702,21 @@ async def _reconnect_client():
             client.is_connected = False
             _force_release_session_lock(client)
             return False  # Do not call start(): a late stop could close the new connection.
-        except Exception as e:
-            # If Event.wait is cancelled or otherwise fails, leave start() untouched.
+        except asyncio.CancelledError as e:
             logger.error(f"reconnect stop-phase interrupted: {e}, abandoning")
             client.is_connected = False
             _force_release_session_lock(client)
             return False
+        except Exception as e:
+            logger.warning(f"client.stop() during reconnect failed (continuing): {e}")
+            client.is_connected = False
+            _force_release_session_lock(client)
 
         # Use the same 30-second Event-based hard timeout for start(), which can hang on an
         # unclean session.
         logger.warning("Client auto-reconnect: start()...")
-        start_done = asyncio.Event()
-        start_task = asyncio.create_task(client.start())
-
-        def _start_finished(_t=None):
-            start_done.set()
-
-        start_task.add_done_callback(_start_finished)
         try:
-            await asyncio.wait_for(start_done.wait(), timeout=30)
-            try:
-                start_task.result()
-            except asyncio.TimeoutError:
-                raise
-            except Exception as e:
-                error_str = str(e)
-                if "database is locked" in error_str:
-                    # Retry once after a second lock cleanup.
-                    logger.warning("client.start() failed with database is locked, forcing release and retrying...")
-                    _force_release_session_lock(client)
-                    retry_done = asyncio.Event()
-                    retry_task = asyncio.create_task(client.start())
-                    retry_task.add_done_callback(lambda _t: retry_done.set())
-                    try:
-                        await asyncio.wait_for(retry_done.wait(), timeout=30)
-                        retry_task.result()
-                        logger.success("Client reconnected successfully on retry — fresh TCP session established")
-                        _client_conn_errors["count"] = 0
-                        return True
-                    except Exception as e2:
-                        logger.error(f"client.start() retry also failed: {e2}")
-                        return False
-                logger.error(f"client.start() during reconnect failed: {e}")
-                return False
+            await _await_task_with_hard_timeout(client.start(), timeout=30)
             logger.success("Client reconnected successfully — fresh TCP session established")
             _client_conn_errors["count"] = 0
             return True
@@ -1790,6 +1725,21 @@ async def _reconnect_client():
                 "client.start() not finished within 30s (hard timeout) — "
                 "abandoning reconnect, returning False"
             )
+            return False
+        except Exception as e:
+            if "database is locked" in str(e):
+                # Retry once after a second lock cleanup.
+                logger.warning("client.start() failed with database is locked, forcing release and retrying...")
+                _force_release_session_lock(client)
+                try:
+                    await _await_task_with_hard_timeout(client.start(), timeout=30)
+                    logger.success("Client reconnected successfully on retry — fresh TCP session established")
+                    _client_conn_errors["count"] = 0
+                    return True
+                except Exception as e2:
+                    logger.error(f"client.start() retry also failed: {e2}")
+                    return False
+            logger.error(f"client.start() during reconnect failed: {e}")
             return False
     finally:
         _client_reconnecting["active"] = False
@@ -1824,7 +1774,6 @@ def _force_release_session_lock(client):
     An interrupted stop may leave a transaction and exclusive lock behind. Close
     the storage SQLite connection, disconnect the MTProto session, remove journal
     files and reset client state so start() opens the database again."""
-    import os
     try:
         # 1. Close the storage SQLite connection that owns the lock.
         storage = getattr(client, "storage", None)

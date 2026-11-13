@@ -13,7 +13,14 @@ from module.telegram import pyrogram
 from module.pyrogram_extension import HookClient
 from module.settings import CONNECTION_FIELDS
 
-BASIC_FIELDS = CONNECTION_FIELDS
+
+def _is_valid_phone(phone) -> bool:
+    return (
+        isinstance(phone, str)
+        and phone.startswith("+")
+        and phone[1:].isdigit()
+        and 6 <= len(phone) <= 20
+    )
 
 
 class WebLoginRequired(Exception):
@@ -117,14 +124,7 @@ class TelegramLogin:
                         self.client.password = self.client.phone_code = self.client.phone_number = None
                 self.authorized = True
                 user = await self.client.get_me()
-                if getattr(self.app.settings, "infer_account_mode", False):
-                    self.app.settings.save({"use_user_account": not bool(user.is_bot)})
-                    self.app.use_user_account = not bool(user.is_bot)
-                    self.app.active_settings["use_user_account"] = self.app.use_user_account
-                    self.app.settings.infer_account_mode = False
-                if bool(user.is_bot) == self.app.use_user_account or (
-                        user.is_bot and self.app.bot_token
-                        and str(user.id) != self.app.bot_token.split(":", 1)[0]):
+                if not self._verify_session_user(user):
                     raise ValueError("Existing Telegram session does not match the configured download account")
                 await self._activate()
         except BaseException as error:
@@ -161,10 +161,10 @@ class TelegramLogin:
                 raise ValueError("Enter API ID, API Hash and Bot Token before signing in")
             if credentials["use_user_account"] and (account_change or not (self.ready or self.authorized)):
                 phone = data.get("phone", "")
-                if not phone.startswith("+") or not phone[1:].isdigit() or not 6 <= len(phone) <= 20:
+                if not _is_valid_phone(phone):
                     raise ValueError("Use an international phone number")
         if action in {"sign_in", "password"}:
-            if any(saved.get(key) != active.get(key) for key in BASIC_FIELDS):
+            if any(saved.get(key) != active.get(key) for key in CONNECTION_FIELDS):
                 raise ValueError("Telegram settings changed. Cancel and verify login again.")
         if action in {"sign_in", "password"} and owner != self.owner:
             raise ValueError("Continue login in the browser that requested the code")
@@ -201,6 +201,21 @@ class TelegramLogin:
         from module.configuration import apply_inactive_settings
         apply_inactive_settings(self.app)
 
+    def _verify_session_user(self, user) -> bool:
+        """Infer legacy account mode when needed and verify session identity matches settings."""
+        if getattr(self.app.settings, "infer_account_mode", False):
+            # Older settings had no account-mode switch. Resolve it from
+            # their authorized session rather than replacing that account.
+            self.app.settings.save({"use_user_account": not bool(user.is_bot)})
+            self.app.use_user_account = not bool(user.is_bot)
+            self.app.active_settings["use_user_account"] = self.app.use_user_account
+            self.app.settings.infer_account_mode = False
+        expected_bot = not self.app.use_user_account
+        return not (
+            bool(user.is_bot) != expected_bot
+            or (user.is_bot and self.app.bot_token and str(user.id) != self.app.bot_token.split(":", 1)[0])
+        )
+
     async def _connect(self):
         if self.client is not None:
             return
@@ -217,17 +232,7 @@ class TelegramLogin:
             # Reusing a session must never silently ignore a new account choice.
             if hasattr(self.app, "use_user_account"):
                 user = await self.client.get_me()
-                if getattr(self.app.settings, "infer_account_mode", False):
-                    # Older settings had no account-mode switch. Resolve it from
-                    # their authorized session rather than replacing that account.
-                    self.app.settings.save({"use_user_account": not bool(user.is_bot)})
-                    self.app.use_user_account = not bool(user.is_bot)
-                    self.app.active_settings["use_user_account"] = self.app.use_user_account
-                    self.app.settings.infer_account_mode = False
-                expected_bot = not self.app.use_user_account
-                if bool(user.is_bot) != expected_bot or (
-                        user.is_bot and self.app.bot_token
-                        and str(user.id) != self.app.bot_token.split(":", 1)[0]):
+                if not self._verify_session_user(user):
                     await self._close()
                     self.state = "error"
                     self.message = "Sign out of Telegram before changing the download account"
@@ -385,7 +390,7 @@ class TelegramLogin:
                 await self._activate()
                 return
             phone = data.get("phone", "")
-            if not isinstance(phone, str) or not phone.startswith("+") or not phone[1:].isdigit() or not 6 <= len(phone) <= 20:
+            if not _is_valid_phone(phone):
                 raise ValueError("Use an international phone number")
             self.set_stage("Requesting Telegram code")
             sent = await self.client.send_code(phone)

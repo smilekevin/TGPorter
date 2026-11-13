@@ -1,7 +1,6 @@
 """Pyrogram ext"""
 
 import asyncio
-import html
 import os
 import secrets
 import struct
@@ -10,12 +9,11 @@ from copy import deepcopy
 from datetime import datetime
 from functools import wraps
 from io import BytesIO
-from typing import Callable, Iterable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 from module.telegram import pyrogram
 from loguru import logger
-from pyrogram import enums, parser, types, utils
-from pyrogram.enums import MessageEntityType
+from pyrogram import enums, types
 from pyrogram.file_id import (
     FILE_REFERENCE_FLAG,
     PHOTO_TYPES,
@@ -35,7 +33,7 @@ from module.app import (
     UploadStatus,
 )
 from module.download_stat import get_download_result, is_task_paused, get_active_download_streams
-from module.language import Language, _t
+from module.language import _t
 from module.send_media_group_v2 import cache_media, send_media_group_v2
 from utils.format import (
     create_progress_bar,
@@ -299,17 +297,6 @@ async def upload_telegram_chat(
                 if file_name and app.after_upload_telegram_delete:
                     os.remove(file_name)
 
-            # forward text
-            # FIXME: fix upload text
-            # if (
-            #     download_status is DownloadStatus.SkipDownload
-            #     and message.text
-            #     and bot
-            # ):
-            #     await upload_telegram_chat(
-            #         client, app, node.upload_telegram_chat_id, message, file_name
-            #     )
-
 
 async def upload_telegram_chat_message(
     client: pyrogram.Client,
@@ -415,96 +402,34 @@ async def _upload_signal_message(
         finally:
             if thumbnail_file:
                 os.remove(str(thumbnail_file))
+        return
 
-    elif message.photo:
-        if node.reply_to_message:
-            await node.reply_to_message.reply_photo(
-                file_name,
-                caption=caption,
-                message_thread_id=node.topic_id,
-            )
-        else:
-            await upload_user.send_photo(
-                upload_telegram_chat_id,
-                file_name,
-                caption=caption,
-                progress=update_upload_stat,
-                progress_args=(
-                    message.id,
-                    ui_file_name,
-                    time.time(),
-                    node,
-                    upload_user,
-                ),
-                message_thread_id=node.topic_id,
-            )
-    elif message.document:
-        if node.reply_to_message:
-            await node.reply_to_message.reply_document(
-                file_name,
-                caption=caption,
-                message_thread_id=node.topic_id,
-            )
-        else:
-            await upload_user.send_document(
-                upload_telegram_chat_id,
-                file_name,
-                caption=caption,
-                progress=update_upload_stat,
-                progress_args=(
-                    message.id,
-                    ui_file_name,
-                    time.time(),
-                    node,
-                    upload_user,
-                ),
-                message_thread_id=node.topic_id,
-            )
-    elif message.voice:
-        if node.reply_to_message:
-            await node.reply_to_message.reply_voice(
-                file_name,
-                caption=caption,
-                message_thread_id=node.topic_id,
-            )
-        else:
-            await upload_user.send_voice(
-                upload_telegram_chat_id,
-                file_name,
-                caption=caption,
-                progress=update_upload_stat,
-                progress_args=(
-                    message.id,
-                    ui_file_name,
-                    time.time(),
-                    node,
-                    upload_user,
-                ),
-                message_thread_id=node.topic_id,
-            )
-    elif message.video_note:
-        if node.reply_to_message:
-            await node.reply_to_message.reply_video_note(
-                file_name,
-                caption=caption,
-                message_thread_id=node.topic_id,
-            )
-        else:
-            await upload_user.send_video_note(
-                upload_telegram_chat_id,
-                file_name,
-                caption=caption,
-                progress=update_upload_stat,
-                progress_args=(
-                    message.id,
-                    ui_file_name,
-                    time.time(),
-                    node,
-                    upload_user,
-                ),
-                message_thread_id=node.topic_id,
-            )
-    elif message.text:
+    for kind in ("photo", "document", "voice", "video_note"):
+        if getattr(message, kind):
+            if node.reply_to_message:
+                await getattr(node.reply_to_message, f"reply_{kind}")(
+                    file_name,
+                    caption=caption,
+                    message_thread_id=node.topic_id,
+                )
+            else:
+                await getattr(upload_user, f"send_{kind}")(
+                    upload_telegram_chat_id,
+                    file_name,
+                    caption=caption,
+                    progress=update_upload_stat,
+                    progress_args=(
+                        message.id,
+                        ui_file_name,
+                        time.time(),
+                        node,
+                        upload_user,
+                    ),
+                    message_thread_id=node.topic_id,
+                )
+            return
+
+    if message.text:
         if node.reply_to_message:
             await node.reply_to_message.reply(
                 message.text if text is None else text, message_thread_id=node.topic_id
@@ -681,7 +606,7 @@ async def convect_caption_entities(client, text):
     try:
         return (await client.parser.parse(text, None)).values()
     except Exception as e:
-        print(f"Error parsing markdown: {e}")
+        logger.warning(f"Error parsing markdown: {e}")
         # If parsing fails, return cleaned text without entities
         return text, None
 
@@ -943,13 +868,11 @@ async def proc_cache_forward(
 
     reply_to_message_id = None
     message_thread_id = node.topic_id
-    business_connection_id = None
     upload_telegram_chat_id = node.upload_telegram_chat_id
     if node.reply_to_message:
         if node.reply_to_message.chat.type != pyrogram.enums.ChatType.PRIVATE:
             reply_to_message_id = node.reply_to_message.id
         message_thread_id = node.reply_to_message.message_thread_id
-        business_connection_id = node.reply_to_message.business_connection_id
         upload_telegram_chat_id = node.reply_to_message.chat.id
     if not await send_media_group_v2(
         client,
@@ -1169,15 +1092,26 @@ async def _report_bot_status(
             )
 
         download_result_str = ""
+        completed_files_str = ""
+        actual_total = 0
+        actual_success = 0
         download_result = get_download_result()
+        my_tid = str(node.task_id)
+        my_display = str(node.task_id_display)
         if node.chat_id in download_result:
-            messages = download_result[node.chat_id]
-            for idx, value in messages.items():
-                task_id = str(value["task_id"])
+            for idx, value in download_result[node.chat_id].items():
+                task_id = str(value.get("task_id", ""))
                 task_id_display = str(value.get("task_id_display", ""))
-                my_tid = str(node.task_id)
-                my_display = str(node.task_id_display)
-                if (task_id != my_tid and task_id != my_display and task_id_display != my_tid and task_id_display != my_display) or value["down_byte"] == value["total_size"]:
+                is_completed = value["down_byte"] == value["total_size"]
+                if task_id == my_tid:
+                    actual_total += 1
+                    if is_completed:
+                        if value["total_size"] > 0:
+                            actual_success += 1
+                        fname = os.path.basename(value["file_name"])
+                        fsize = format_byte(value["total_size"])
+                        completed_files_str += f"  • {fname} ({fsize})\n"
+                if (task_id not in (my_tid, my_display) and task_id_display not in (my_tid, my_display)) or is_completed:
                     continue
 
                 temp_file_name = os.path.basename(value["file_name"])
@@ -1219,24 +1153,16 @@ async def _report_bot_status(
         if upload_result_str:
             upload_result_str = f"\n📤 {_t('Upload Progresses')}:\n" + upload_result_str
 
-        # Build completed files list
-        completed_files_str = ""
+        # Build failed files list with error reasons and count in a single pass
         failed_files_str = ""
-        download_result = get_download_result()
-        if node.chat_id in download_result:
-            for idx, value in download_result[node.chat_id].items():
-                task_id = value.get("task_id", "")
-                if str(task_id) == str(node.task_id) and value["down_byte"] == value["total_size"]:
-                    fname = os.path.basename(value["file_name"])
-                    fsize = format_byte(value["total_size"])
-                    completed_files_str += f"  • {fname} ({fsize})\n"
-        # Build failed files list with error reasons (from _failed_downloads)
+        actual_failed = 0
         if node.failed_download_task > 0:
             try:
                 from module.download_stat import get_failed_downloads
                 for f in get_failed_downloads():
                     f_task_id = str(f.get("task_id", ""))
-                    if f_task_id == str(node.task_id) or f_task_id == str(node.task_id_display):
+                    if f_task_id in (my_tid, my_display):
+                        actual_failed += 1
                         fname = os.path.basename(f.get("file_name", ""))
                         if not fname:
                             fname = f"(msg_id: {f.get('msg_id', '?')})"
@@ -1252,27 +1178,6 @@ async def _report_bot_status(
                 failed_files_str = f"\n❌ {_t('Failed')}:\n" + failed_files_str
         if completed_files_str:
             completed_files_str = f"\n📄 {_t('Files')}:\n" + completed_files_str
-
-        # Re-count from _download_result for accuracy (avoids counter race conditions)
-        actual_total = 0
-        actual_success = 0
-        actual_failed = 0
-        if node.chat_id in download_result:
-            for mid, val in download_result[node.chat_id].items():
-                if str(val.get("task_id", "")) == str(node.task_id):
-                    actual_total += 1
-                    if val["down_byte"] == val["total_size"] and val["total_size"] > 0:
-                        actual_success += 1
-                    # Incomplete files may be downloading or recovering; do not count them as
-                    # skipped.
-        if node.failed_download_task > 0:
-            try:
-                for f in get_failed_downloads():
-                    f_tid = str(f.get("task_id", ""))
-                    if f_tid == str(node.task_id) or f_tid == str(node.task_id_display):
-                        actual_failed += 1
-            except Exception as e:
-                logger.warning(f"Failed to get failed downloads for re-count: {e}")
         if immediate_reply and (actual_total > 0 or actual_failed > 0):
             # actual_total counts entries in _download_result, actual_failed counts
             # entries in failed list. These can overlap (a failed file is in both),
@@ -1712,69 +1617,6 @@ class HookClient(pyrogram.Client):
         await super().start(**kwargs)
         self._download_connections_closing = False
         return self
-
-
-# pylint: disable=R0914,R0913
-async def forward_messages(
-    client: pyrogram.Client,
-    chat_id: Union[int, str, None],
-    from_chat_id: Union[int, str],
-    message_ids: Union[int, Iterable[int]],
-    disable_notification: bool = None,
-    schedule_date: datetime = None,
-    protect_content: bool = None,
-    drop_author: bool = None,
-    topic_id: int = None,
-    caption: str = None,
-    caption_entities: List[pyrogram.types.MessageEntity] = None,
-) -> Union["types.Message", List["types.Message"]]:
-    """Forward messages of any kind."""
-
-    is_iterable = not isinstance(message_ids, int)
-    message_ids = list(message_ids) if is_iterable else [message_ids]  # type: ignore
-
-    r = await client.invoke(
-        pyrogram.raw.functions.messages.ForwardMessages(
-            to_peer=await client.resolve_peer(chat_id),
-            from_peer=await client.resolve_peer(from_chat_id),
-            id=message_ids,
-            silent=disable_notification or None,
-            random_id=[client.rnd_id() for _ in message_ids],
-            schedule_date=pyrogram.utils.datetime_to_timestamp(schedule_date),
-            noforwards=protect_content,
-            drop_author=drop_author,
-            top_msg_id=topic_id,
-        )
-    )
-
-    forwarded_messages = []
-
-    users = {i.id: i for i in r.users}
-    chats = {i.id: i for i in r.chats}
-
-    for i in r.updates:
-        if isinstance(
-            i,
-            (
-                pyrogram.raw.types.UpdateNewMessage,
-                pyrogram.raw.types.UpdateNewChannelMessage,
-                pyrogram.raw.types.UpdateNewScheduledMessage,
-            ),
-        ):
-            forwarded_messages.append(
-                # pylint: disable=W0212
-                await types.Message._parse(client, i.message, users, chats)
-            )
-
-    if caption and not is_iterable and forwarded_messages:
-        await client.edit_message_caption(
-            chat_id,
-            forwarded_messages[0].id,
-            caption=caption,
-            caption_entities=caption_entities,
-        )
-
-    return types.List(forwarded_messages) if is_iterable else forwarded_messages[0]
 
 
 # ============================================================

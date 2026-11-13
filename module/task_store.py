@@ -5,7 +5,6 @@ import os
 import re
 import threading
 import time
-from typing import Optional
 
 from loguru import logger
 from module.runtime_paths import DATA_DIR
@@ -13,6 +12,15 @@ from module.runtime_paths import DATA_DIR
 _TASKS_FILE = os.path.join(DATA_DIR, "bot_tasks.json")
 _COUNTER_FILE = os.path.join(DATA_DIR, "task_counter.json")
 _lock = threading.Lock()
+
+
+def _write_json_atomic(path: str, data, *, indent=None):
+    """Write JSON atomically via a sibling .tmp file and os.replace."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=indent)
+    os.replace(tmp, path)
 
 
 def _get_next_seq(date_str: str) -> int:
@@ -23,7 +31,7 @@ def _get_next_seq(date_str: str) -> int:
     """
     try:
         if os.path.exists(_COUNTER_FILE):
-            with open(_COUNTER_FILE, "r") as f:
+            with open(_COUNTER_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if data.get("date") == date_str:
                 data["seq"] += 1
@@ -32,11 +40,7 @@ def _get_next_seq(date_str: str) -> int:
                 data["seq"] = 1
         else:
             data = {"date": date_str, "seq": 1}
-        os.makedirs(os.path.dirname(_COUNTER_FILE), exist_ok=True)
-        tmp = _COUNTER_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f)
-        os.replace(tmp, _COUNTER_FILE)
+        _write_json_atomic(_COUNTER_FILE, data)
         return data["seq"]
     except Exception as e:
         logger.warning(f"task_counter read/write error: {e}")
@@ -48,17 +52,12 @@ def _set_seq(date_str: str, seq: int):
     Thread-safe via _lock; caller must hold _lock.
     """
     try:
-        os.makedirs(os.path.dirname(_COUNTER_FILE), exist_ok=True)
         if os.path.exists(_COUNTER_FILE):
-            with open(_COUNTER_FILE, "r") as f:
+            with open(_COUNTER_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if data.get("date") == date_str and data.get("seq", 0) >= seq:
                 return  # already larger, no overwrite
-        data = {"date": date_str, "seq": seq}
-        tmp = _COUNTER_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f)
-        os.replace(tmp, _COUNTER_FILE)
+        _write_json_atomic(_COUNTER_FILE, {"date": date_str, "seq": seq})
     except Exception as e:
         logger.warning(f"task_counter write error: {e}")
 
@@ -84,11 +83,7 @@ def _load_all() -> list:
 def _save_all(tasks: list):
     """Save all tasks to file (atomic write via tmp + os.replace)."""
     try:
-        os.makedirs(os.path.dirname(_TASKS_FILE), exist_ok=True)
-        tmp = _TASKS_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(tasks, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, _TASKS_FILE)
+        _write_json_atomic(_TASKS_FILE, tasks, indent=2)
         return True
     except Exception as e:
         logger.warning(f"Failed to save bot tasks: {e}")

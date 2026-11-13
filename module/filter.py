@@ -63,6 +63,7 @@ MAX_FILTER_LENGTH = 4096
 MAX_DOWNLOAD_FILTERS = 32
 _TEXT_FIELDS = {"media_file_name", "file_name", "message_caption", "caption",
                 "media_type", "file_extension", "sender_name"}
+_VALID_NAMES = frozenset(MetaData().data())
 
 
 @v_args(inline=True)
@@ -95,7 +96,7 @@ class _Validator(Transformer_NonRecursive):
 
     def name(self, value):
         name = str(value)
-        if name not in MetaData().data():
+        if name not in _VALID_NAMES:
             raise ValueError(f"Undefined name {name}")
         return str if name in _TEXT_FIELDS else datetime if name == "message_date" else int
 

@@ -177,10 +177,9 @@ def require_web_login():
         if request.endpoint == "configuration.configuration":
             return redirect(url_for("login"))
         return jsonify(error="authentication_required", login_url=url_for("login")), 401
-    if ((not _web_login_secret() or public_web) and not configuration_request
-            and request.endpoint not in ("login", "logout")):
-        return None
     if not _web_login_secret() and not configuration_request:
+        return None
+    if public_web and not configuration_request and request.endpoint not in ("login", "logout"):
         return None
     if (request.endpoint not in ("login", "configuration.configuration", "configuration.setup")
             and not _is_authenticated()):

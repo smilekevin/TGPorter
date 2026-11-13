@@ -534,15 +534,8 @@ class Application:
             if type(value) is not int or value < 1:
                 raise ValueError(f"{key} must be a positive integer")
 
-        self.max_concurrent_transmissions = max(
-            self.max_download_task * 5,
-            self.max_download_task * self.file_download_concurrency,
-        )
-
-        self.max_concurrent_transmissions = _config.get(
-            "max_concurrent_transmissions", self.max_concurrent_transmissions
-        )
         self._transport_capacity_override = _config.get("max_concurrent_transmissions", 0)
+        self.max_concurrent_transmissions = self.transport_capacity(self.max_download_task)
 
         language = _config.get("language", "EN")
 
@@ -808,26 +801,17 @@ class Application:
             File name
         """
 
-        res: str = ""
+        parts = []
         for prefix in self.file_name_prefix:
             if prefix == "message_id":
-                if res != "":
-                    res += self.file_name_prefix_split
-                res += f"{message_id}"
+                parts.append(f"{message_id}")
             elif prefix == "file_name" and file_name:
-                if res != "":
-                    res += self.file_name_prefix_split
-                res += f"{file_name}"
+                parts.append(f"{file_name}")
             elif prefix == "file_size" and file_size is not None and file_size > 0:
-                if res != "":
-                    res += self.file_name_prefix_split
-                res += format_byte(file_size)
+                parts.append(format_byte(file_size))
             elif prefix == "caption" and caption:
-                if res != "":
-                    res += self.file_name_prefix_split
-                res += f"{caption}"
-        if res == "":
-            res = f"{message_id}"
+                parts.append(f"{caption}")
+        res = self.file_name_prefix_split.join(parts) or f"{message_id}"
 
         return validate_title(res)
 
@@ -847,10 +831,7 @@ class Application:
         -------
         bool
         """
-        if message_id in download_config.ids_to_retry_dict:
-            return True
-
-        return False
+        return message_id in download_config.ids_to_retry_dict
 
     def resolve_download_filter(self, expression=None):
         """Snapshot defaults for a new task; explicit task/channel rules take precedence."""
@@ -1007,6 +988,13 @@ class Application:
             # An initial empty snapshot must not advance configured scan bounds.
             self._write_app_data()
 
+    @staticmethod
+    def _normalize_group_advertisements(mapping: dict) -> dict:
+        return {
+            int(key) if str(key).lstrip("-").isdigit() else key: value
+            for key, value in mapping.items()
+        }
+
     def apply_settings(self):
         """Apply a saved snapshot before the Telegram backend starts."""
         self.config = copy.deepcopy(self.settings.values)
@@ -1016,10 +1004,9 @@ class Application:
         self.proxy = {}
         self.cloud_drive_config = CloudDriveConfig()
         self.assign_config(self.config)
-        self.group_add_advertisement = {
-            int(key) if str(key).lstrip("-").isdigit() else key: value
-            for key, value in self.settings.values["group_add_advertisement"].items()
-        }
+        self.group_add_advertisement = self._normalize_group_advertisements(
+            self.settings.values["group_add_advertisement"]
+        )
         self.assign_app_data(self.app_data)
         self._runtime_settings_snapshot = self.runtime_settings()
 
@@ -1039,10 +1026,9 @@ class Application:
         self.forward_limit_call.max_limit_call_times = values["forward_limit"]
         self._transport_capacity_override = values["max_concurrent_transmissions"]
         self.max_concurrent_transmissions = self.transport_capacity(self.max_download_task)
-        self.group_add_advertisement = {
-            int(key) if str(key).lstrip("-").isdigit() else key: value
-            for key, value in values["group_add_advertisement"].items()
-        }
+        self.group_add_advertisement = self._normalize_group_advertisements(
+            values["group_add_advertisement"]
+        )
         self._runtime_settings_snapshot = self.runtime_settings()
         for key in LIVE_FIELDS:
             self.active_settings[key] = copy.deepcopy(values[key])
@@ -1064,11 +1050,7 @@ class Application:
         ----------
         caption: str
         """
-        for ad in self.filter_advertisement_list:
-            if ad in caption:
-                return True
-
-        return False
+        return any(ad in caption for ad in self.filter_advertisement_list)
 
     def set_caption_name(
         self, chat_id: Union[int, str], media_group_id: Optional[str], caption: str
@@ -1088,11 +1070,7 @@ class Application:
         """
         if not media_group_id:
             return
-
-        if chat_id in self.caption_name_dict:
-            self.caption_name_dict[chat_id][media_group_id] = caption
-        else:
-            self.caption_name_dict[chat_id] = {media_group_id: caption}
+        self.caption_name_dict.setdefault(chat_id, {})[media_group_id] = caption
 
     def get_caption_name(
         self, chat_id: Union[int, str], media_group_id: Optional[str]
@@ -1122,11 +1100,7 @@ class Application:
         """
         if not media_group_id:
             return
-
-        if chat_id in self.caption_entities_dict:
-            self.caption_entities_dict[chat_id][media_group_id] = caption_entities
-        else:
-            self.caption_entities_dict[chat_id] = {media_group_id: caption_entities}
+        self.caption_entities_dict.setdefault(chat_id, {})[media_group_id] = caption_entities
 
     def set_download_id(
         self, node: TaskNode, message_id: int, download_status: DownloadStatus

@@ -115,8 +115,6 @@ class CloudDrive:
             if drive_config.before_upload_file_zip:
                 zip_file_path = CloudDrive.zip_file(local_file_path)
                 file_path = zip_file_path
-            else:
-                file_path = local_file_path
 
             cmd = (
                 f'"{drive_config.rclone_path}" copy "{file_path}" '
@@ -128,7 +126,6 @@ class CloudDrive:
             if proc.stdout:
                 async for output in proc.stdout:
                     s = output.decode(errors="replace")
-                    print(s)
                     if "Transferred" in s and "100%" in s and "1 / 1" in s:
                         logger.info(f"upload file {local_file_path} success")
                         drive_config.total_upload_success_file_count += 1
@@ -220,37 +217,3 @@ class CloudDrive:
             return False
 
         return upload_status
-
-    @staticmethod
-    async def upload_file(
-        drive_config: CloudDriveConfig, save_path: str, local_file_path: str
-    ) -> bool:
-        """Upload file
-        Parameters
-        ----------
-        drive_config: CloudDriveConfig
-            see @CloudDriveConfig
-
-        save_path: str
-            Local file save path config
-
-        local_file_path: str
-            Local file path
-
-        Returns
-        -------
-        bool
-            True or False
-        """
-        if not drive_config.enable_upload_file:
-            return False
-
-        ret: bool = False
-        if drive_config.upload_adapter == "rclone":
-            ret = await CloudDrive.rclone_upload_file(
-                drive_config, save_path, local_file_path
-            )
-        elif drive_config.upload_adapter == "aligo":
-            ret = CloudDrive.aligo_upload_file(drive_config, save_path, local_file_path)
-
-        return ret

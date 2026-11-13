@@ -67,6 +67,28 @@ _BOT_RECONNECT_COOLDOWN = 300
 _BOT_RECONNECT_TIMEOUT = 30
 
 
+def _build_channel_message_link(chat_id, message_id, username: str = "") -> str:
+    """Build a Telegram message link for a channel/supergroup or public username."""
+    if not chat_id or not message_id:
+        return ""
+    if username:
+        return f"https://t.me/{username}/{message_id}"
+    cid = str(chat_id)
+    link_id = cid[4:] if cid.startswith("-100") else cid
+    return f"https://t.me/c/{link_id}/{message_id}"
+
+
+def _find_running_message_task(chat_id, message_id):
+    """Return the first running task matching (chat_id, message_id), or None."""
+    chat_str = str(chat_id)
+    msg_str = str(message_id)
+    for task in get_running_tasks():
+        if (str(task.get("chat_id")) == chat_str
+                and str((task.get("extra_data") or {}).get("message_id")) == msg_str):
+            return task
+    return None
+
+
 def _cleanup_stopped_task(node):
     """Clear incomplete progress and record a manually stopped task as failed.
 
@@ -77,7 +99,6 @@ def _cleanup_stopped_task(node):
         from module.download_stat import get_download_result
         download_result = get_download_result()
         removed = 0
-        recorded = 0
         task_id_display = getattr(node, "task_id_display", "") or str(node.task_id)
         for chat_id, messages in list(download_result.items()):
             for msg_id, value in list(messages.items()):
@@ -88,16 +109,9 @@ def _cleanup_stopped_task(node):
                 down = value.get("down_byte", 0)
                 is_complete = total > 0 and down >= total
                 if not is_complete:
-                    # Build source link
-                    source_link = ""
-                    source_chat_id = value.get("source_chat_id", 0) or getattr(node, 'source_chat_id', 0)
-                    source_message_id = value.get("source_message_id", 0) or getattr(node, 'source_message_id', 0)
-                    if source_chat_id and source_message_id:
-                        if str(source_chat_id).startswith("-100"):
-                            link_id = str(source_chat_id)[4:]
-                        else:
-                            link_id = str(source_chat_id)
-                        source_link = f"https://t.me/c/{link_id}/{source_message_id}"
+                    source_chat_id = value.get("source_chat_id", 0) or getattr(node, "source_chat_id", 0)
+                    source_message_id = value.get("source_message_id", 0) or getattr(node, "source_message_id", 0)
+                    source_link = _build_channel_message_link(source_chat_id, source_message_id)
                     # Record in failed list before deleting
                     add_failed_download(
                         chat_id=chat_id,
@@ -107,9 +121,8 @@ def _cleanup_stopped_task(node):
                         error_message='Manually stopped',
                         total_size=total,
                         source_link=source_link,
-                            from_user_id=getattr(node, "from_user_id", "") or "",
+                        from_user_id=getattr(node, "from_user_id", "") or "",
                     )
-                    recorded += 1
                     # Delete only incomplete entries from download result
                     _delete_download_progress(f"{chat_id}_{msg_id}", discard_partial=False)
                     removed += 1
@@ -155,16 +168,9 @@ def _record_pending_failures(node):
                 # (down_byte == 0 or down_byte == total_size with same timestamps
                 #  means Pyrogram progress callback never ran)
                 if value.get("down_byte", 0) < value.get("total_size", 1) and value.get("total_size", 0) > 0:
-                    # Build source link
-                    source_link = ""
-                    source_chat_id = value.get("source_chat_id", 0) or getattr(node, 'source_chat_id', 0)
-                    source_message_id = value.get("source_message_id", 0) or getattr(node, 'source_message_id', 0)
-                    if source_chat_id and source_message_id:
-                        if str(source_chat_id).startswith("-100"):
-                            link_id = str(source_chat_id)[4:]
-                        else:
-                            link_id = str(source_chat_id)
-                        source_link = f"https://t.me/c/{link_id}/{source_message_id}"
+                    source_chat_id = value.get("source_chat_id", 0) or getattr(node, "source_chat_id", 0)
+                    source_message_id = value.get("source_message_id", 0) or getattr(node, "source_message_id", 0)
+                    source_link = _build_channel_message_link(source_chat_id, source_message_id)
                     add_failed_download(
                         chat_id=chat_id,
                         msg_id=msg_id,
@@ -173,7 +179,7 @@ def _record_pending_failures(node):
                         error_message='Interrupted download',
                         total_size=value.get("total_size", 0),
                         source_link=source_link,
-                            from_user_id=getattr(node, "from_user_id", "") or "",
+                        from_user_id=getattr(node, "from_user_id", "") or "",
                     )
                     recorded += 1
         if recorded > 0:
@@ -195,7 +201,6 @@ class DownloadBot:
         self.config: dict = {}
         self._yaml = yaml.YAML()
         self.config_path = BOT_CONFIG_FILE
-        self.download_command: dict = {}
         self.filter = Filter()
         self.bot_info = None
         self.task_node: dict = {}
@@ -615,10 +620,9 @@ class DownloadBot:
 
         # This runs on the download loop. No await occurs between deduplication,
         # ID allocation and persistence, so concurrent submissions cannot race.
-        for task in get_running_tasks():
-            if (str(task.get("chat_id")) == str(chat.id)
-                    and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
-                return accepted(task, duplicate=True)
+        existing = _find_running_message_task(chat.id, message_id)
+        if existing:
+            return accepted(existing, duplicate=True)
         node = TaskNode(chat_id=chat.id, from_user_id="", limit=1,
                         task_id=self.gen_task_id(), topic_id=topic_id,
                         download_filter=self.app.resolve_download_filter())
@@ -642,10 +646,8 @@ class DownloadBot:
         owner = entry.get("message_client", "user")
         if self.get_message_client(chat_id, entry.get("from_user_id", ""), owner) is None:
             return {"code": "0", "message": "Message account is unavailable"}
-        for task in get_running_tasks():
-            if (str(task.get("chat_id")) == str(chat_id)
-                    and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
-                return {"code": "0", "message": "A download for this message is already queued"}
+        if _find_running_message_task(chat_id, message_id):
+            return {"code": "0", "message": "A download for this message is already queued"}
         node = TaskNode(chat_id=chat_id, task_id=self.gen_task_id())
         extra = {"message_id": message_id, "message_client": owner, "bypass_filters": True,
                  "topic_id": entry.get("topic_id", 0), "task_id_display": node.task_id_display,
@@ -807,7 +809,6 @@ class DownloadBot:
         try:
             from module.task_store import _set_seq, _parse_seq_from_display, _lock
             max_seq = 0
-            import time
             today = time.strftime('%m%d')
             for task_data in all_tasks:
                 extra = task_data.get("extra_data", {}) or {}
@@ -822,109 +823,6 @@ class DownloadBot:
                 logger.info(f"Updated persistent task counter to {max_seq} (after recovering {len(all_tasks)} tasks)")
         except Exception as e:
             logger.warning(f"Failed to update task counter after recovery: {e}")
-
-    async def _recover_forward_task(self, task_data, node, offset_id):
-        """Recover a forward task from last checkpoint."""
-        from module.pyrogram_extension import report_bot_status
-        forward_failed = False
-        try:
-            async for item in get_chat_history_v2(
-                self.client, node.chat_id,
-                limit=node.limit, max_id=node.end_offset_id,
-                offset_id=offset_id, reverse=True,
-            ):
-                if not node.has_protected_content:
-                    await forward_normal_content(self.client, node, item)
-                else:
-                    await self.add_download_task(item, node)
-                update_task_progress(node.task_id, item.id)
-                if node.is_stop_transmission:
-                    break
-        except Exception as e:
-            forward_failed = True
-            logger.warning(f"Forward recovery failed for task {node.task_id}: {e}")
-        finally:
-            await report_bot_status(self.bot, node, immediate_reply=True)
-            # Only mark as stopped if forward actually failed (exception thrown).
-            # For non-protected content, total_task stays 0 because forward_normal_content
-            # doesn't use add_download_task — that's normal, not a failure.
-            if forward_failed:
-                node.stop_transmission()
-            complete_task(node.task_id)
-
-    async def _recover_direct_task(self, task_data, node):
-        """Recover a direct download task (single message)."""
-        from module.pyrogram_extension import report_bot_status
-        extra_data = task_data.get("extra_data", {})
-        message_id = extra_data.get("message_id", 0)
-        source_chat_id = extra_data.get("source_chat_id", 0)
-        source_message_id = extra_data.get("source_message_id", 0)
-
-        if not message_id and not source_message_id:
-            logger.warning(f"Direct recovery failed: no message_id for task {node.task_id}")
-            complete_task(node.task_id)
-            return
-
-        success = False
-        msg = None
-        try:
-            # Try source channel first (more reliable for forwarded messages)
-            if source_chat_id and source_message_id:
-                msg = await self.client.get_messages(source_chat_id, source_message_id)
-                if msg and msg.media:
-                    logger.info(f"Recovery: re-downloading from source {source_chat_id}/{source_message_id} for task {node.task_id}")
-                else:
-                    logger.info(f"Recovery: source message has no media, trying original chat")
-                    msg = None
-
-            # Fallback: try original chat_id + message_id
-            if not msg and message_id:
-                msg = await self.client.get_messages(node.chat_id, message_id)
-
-            if msg and msg.media:
-                # Check if file already exists in download history
-                from module.download_stat import get_download_result
-                _dlr = get_download_result()
-                _exists = False
-                if node.chat_id in _dlr:
-                    for _mid, _val in _dlr[node.chat_id].items():
-                        if str(_val.get("task_id")) == str(node.task_id) and _val.get("down_byte", 0) > 0 and _val.get("down_byte") == _val.get("total_size"):
-                            _exists = True
-                            break
-                if not _exists:
-                    logger.info(f"Recovery: re-downloading message {message_id} for task {node.task_id}")
-                    await self.add_download_task(msg, node)
-                    node.is_running = True
-                    # Wait for download to finish (no timeout — large files may take hours)
-                    while node.total_task == 0 or node.total_download_task < node.total_task:
-                        await asyncio.sleep(3)
-                        if node.is_stop_transmission:
-                            break
-                else:
-                    logger.info(f"Recovery: file already exists for task {node.task_id}, marking complete")
-                    node.total_task = 1
-                    node.total_download_task = 1
-                    node.success_download_task = 1
-                    success = True
-                # Check if download actually succeeded
-                if node.success_download_task > 0:
-                    success = True
-                else:
-                    logger.warning(f"Recovery: task {node.task_id} completed but 0 successful downloads (total={node.total_task}, success={node.success_download_task})")
-            else:
-                logger.warning(f"Direct recovery: message not found or has no media (msg={msg is not None}, media={getattr(msg, 'media', None) if msg else None})")
-        except Exception as e:
-            logger.warning(f"Direct recovery failed for task {node.task_id}: {e}")
-        finally:
-            await report_bot_status(self.bot, node, immediate_reply=True)
-            if not success:
-                node.stop_transmission()
-            if success:
-                complete_task(node.task_id)
-            else:
-                # Cleanup temp files from failed recovery
-                _cleanup_task_temp_files(node.chat_id)
-                logger.info(f"Recovery task {node.task_id} not completed, will retry next restart")
 
     def assign_config(self, _config: dict):
         """assign config from str.
@@ -1572,22 +1470,10 @@ async def send_help_str(client: pyrogram.Client, chat_id):
             ]
         ]
     )
-    latest_release_str = ""
-    # try:
-    #     latest_release = get_latest_release(_bot.app.proxy)
-
-    #     latest_release_str = (
-    #         f"{_t('New Version')}: [{latest_release['name']}]({latest_release['html_url']})\an"
-    #         if latest_release
-    #         else ""
-    #     )
-    # except Exception:
-    #     latest_release_str = ""
 
     msg = (
             f"`\n🤖 {_t('TG Porter')}\n"
-            f"🌐 {_t('Version')}: {utils.__version__}`\n"
-            f"{latest_release_str}\n"
+            f"🌐 {_t('Version')}: {utils.__version__}`\n\n"
             f"{_t('Available commands:')}\n"
             f"/help - {_t('Show help')}\n"
             f"/start - {_t('Show help')}\n"
@@ -2059,17 +1945,16 @@ async def direct_download(
     # Check after sending the provisional reply: another handler may persist the
     # same post during that await. Keep deduplication through registration free
     # of awaits so concurrent Bot submissions cannot create orphan live nodes.
-    for task in get_running_tasks():
-        if (str(task.get("chat_id")) == str(chat_id)
-                and str((task.get("extra_data") or {}).get("message_id")) == str(message_id)):
-            display = (task.get("extra_data") or {}).get("task_id_display") or str(task["task_id"])
-            logger.info("Bot submission reused task {} (id={}, chat={}, message={})",
-                        display, task["task_id"], chat_id, message_id)
-            await download_bot.bot.edit_message_text(
-                message.from_user.id, last_reply_message.id,
-                f"{_t('Task already exists')}\n{_t('Task')}: {display}",
-            )
-            return
+    existing = _find_running_message_task(chat_id, message_id)
+    if existing:
+        display = (existing.get("extra_data") or {}).get("task_id_display") or str(existing["task_id"])
+        logger.info("Bot submission reused task {} (id={}, chat={}, message={})",
+                    display, existing["task_id"], chat_id, message_id)
+        await download_bot.bot.edit_message_text(
+            message.from_user.id, last_reply_message.id,
+            f"{_t('Task already exists')}\n{_t('Task')}: {display}",
+        )
+        return
 
     node = TaskNode(
         chat_id=chat_id,
@@ -2178,11 +2063,9 @@ async def download_forward_media(
                         # A public username can resolve a peer missing from the local cache.
                         pass
                     if (not download_message or not download_message.media) and not is_flood_wait_active():
-                        if source_chat.username:
-                            link_path = source_chat.username
-                        else:
-                            link_path = f"c/{str(source_chat_id).removeprefix('-100')}"
-                        link = f"https://t.me/{link_path}/{source_message_id}"
+                        link = _build_channel_message_link(
+                            source_chat_id, source_message_id, getattr(source_chat, "username", "") or ""
+                        )
                         link_chat_id, link_msg_id, _ = await parse_link(source_client, link)
                         if link_chat_id and link_msg_id:
                             lookup_chat_id = link_chat_id
@@ -2909,11 +2792,9 @@ async def _prepare_one_pending():
             try:
                 from module.download_stat import add_failed_download
                 task_id_display = extra.get("task_id_display", str(task_id))
-                source_link = ""
-                if extra.get("source_chat_id") and extra.get("source_message_id"):
-                    sid = extra["source_chat_id"]
-                    link_id = str(sid)[4:] if str(sid).startswith("-100") else str(sid)
-                    source_link = f"https://t.me/c/{link_id}/{extra['source_message_id']}"
+                source_link = _build_channel_message_link(
+                    extra.get("source_chat_id"), extra.get("source_message_id")
+                )
                 add_failed_download(
                     chat_id=cid,
                     msg_id=msg_id,
