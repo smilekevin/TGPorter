@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from enum import Enum
@@ -57,6 +58,10 @@ _throttle_state: dict = {
 _SLOW_THRESHOLD_BPS = 200 * 1024   # 200 KB/s
 _SLOW_SUSTAIN_SEC = 120            # Trigger after 120 seconds.
 _SLOW_CLEAR_SUSTAIN_SEC = 15       # Clear after 15 seconds of sustained recovery.
+_prolonged_throttle_state: dict = {
+    "last_progress": 0.0,   # Latest global progress heartbeat; zero means uninitialized.
+    "restarts": 0,          # Consecutive restarts reset when progress returns.
+}
 
 # Helper: asyncio.Lock can't be used from sync contexts; provide a try-lock wrapper
 # for sync functions that are also called from async context.
@@ -456,6 +461,23 @@ async def update_download_status(
 
     # Update the progress heartbeat used by the worker watchdog.
     _task_heartbeat[composite_key] = cur_time
+    # The silent-throttling monitor consumes the latest global progress time. Share the
+    # state across module/script identities so progress callbacks always feed the watchdog.
+    seen_states = set()
+    for candidate in (
+        _prolonged_throttle_state,
+        getattr(sys.modules.get("media_downloader"), "_throttle_state", None),
+        getattr(sys.modules.get("__main__"), "_throttle_state", None),
+    ):
+        if isinstance(candidate, dict) and "last_progress" in candidate and id(candidate) not in seen_states:
+            seen_states.add(id(candidate))
+            candidate["last_progress"] = cur_time
+            if candidate.get("restarts", 0) > 0:
+                logger.info(
+                    f"Throttle-restart: progress resumed after "
+                    f"{candidate['restarts']} restart(s) — counter reset"
+                )
+                candidate["restarts"] = 0
 
     async with _download_lock:
         messages = _download_result.setdefault(chat_id, {})

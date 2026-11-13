@@ -19,7 +19,8 @@ from module.bot import start_download_backend, start_download_bot, stop_download
 from module.download_stat import load_downloads, save_downloads, set_chat_title, update_download_status
 from module.download_stat import add_failed_download as _add_failed_download
 from module.download_stat import (record_skipped_download,
-                                  remove_skipped_download, track_download_stream, prepare_download)
+                                  remove_skipped_download, track_download_stream, prepare_download,
+                                  _prolonged_throttle_state as _throttle_state)
 from module.task_store import update_task_progress, update_download_state
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.partial_file import DownloadStorageError
@@ -79,10 +80,6 @@ _main_client_ref = {"client": None}  # set in start_server()
 # A shared timer avoids competing reconnects because throttling affects the account or node.
 _THROTTLE_RESTART_AFTER = 24 * 3600  # No download progress for 24 hours.
 _THROTTLE_RESTART_MAX = 3            # Warn only after N ineffective reconnects.
-_throttle_state = {
-    "last_progress": 0.0,   # Latest global progress heartbeat; zero means uninitialized.
-    "restarts": 0,          # Consecutive restarts reset when progress returns.
-}
 
 # Worker creation and queue access stay on the downloader loop. The lock only
 # protects the live count read by WebUI request threads.
@@ -1660,13 +1657,16 @@ async def start_server(client: pyrogram.Client):
     await client.start()
 
 
-async def _await_task_with_hard_timeout(coro, timeout: float = 30.0):
-    """Run a coroutine in a task and wait up to `timeout` seconds via an Event."""
+async def _wait_task_completion(coro, timeout: float = 30.0):
+    """Run `coro` in a task and wait up to `timeout` seconds for its completion Event.
+
+    Returns the completed task so callers can distinguish a wait deadline
+    TimeoutError from an exception raised by the task itself."""
     done = asyncio.Event()
     task = asyncio.create_task(coro)
     task.add_done_callback(lambda _t: done.set())
     await asyncio.wait_for(done.wait(), timeout=timeout)
-    return task.result()
+    return task
 
 
 async def _reconnect_client():
@@ -1691,7 +1691,14 @@ async def _reconnect_client():
         # could close the new connection.
         logger.warning("Client auto-reconnect: stop()...")
         try:
-            await _await_task_with_hard_timeout(client.stop(), timeout=30)
+            stop_task = await _wait_task_completion(client.stop(), timeout=30)
+            # stop() finished within 30 seconds; the task captures any exception.
+            try:
+                stop_task.result()
+            except Exception as e:
+                logger.warning(f"client.stop() during reconnect failed (continuing): {e}")
+                client.is_connected = False
+                _force_release_session_lock(client)
         except asyncio.TimeoutError:
             logger.error(
                 "client.stop() not finished within 30s (hard timeout) — "
@@ -1702,21 +1709,38 @@ async def _reconnect_client():
             client.is_connected = False
             _force_release_session_lock(client)
             return False  # Do not call start(): a late stop could close the new connection.
-        except asyncio.CancelledError as e:
+        except Exception as e:
+            # If Event.wait fails, leave start() untouched; let CancelledError propagate.
             logger.error(f"reconnect stop-phase interrupted: {e}, abandoning")
             client.is_connected = False
             _force_release_session_lock(client)
             return False
-        except Exception as e:
-            logger.warning(f"client.stop() during reconnect failed (continuing): {e}")
-            client.is_connected = False
-            _force_release_session_lock(client)
 
         # Use the same 30-second Event-based hard timeout for start(), which can hang on an
         # unclean session.
         logger.warning("Client auto-reconnect: start()...")
         try:
-            await _await_task_with_hard_timeout(client.start(), timeout=30)
+            start_task = await _wait_task_completion(client.start(), timeout=30)
+            try:
+                start_task.result()
+            except asyncio.TimeoutError:
+                raise
+            except Exception as e:
+                if "database is locked" in str(e):
+                    # Retry once after a second lock cleanup.
+                    logger.warning("client.start() failed with database is locked, forcing release and retrying...")
+                    _force_release_session_lock(client)
+                    try:
+                        retry_task = await _wait_task_completion(client.start(), timeout=30)
+                        retry_task.result()
+                        logger.success("Client reconnected successfully on retry — fresh TCP session established")
+                        _client_conn_errors["count"] = 0
+                        return True
+                    except Exception as e2:
+                        logger.error(f"client.start() retry also failed: {e2}")
+                        return False
+                logger.error(f"client.start() during reconnect failed: {e}")
+                return False
             logger.success("Client reconnected successfully — fresh TCP session established")
             _client_conn_errors["count"] = 0
             return True
@@ -1725,21 +1749,6 @@ async def _reconnect_client():
                 "client.start() not finished within 30s (hard timeout) — "
                 "abandoning reconnect, returning False"
             )
-            return False
-        except Exception as e:
-            if "database is locked" in str(e):
-                # Retry once after a second lock cleanup.
-                logger.warning("client.start() failed with database is locked, forcing release and retrying...")
-                _force_release_session_lock(client)
-                try:
-                    await _await_task_with_hard_timeout(client.start(), timeout=30)
-                    logger.success("Client reconnected successfully on retry — fresh TCP session established")
-                    _client_conn_errors["count"] = 0
-                    return True
-                except Exception as e2:
-                    logger.error(f"client.start() retry also failed: {e2}")
-                    return False
-            logger.error(f"client.start() during reconnect failed: {e}")
             return False
     finally:
         _client_reconnecting["active"] = False

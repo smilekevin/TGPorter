@@ -750,7 +750,9 @@ class DownloadService:
         if not isinstance(task_ids, list):
             return {"code": "0", "message": "Task IDs must be a list"}
 
-        failed_by_id = {str(f.get("task_id", "")): f for f in get_failed_downloads()}
+        failed_by_id = {}
+        for f in get_failed_downloads():
+            failed_by_id.setdefault(str(f.get("task_id", "")), f)
         queued = 0
         errors = []
 
