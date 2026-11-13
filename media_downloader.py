@@ -1893,7 +1893,12 @@ async def _throttle_restart_loop(client):
     Every ten minutes, check whether active downloads have made no global progress
     for 24 hours. Reconnect once, reset the counter when progress returns, and stop
     automatic reconnects after three ineffective attempts while retaining warnings."""
-    from module.download_stat import get_download_result
+    from module.download_stat import (
+        DownloadState,
+        get_download_result,
+        get_download_state,
+        is_task_paused,
+    )
 
     # Initialize the baseline at startup to avoid falsely detecting 24 hours of inactivity after
     # restart.
@@ -1902,12 +1907,17 @@ async def _throttle_restart_loop(client):
     while True:
         try:
             await asyncio.sleep(600)  # Check once every ten minutes.
+            if get_download_state() == DownloadState.StopDownload:
+                _throttle_state["last_progress"] = time.time()
+                continue
             # Count inactivity only while downloads are active; an empty queue is not
             # throttling.
             dr = get_download_result()
             active = 0
             for _chat, msgs in dr.items():
                 for _mid, v in msgs.items():
+                    if is_task_paused(f"{_chat}_{_mid}") or is_task_paused(v.get("task_id", "")):
+                        continue
                     if 0 < v.get("down_byte", 0) < v.get("total_size", 0):
                         active += 1
                         break

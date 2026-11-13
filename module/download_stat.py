@@ -461,23 +461,6 @@ async def update_download_status(
 
     # Update the progress heartbeat used by the worker watchdog.
     _task_heartbeat[composite_key] = cur_time
-    # The silent-throttling monitor consumes the latest global progress time. Share the
-    # state across module/script identities so progress callbacks always feed the watchdog.
-    seen_states = set()
-    for candidate in (
-        _prolonged_throttle_state,
-        getattr(sys.modules.get("media_downloader"), "_throttle_state", None),
-        getattr(sys.modules.get("__main__"), "_throttle_state", None),
-    ):
-        if isinstance(candidate, dict) and "last_progress" in candidate and id(candidate) not in seen_states:
-            seen_states.add(id(candidate))
-            candidate["last_progress"] = cur_time
-            if candidate.get("restarts", 0) > 0:
-                logger.info(
-                    f"Throttle-restart: progress resumed after "
-                    f"{candidate['restarts']} restart(s) — counter reset"
-                )
-                candidate["restarts"] = 0
 
     async with _download_lock:
         messages = _download_result.setdefault(chat_id, {})
@@ -502,8 +485,10 @@ async def update_download_status(
                 download_speed = 0
                 each_second_total_download = 0
                 end_time = cur_time
+                transferred_bytes = 0
             else:
                 delta_bytes = down_byte - last_download_byte
+                transferred_bytes = max(delta_bytes, 0)
                 _total_download_size += delta_bytes
                 each_second_total_download += delta_bytes
 
@@ -532,6 +517,7 @@ async def update_download_status(
                 save_downloads()
         else:
             each_second_total_download = 0 if initial else down_byte
+            transferred_bytes = 0 if initial else max(down_byte, 0)
             messages[message_id] = {
                 "down_byte": down_byte,
                 "total_size": total_size,
@@ -554,6 +540,26 @@ async def update_download_status(
             _placeholder_resolved = False
             if down_byte >= total_size and total_size > 0:
                 save_downloads()
+
+        # The silent-throttling monitor consumes the latest global progress time. Share the
+        # state across module/script identities so progress callbacks always feed the watchdog,
+        # and reset the reconnect budget only when newly transferred bytes arrive.
+        seen_states = set()
+        for candidate in (
+            _prolonged_throttle_state,
+            getattr(sys.modules.get("media_downloader"), "_throttle_state", None),
+            getattr(sys.modules.get("__main__"), "_throttle_state", None),
+        ):
+            if isinstance(candidate, dict) and "last_progress" in candidate and id(candidate) not in seen_states:
+                seen_states.add(id(candidate))
+                if not initial or candidate["last_progress"] == 0.0:
+                    candidate["last_progress"] = cur_time
+                if transferred_bytes > 0 and candidate.get("restarts", 0) > 0:
+                    logger.info(
+                        f"Throttle-restart: progress resumed after "
+                        f"{candidate['restarts']} restart(s) — counter reset"
+                    )
+                    candidate["restarts"] = 0
 
         entry = messages[message_id]
         if not initial:
