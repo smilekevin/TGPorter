@@ -1,16 +1,16 @@
 # Kurigram provides the pyrogram import namespace. Do not co-install Pyrogram.
-Kurigram==2.2.26
+Kurigram==2.2.27
 PyYAML==6.0.3
 rich==15.0.0
 PyTgCrypto==1.2.12
-loguru==0.7.3
+loguru==0.8.0
 Werkzeug==3.1.9
 flask==3.1.3
 lark==1.3.1
 ruamel.yaml==0.19.1
 mcp==2.3.0
 # Direct ASGI and validation dependencies; keep tested versions explicit.
-starlette==1.8.0
+starlette==1.10.0
 uvicorn==0.54.0
-pydantic==2.14.1
+pydantic==2.14.3
 a2wsgi==1.10.10
