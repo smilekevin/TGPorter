@@ -19,7 +19,7 @@ from module.send_media_group_v2 import send_media_group_v2
 
 class KurigramMigrationTests(unittest.IsolatedAsyncioTestCase):
     def test_distribution_owns_the_pyrogram_namespace(self):
-        self.assertEqual(importlib.metadata.version("Kurigram"), "2.2.26")
+        self.assertEqual(importlib.metadata.packages_distributions().get("pyrogram"), ["Kurigram"])
         with self.assertRaises(importlib.metadata.PackageNotFoundError):
             importlib.metadata.version("Pyrogram")
 
